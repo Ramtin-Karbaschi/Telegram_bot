@@ -146,6 +146,28 @@ class DatabaseQueries:
                 db.close()
         return False
     
+    # User Activity Log queries
+    @staticmethod
+    def add_user_activity_log(telegram_id: int, action_type: str, details: str = None, user_id: int = None):
+        """Add a new user activity log to the database."""
+        db = Database()
+        if db.connect():
+            now = datetime.now().isoformat()
+            try:
+                db.execute(
+                    "INSERT INTO user_activity_logs (user_id, telegram_id, action_type, timestamp, details) VALUES (?, ?, ?, ?, ?)",
+                    (user_id, telegram_id, action_type, now, details)
+                )
+                db.commit()
+                return True
+            except sqlite3.Error as e:
+                print(f"SQLite error when adding user activity log: {e}") # Basic error logging
+                # Consider more robust logging for production
+                return False
+            finally:
+                db.close()
+        return False
+
     # Registration-related queries
     @staticmethod
     def is_registered(user_id):

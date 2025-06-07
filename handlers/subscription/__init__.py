@@ -3,6 +3,7 @@ Subscription handlers package initialization
 """
 
 from handlers.subscription.subscription_handlers import (
+    activate_or_extend_subscription,
     # Handler functions
     start_subscription_status, 
     view_active_subscription,
@@ -19,5 +20,6 @@ __all__ = [
     'subscription_status_handler',
     'subscription_renew_handler',
     'get_channel_link_handler', # Added this
+    'activate_or_extend_subscription',
     'SUBSCRIPTION_STATUS'
 ]

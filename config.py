@@ -112,6 +112,46 @@ TETHER_WALLET_ADDRESS = os.getenv("TETHER_WALLET_ADDRESS")
 if not TETHER_WALLET_ADDRESS:
     TETHER_WALLET_ADDRESS = _WALLET_NOT_SET_PLACEHOLDER
     logger.warning("TETHER_WALLET_ADDRESS not set in .env. Using placeholder: '%s'. Crypto payments may not be possible.", TETHER_WALLET_ADDRESS)
+# Crypto Payment Gateway Settings from .env
+CRYPTO_WALLET_ADDRESS = os.getenv("CRYPTO_WALLET_ADDRESS")
+if not CRYPTO_WALLET_ADDRESS:
+    CRYPTO_WALLET_ADDRESS = _WALLET_NOT_SET_PLACEHOLDER
+    logger.warning("CRYPTO_WALLET_ADDRESS not set in .env. Using placeholder: '%s'. USDT payments will fail.", CRYPTO_WALLET_ADDRESS)
+
+TRONGRID_API_KEY = os.getenv("TRONGRID_API_KEY")
+if not TRONGRID_API_KEY:
+    TRONGRID_API_KEY = _KEY_NOT_SET_PLACEHOLDER
+    logger.warning("TRONGRID_API_KEY not set in .env. Using placeholder. TronGrid communication will fail.")
+
+COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "") # Default to empty string if not set
+if not COINGECKO_API_KEY:
+    logger.info("COINGECKO_API_KEY not set or empty in .env. Real-time exchange rates via CoinGecko will not be used if it is required by the implementation.")
+
+USDT_TRC20_CONTRACT_ADDRESS = os.getenv("USDT_TRC20_CONTRACT_ADDRESS")
+if not USDT_TRC20_CONTRACT_ADDRESS:
+    USDT_TRC20_CONTRACT_ADDRESS = "USDT_CONTRACT_NOT_SET_IN_ENV" 
+    logger.error("CRITICAL: USDT_TRC20_CONTRACT_ADDRESS not set in .env. USDT payment processing will fail. Using placeholder: '%s'", USDT_TRC20_CONTRACT_ADDRESS)
+
+CRYPTO_PAYMENT_CONFIRMATIONS_STR = os.getenv("CRYPTO_PAYMENT_CONFIRMATIONS", "20") 
+try:
+    CRYPTO_PAYMENT_CONFIRMATIONS = int(CRYPTO_PAYMENT_CONFIRMATIONS_STR)
+except ValueError:
+    logger.warning(
+        f"Invalid value for CRYPTO_PAYMENT_CONFIRMATIONS in .env: '{CRYPTO_PAYMENT_CONFIRMATIONS_STR}'. "
+        f"Using default value: 20."
+    )
+    CRYPTO_PAYMENT_CONFIRMATIONS = 20
+
+CRYPTO_PAYMENT_TIMEOUT_MINUTES_STR = os.getenv("CRYPTO_PAYMENT_TIMEOUT_MINUTES", "30")
+try:
+    CRYPTO_PAYMENT_TIMEOUT_MINUTES = int(CRYPTO_PAYMENT_TIMEOUT_MINUTES_STR)
+except ValueError:
+    logger.warning(
+        f"Invalid value for CRYPTO_PAYMENT_TIMEOUT_MINUTES in .env: '{CRYPTO_PAYMENT_TIMEOUT_MINUTES_STR}'. "
+        f"Using default value: 30."
+    )
+    CRYPTO_PAYMENT_TIMEOUT_MINUTES = 30
+
 
 # Specific Payment Gateway URLs
 RIAL_GATEWAY_URL = os.getenv("RIAL_GATEWAY_URL")

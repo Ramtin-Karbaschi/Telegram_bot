@@ -113,6 +113,38 @@ CREATE TABLE IF NOT EXISTS notifications (
 )
 '''
 
+CRYPTO_PAYMENTS_TABLE = '''
+CREATE TABLE IF NOT EXISTS crypto_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    payment_id TEXT UNIQUE NOT NULL, -- Unique identifier for this payment attempt (e.g., UUID)
+    rial_amount REAL NOT NULL,
+    usdt_amount_requested REAL NOT NULL,
+    usdt_amount_received REAL, -- Actual USDT amount confirmed on blockchain
+    wallet_address TEXT NOT NULL, -- The wallet address payment was requested to
+    transaction_id TEXT UNIQUE, -- Blockchain transaction ID, initially NULL
+    status TEXT NOT NULL DEFAULT 'pending', -- e.g., pending, paid, expired, failed, error, underpaid, overpaid
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Tracks the last status update
+    expires_at TIMESTAMP NOT NULL, -- When this payment request becomes invalid
+    FOREIGN KEY (user_id) REFERENCES users (user_id)
+)
+'''
+
+
+
+USER_ACTIVITY_LOGS_TABLE = '''
+CREATE TABLE IF NOT EXISTS user_activity_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    telegram_id BIGINT NOT NULL,
+    action_type TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    details TEXT, -- JSON string for additional data
+    FOREIGN KEY(user_id) REFERENCES users(user_id)
+)
+'''
+
 # List of all tables to create
 ALL_TABLES = [
     USERS_TABLE,
@@ -122,5 +154,7 @@ ALL_TABLES = [
     TICKETS_TABLE,
     TICKET_MESSAGES_TABLE,
     INVITE_LINKS_TABLE,
-    NOTIFICATIONS_TABLE
+    NOTIFICATIONS_TABLE,
+    CRYPTO_PAYMENTS_TABLE,
+    USER_ACTIVITY_LOGS_TABLE
 ]

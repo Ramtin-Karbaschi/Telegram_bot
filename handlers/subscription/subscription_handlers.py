@@ -21,6 +21,58 @@ import logging
 # Configure logger
 logger = logging.getLogger(__name__)
 
+async def activate_or_extend_subscription(
+    user_id: int,
+    telegram_id: int, # telegram_id might be the same as user_id from DB users table
+    plan_id: int,
+    plan_name: str,
+    payment_amount: float,
+    payment_method: str,
+    transaction_id: str, # Blockchain TXID or Bank Transaction ID
+    context: ContextTypes.DEFAULT_TYPE,
+    payment_table_id: int # This is the ID from either 'payments' or 'crypto_payments' table
+) -> tuple[bool, str]:
+    """Activates a new subscription or extends an existing one for the user."""
+    logger.info(f"Attempting to activate/extend subscription for user_id: {user_id}, plan_id: {plan_id}, payment_method: {payment_method}, payment_table_id: {payment_table_id}")
+
+    try:
+        plan_details = Database.get_plan_by_id(plan_id)
+        if not plan_details:
+            logger.error(f"Plan with ID {plan_id} not found for user_id: {user_id}.")
+            return False, "اطلاعات طرح اشتراک یافت نشد."
+
+        plan_duration_days = plan_details.get('days')
+        if plan_duration_days is None:
+            logger.error(f"Plan duration (days) not found for plan_id: {plan_id}, user_id: {user_id}.")
+            return False, "مدت زمان طرح اشتراک مشخص نشده است."
+
+        # The payment_id argument in add_subscription refers to the ID in the 'payments' or 'crypto_payments' table.
+        subscription_id = Database.add_subscription(
+            user_id=user_id,
+            plan_id=plan_id,
+            payment_id=payment_table_id, # Crucial: This is the ID from the respective payment table
+            plan_duration_days=plan_duration_days,
+            amount_paid=payment_amount,
+            payment_method=payment_method,
+            # status is 'active' by default in add_subscription
+        )
+
+        if subscription_id:
+            logger.info(f"Successfully activated/extended subscription_id: {subscription_id} for user_id: {user_id} with plan '{plan_name}'. Payment ID: {payment_table_id} ({payment_method}).")
+            # UserAction.log_user_action(user_id, "subscription_activated", {details...}) # TODO: Implement UserAction
+            
+            # Optionally send a direct confirmation here, or rely on the calling handler
+            # await context.bot.send_message(telegram_id, f"اشتراک شما برای طرح '{plan_name}' با موفقیت فعال/تمدید شد.")
+            return True, f"اشتراک شما برای طرح '{plan_name}' با موفقیت فعال/تمدید شد."
+        else:
+            logger.error(f"Failed to add/extend subscription in DB for user_id: {user_id}, plan_id: {plan_id}, payment_table_id: {payment_table_id}.")
+            return False, "خطا در فعال‌سازی یا تمدید اشتراک در پایگاه داده."
+
+    except Exception as e:
+        logger.exception(f"Exception in activate_or_extend_subscription for user_id: {user_id}, plan_id: {plan_id}: {e}")
+        return False, f"خطای سیستمی در هنگام فعال‌سازی اشتراک: {e}"
+
+
 # Conversation states
 SUBSCRIPTION_STATUS = 0
 

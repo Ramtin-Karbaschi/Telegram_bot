@@ -93,11 +93,30 @@ CALLBACK_PROFILE_EDIT_PHONE = "profile_edit_phone"
 CALLBACK_PROFILE_EDIT_CITY = "profile_edit_city"
 CALLBACK_PROFILE_EDIT_EMAIL = "profile_edit_email"
 
-# Missing constants that need to be added
+# Constants for payment flow
 PAYMENT_METHOD_MESSAGE = """
-💳 روش پرداخت
+💳 روش پرداخت برای طرح «{plan_name}»
+قیمت ریالی: {plan_price} تومان
+قیمت تتر: {plan_tether} USDT
 
 لطفاً روش پرداخت مورد نظر خود را انتخاب کنید:
+"""
+
+CRYPTO_PAYMENT_UNIQUE_AMOUNT_MESSAGE = """
+💰 **پرداخت با تتر (USDT TRC20)** 💰
+
+لطفاً مبلغ  دقیقاً <code>{usdt_amount}</code> USDT (شبکه TRC20) را به آدرس کیف پول زیر واریز نمایید:
+
+آدرس کیف پول:
+<code>{wallet_address}</code>
+
+(با کلیک روی آدرس یا مبلغ، می‌توانید آن را کپی کنید)
+
+⏳ **مهم:** این مبلغ به صورت منحصر به فرد برای شما ایجاد شده است. لطفاً **دقیقاً همین مقدار** را واریز کنید تا پرداخت شما به درستی شناسایی شود.
+
+⏰ شما <b>{timeout_minutes} دقیقه</b> برای تکمیل این پرداخت فرصت دارید.
+
+پس از واریز، روی دکمه «تراکنش را انجام دادم، بررسی شود» کلیک کنید.
 """
 
 RIAL_PAYMENT_INSTRUCTIONS = """
@@ -111,6 +130,7 @@ RIAL_PAYMENT_INSTRUCTIONS = """
 پس از تکمیل پرداخت، به ربات بازگردید و روی دکمه "تأیید پرداخت" کلیک کنید.
 """
 
+# This constant might still be used elsewhere or can be deprecated if CRYPTO_PAYMENT_UNIQUE_AMOUNT_MESSAGE covers all cases.
 CRYPTO_PAYMENT_INSTRUCTIONS = """
 💰 پرداخت با تتر (USDT)
 

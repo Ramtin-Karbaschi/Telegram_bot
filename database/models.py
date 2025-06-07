@@ -2,9 +2,12 @@
 Database models for the Daraei Academy Telegram bot
 """
 
+import uuid
+from datetime import datetime, timedelta
+
 import sqlite3
 import os
-from datetime import datetime, timedelta
+# Removed duplicate: from datetime import datetime, timedelta
 import config
 
 class Database:
@@ -70,3 +73,73 @@ class Database:
             if not self.execute(table_query):
                 return False
         return True
+
+    # --- Crypto Payment Management ---
+    def create_crypto_payment_request(self, user_id, rial_amount, usdt_amount_requested, wallet_address, expires_at):
+        """Creates a new crypto payment request and returns its unique payment_id."""
+        payment_id = str(uuid.uuid4())
+        query = """
+            INSERT INTO crypto_payments 
+            (user_id, payment_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        now = datetime.now()
+        params = (user_id, payment_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, 'pending', now, now)
+        if self.execute(query, params):
+            self.commit()
+            return payment_id
+        return None
+
+    def update_crypto_payment_on_success(self, payment_id, transaction_id, usdt_amount_received):
+        """Updates a crypto payment record upon successful confirmation."""
+        query = """
+            UPDATE crypto_payments 
+            SET transaction_id = ?, usdt_amount_received = ?, status = 'paid', updated_at = ?
+            WHERE payment_id = ? AND status = 'pending'
+        """
+        params = (transaction_id, usdt_amount_received, datetime.now(), payment_id)
+        if self.execute(query, params):
+            self.commit()
+            return self.cursor.rowcount > 0
+        return False
+
+    def update_crypto_payment_status(self, payment_id, new_status):
+        """Updates the status of a crypto payment (e.g., to 'expired', 'failed', 'error')."""
+        query = "UPDATE crypto_payments SET status = ?, updated_at = ? WHERE payment_id = ?"
+        params = (new_status, datetime.now(), payment_id)
+        if self.execute(query, params):
+            self.commit()
+            return self.cursor.rowcount > 0
+        return False
+
+    def get_crypto_payment_by_payment_id(self, payment_id):
+        """Retrieves a crypto payment by its unique payment_id."""
+        query = "SELECT * FROM crypto_payments WHERE payment_id = ?"
+        if self.execute(query, (payment_id,)):
+            return self.fetchone()
+        return None
+
+    def get_crypto_payment_by_transaction_id(self, transaction_id):
+        """Retrieves a crypto payment by its blockchain transaction_id."""
+        query = "SELECT * FROM crypto_payments WHERE transaction_id = ?"
+        if self.execute(query, (transaction_id,)):
+            return self.fetchone()
+        return None
+
+    def get_pending_crypto_payment_by_user_and_amount(self, user_id, usdt_amount_requested):
+        """Retrieves a pending crypto payment for a specific user and requested USDT amount."""
+        query = """
+            SELECT * FROM crypto_payments 
+            WHERE user_id = ? AND usdt_amount_requested = ? AND status = 'pending' AND expires_at > ?
+            ORDER BY created_at DESC LIMIT 1
+        """
+        if self.execute(query, (user_id, usdt_amount_requested, datetime.now())):
+            return self.fetchone()
+        return None
+
+    def get_expired_pending_payments(self):
+        """Retrieves all pending crypto payments that have passed their expiration time."""
+        query = "SELECT * FROM crypto_payments WHERE status = 'pending' AND expires_at <= ?"
+        if self.execute(query, (datetime.now(),)):
+            return self.fetchall()
+        return []
