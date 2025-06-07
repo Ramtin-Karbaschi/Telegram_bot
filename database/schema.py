@@ -1,0 +1,126 @@
+"""Database schema definitions for the Daraei Academy Telegram bot."""
+
+# SQL statements for creating database tables
+USERS_TABLE = '''
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    username TEXT,
+    phone TEXT,
+    full_name TEXT,
+    age INTEGER,
+    birth_year INTEGER,
+    education TEXT,
+    occupation TEXT,
+    city TEXT,
+    email TEXT,
+    registration_date TEXT,
+    last_activity TEXT
+)
+'''
+
+PLANS_TABLE = '''
+CREATE TABLE IF NOT EXISTS plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    price REAL NOT NULL,
+    price_tether REAL, -- Added for crypto price
+    days INTEGER NOT NULL, -- Duration in days
+    features TEXT, -- JSON string for list of features
+    is_active INTEGER DEFAULT 1, -- 0 for inactive, 1 for active
+    display_order INTEGER DEFAULT 0 -- For ordering plans in lists
+)
+'''
+
+SUBSCRIPTIONS_TABLE = '''
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    plan_id INTEGER,
+    payment_id INTEGER,          -- ID of the payment record for this specific transaction
+    start_date TEXT,             -- Initial start date of the subscription period
+    end_date TEXT,               -- Current expiration date of the subscription
+    amount_paid REAL,            -- The actual amount paid for the latest transaction that activated/extended this subscription
+    payment_method TEXT,         -- Method used for the latest transaction (e.g., 'rial', 'tether')
+    status TEXT DEFAULT 'active',-- Status of the subscription (e.g., 'active', 'expired', 'cancelled')
+    created_at TEXT,             -- Timestamp of when the subscription record was first created
+    updated_at TEXT,             -- Timestamp of when the subscription record was last updated (e.g., on renewal)
+    FOREIGN KEY (user_id) REFERENCES users (user_id),
+    FOREIGN KEY (plan_id) REFERENCES plans (id),
+    FOREIGN KEY (payment_id) REFERENCES payments (id) -- Added foreign key for payment_id
+)
+'''
+
+PAYMENTS_TABLE = '''
+CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    amount REAL,
+    payment_date TEXT,
+    payment_method TEXT,
+    transaction_id TEXT,
+    description TEXT,
+    status TEXT DEFAULT 'pending',
+    FOREIGN KEY (user_id) REFERENCES users (user_id)
+)
+'''
+
+TICKETS_TABLE = '''
+CREATE TABLE IF NOT EXISTS tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    subject TEXT,
+    created_at TEXT,
+    status TEXT DEFAULT 'open',
+    FOREIGN KEY (user_id) REFERENCES users (user_id)
+)
+'''
+
+TICKET_MESSAGES_TABLE = '''
+CREATE TABLE IF NOT EXISTS ticket_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id INTEGER,
+    user_id INTEGER,
+    message TEXT,
+    timestamp TEXT,
+    is_admin INTEGER DEFAULT 0,
+    FOREIGN KEY (ticket_id) REFERENCES tickets (id),
+    FOREIGN KEY (user_id) REFERENCES users (user_id)
+)
+'''
+
+INVITE_LINKS_TABLE = '''
+CREATE TABLE IF NOT EXISTS invite_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    invite_link TEXT,
+    creation_date TEXT,
+    expiration_date TEXT,
+    is_used INTEGER DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES users (user_id)
+)
+'''
+
+NOTIFICATIONS_TABLE = '''
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    type TEXT,
+    content TEXT,
+    sent_date TEXT,
+    is_read INTEGER DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES users (user_id)
+)
+'''
+
+# List of all tables to create
+ALL_TABLES = [
+    USERS_TABLE,
+    PLANS_TABLE,
+    SUBSCRIPTIONS_TABLE,
+    PAYMENTS_TABLE,
+    TICKETS_TABLE,
+    TICKET_MESSAGES_TABLE,
+    INVITE_LINKS_TABLE,
+    NOTIFICATIONS_TABLE
+]
