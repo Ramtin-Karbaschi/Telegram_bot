@@ -20,13 +20,7 @@ from handlers.support.support_handlers import (
     view_ticket_handler,
     close_ticket_handler,
     reopen_ticket_handler,
-    ticket_conversation,
-    # Conversation states
-    SUPPORT_MENU,
-    NEW_TICKET_SUBJECT,
-    NEW_TICKET_MESSAGE,
-    VIEW_TICKET,
-    TICKET_CONVERSATION
+    ticket_conversation # ticket_conversation is the ConversationHandler instance
 )
 
 __all__ = [
@@ -45,10 +39,5 @@ __all__ = [
     'view_ticket_handler',
     'close_ticket_handler',
     'reopen_ticket_handler',
-    'ticket_conversation',
-    'SUPPORT_MENU',
-    'NEW_TICKET_SUBJECT',
-    'NEW_TICKET_MESSAGE',
-    'VIEW_TICKET',
-    'TICKET_CONVERSATION'
+    'ticket_conversation' # This is the ConversationHandler instance
 ]

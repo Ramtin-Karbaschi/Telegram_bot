@@ -2,16 +2,15 @@
 Support ticket handlers for the Daraei Academy Telegram bot
 """
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import (
-    ContextTypes, ConversationHandler, CommandHandler,
-    MessageHandler, filters, CallbackQueryHandler
-)
+from telegram import Update, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.constants import ParseMode
 from database.queries import DatabaseQueries as Database
 from utils.keyboards import get_main_menu_keyboard, get_support_menu_keyboard, get_ticket_conversation_keyboard, get_back_button
 from utils.constants import (
     SUPPORT_WELCOME_MESSAGE, NEW_TICKET_SUBJECT_REQUEST, NEW_TICKET_MESSAGE_REQUEST,
-    TICKET_CREATED_MESSAGE, TICKET_CLOSED_MESSAGE, TICKET_REOPENED_MESSAGE
+    TICKET_CREATED_MESSAGE, TICKET_CLOSED_MESSAGE, TICKET_REOPENED_MESSAGE,
+    SUPPORT_MENU, NEW_TICKET_SUBJECT, NEW_TICKET_MESSAGE, VIEW_TICKET # Added conversation states
 )
 import config
 import logging
@@ -19,15 +18,8 @@ import logging
 # Configure logger
 logger = logging.getLogger(__name__)
 
-# Conversation states
-SUPPORT_MENU = 0
-NEW_TICKET_SUBJECT = 1
-NEW_TICKET_MESSAGE = 2
-VIEW_TICKET = 3
-TICKET_CONVERSATION = 4
-
 async def start_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start the support process"""
+    """Start the support process, handling both command and callback query"""
     user_id = update.effective_user.id
     
     # Update user activity
@@ -35,12 +27,30 @@ async def start_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Get user's tickets
     tickets = Database.get_user_tickets(user_id)
+    reply_markup = get_support_menu_keyboard(tickets)
     
-    # Send welcome message with support menu
-    await update.message.reply_text(
-        SUPPORT_WELCOME_MESSAGE,
-        reply_markup=get_support_menu_keyboard(tickets)
-    )
+    if update.callback_query:
+        await update.callback_query.answer()
+        # Check if the message text is already SUPPORT_WELCOME_MESSAGE to avoid unnecessary edits
+        # Or if the current keyboard is already the support menu keyboard (more complex to check reliably without message ID)
+        # For simplicity, we'll just edit if the text is different or assume it's a fresh request for the menu.
+        if update.callback_query.message.text != SUPPORT_WELCOME_MESSAGE:
+            await update.callback_query.message.edit_text(
+                SUPPORT_WELCOME_MESSAGE,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
+        # If the text is the same, it might mean the user clicked the support button again from the main menu.
+        # We still want to present the support menu, so no action if text is same, keyboard is already there.
+        # However, if the callback is from a different message, edit_text is appropriate.
+        # The current logic will re-send/edit the message if text is different.
+
+    elif update.message: # Called by /support command
+        await update.message.reply_text(
+            SUPPORT_WELCOME_MESSAGE,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
     
     return SUPPORT_MENU
 
@@ -80,8 +90,9 @@ async def get_ticket_subject(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Ask for message
     await update.message.reply_text(
-        NEW_TICKET_MESSAGE_REQUEST,
-        reply_markup=get_back_button()
+        f"لطفاً متن پیام خود را در ارتباط با موضوع <b>{subject}</b> وارد کنید.",
+        reply_markup=get_back_button(),
+        parse_mode=ParseMode.HTML
     )
     
     return NEW_TICKET_MESSAGE
@@ -111,129 +122,203 @@ async def get_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Create the ticket
     user_id = update.effective_user.id
-    ticket_id = Database.create_ticket(
+    ticket_number_from_db = Database.create_ticket( # Renamed to avoid confusion
         user_id=user_id,
         subject=subject,
         message=message
     )
+
+    if ticket_number_from_db is None: # Check if ticket creation failed
+        logger.error(f"Failed to create ticket for user {user_id} with subject '{subject}'")
+        await update.message.reply_text(
+            "متأسفانه در ایجاد تیکت مشکلی پیش آمد. لطفاً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.",
+            reply_markup=get_main_menu_keyboard() # Or support menu if preferred
+        )
+        # Clear context even on failure to prevent issues
+        if 'ticket_subject' in context.user_data:
+            del context.user_data['ticket_subject']
+        return ConversationHandler.END
+
+    formatted_ticket_id = f"{user_id}-{ticket_number_from_db}"
     
     # Clear context
     if 'ticket_subject' in context.user_data:
         del context.user_data['ticket_subject']
     
-    # Show success message
-    await update.message.reply_text(
-        TICKET_CREATED_MESSAGE.format(
-            ticket_id=ticket_id,
-            subject=subject
-        ),
-        reply_markup=get_main_menu_keyboard()
+    # Show success message to user
+    success_message_user = (
+        f"✅ تیکت شما با شناسه <b>{formatted_ticket_id}</b> با موفقیت ثبت شد.\n"
+        f"موضوع: {subject}\n\n"
+        "به زودی توسط تیم پشتیبانی بررسی خواهد شد."
     )
     
+    # Get user's tickets again to update the support menu
+    tickets = Database.get_user_tickets(user_id)
+    await update.message.reply_text(
+        success_message_user,
+        reply_markup=get_support_menu_keyboard(tickets),
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Notify admins
+    admin_notification_message = (
+        f"🔔 تیکت جدید ثبت شد! 🔔\n\n"
+        f"👤 کاربر: {update.effective_user.full_name} (ID: {user_id})\n"
+        f"🎫 شناسه تیکت: {formatted_ticket_id}\n"
+        f"📋 موضوع: {subject}\n"
+        f"📝 پیام اولیه: {message[:100]}{'...' if len(message) > 100 else ''}" # Show first 100 chars of message
+    )
+    
+    if hasattr(config, 'ADMIN_IDS') and isinstance(config.ADMIN_IDS, list) and config.ADMIN_IDS:
+        for admin_id in config.ADMIN_IDS:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=admin_notification_message,
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception as e:
+                logger.error(f"Failed to send new ticket notification to admin {admin_id}: {e}")
+    else:
+        logger.warning("ADMIN_IDS not configured or not a list. Cannot send new ticket notification to admins.")
+            
     return ConversationHandler.END
 
 async def view_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE, ticket_id=None):
     """View a specific ticket conversation"""
-    # Check if from callback query
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        
-        # Get ticket ID from callback data
         if not ticket_id:
-            ticket_id = query.data.replace("view_ticket_", "")
-    
-    # Get ticket from database
+            # Extract ticket_id from callback_data like 'view_ticket_123'
+            try:
+                ticket_id = int(query.data.split('_')[-1])
+            except (IndexError, ValueError):
+                logger.error(f"Could not parse ticket_id from callback_data: {query.data}")
+                await query.message.edit_text(
+                    "خطا در پردازش درخواست. لطفاً دوباره تلاش کنید.",
+                    reply_markup=get_support_menu_keyboard([]) # Show basic support menu
+                )
+                logger.debug(f"view_ticket returning SUPPORT_MENU due to parsing error for ticket_id from {query.data}")
+                return SUPPORT_MENU # Or an appropriate state
+
+    # If ticket_id is still None (e.g., direct call without callback or parsing failed)
+    # This part might need adjustment based on how view_ticket can be invoked without a callback.
+    # For now, we assume ticket_id is primarily from callback.
+
     ticket = Database.get_ticket(ticket_id)
-    
     if not ticket:
-        # Ticket not found
-        message = "تیکت مورد نظر یافت نشد."
-        
+        not_found_message = "تیکت مورد نظر یافت نشد یا شما دسترسی به آن ندارید."
         if update.callback_query:
             await update.callback_query.message.edit_text(
-                message,
-                reply_markup=get_main_menu_keyboard()
+                not_found_message,
+                reply_markup=get_support_menu_keyboard(Database.get_user_tickets(update.effective_user.id))
             )
         else:
+            # This case (direct message to view_ticket) is less common for viewing existing tickets
             await update.message.reply_text(
-                message,
-                reply_markup=get_main_menu_keyboard()
+                not_found_message,
+                reply_markup=get_support_menu_keyboard(Database.get_user_tickets(update.effective_user.id))
             )
-        
-        return ConversationHandler.END
-    
-    # Get all messages for this ticket
+        logger.debug(f"view_ticket returning SUPPORT_MENU because ticket {ticket_id} not found or no access (direct message path).")
+        return SUPPORT_MENU
+
     messages = Database.get_ticket_messages(ticket_id)
-    
-    # Prepare message text
-    message_text = f"📋 تیکت #{ticket_id}: {ticket['subject']}\n"
+
+    message_text = f"<b>📋 تیکت #{ticket_id}: {ticket['subject']}</b>\n"
     message_text += f"🕒 تاریخ ایجاد: {ticket['created_at']}\n"
-    message_text += f"📊 وضعیت: {'باز' if ticket['status'] == 'open' else 'بسته'}\n\n"
-    
-    # Add all messages
+    # Display a more user-friendly status
+    status_translation = {
+        'open': 'باز',
+        'closed': 'بسته',
+        'pending_admin_reply': 'در انتظار پاسخ پشتیبانی',
+        'pending_user_reply': 'پاسخ داده شده توسط پشتیبانی'
+    }
+    displayed_status = status_translation.get(ticket['status'], ticket['status'])
+    message_text += f"📊 وضعیت: {displayed_status}\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n\n"
+
     for msg in messages:
-        sender = "شما" if msg['is_user'] else "پشتیبانی"
-        message_text += f"[{msg['created_at']}] {sender}:\n{msg['message']}\n\n"
-    
+        sender = "پشتیبانی" if msg['is_admin'] else "شما"
+        msg_time = msg['timestamp']
+        msg_content = msg['message']
+        message_text += f"<i>[{msg_time}]</i> <b>{sender}:</b>\n{msg_content}\n\n"
+
     # Determine keyboard based on ticket status
-    if ticket['status'] == 'open':
-        keyboard = get_ticket_conversation_keyboard(ticket_id, can_close=True)
-    else:
-        keyboard = get_ticket_conversation_keyboard(ticket_id, can_reopen=True)
-    
-    # Send or edit message based on update type
+    # is_open should be True if the ticket is in a state where the user might want to close it 
+    # or reply to it (e.g., 'open', 'pending_user_reply', 'pending_admin_reply').
+    # is_open should be False if the ticket is 'closed', so the 'reopen' button is shown.
+    ticket_is_currently_open_for_user_action = ticket['status'] in ['open', 'pending_user_reply', 'pending_admin_reply']
+    keyboard = get_ticket_conversation_keyboard(ticket_id, is_open=ticket_is_currently_open_for_user_action)
+
+    context.user_data['active_ticket_id'] = ticket_id # Store for sending messages
+
     if update.callback_query:
         await update.callback_query.message.edit_text(
             message_text,
-            reply_markup=keyboard
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
         )
-    else:
+    elif update.message: # Should ideally not happen for viewing an existing ticket this way
         await update.message.reply_text(
             message_text,
-            reply_markup=keyboard
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
         )
     
-    # Set active ticket in context
-    context.user_data['active_ticket'] = ticket_id
-    
-    return VIEW_TICKET
+    logger.debug(f"view_ticket successfully processed ticket {ticket_id} and is returning VIEW_TICKET")
+    return VIEW_TICKET # State for when viewing a ticket and can send messages
 
 async def send_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message in an open ticket conversation"""
-    # Get active ticket
-    ticket_id = context.user_data.get('active_ticket')
-    
+    ticket_id = context.user_data.get('active_ticket_id')
+
     if not ticket_id:
-        # No active ticket
         await update.message.reply_text(
-            "لطفاً ابتدا یک تیکت را انتخاب کنید.",
-            reply_markup=get_main_menu_keyboard()
+            "خطایی رخ داده است. لطفاً ابتدا یک تیکت را از منوی پشتیبانی انتخاب کنید.",
+            reply_markup=get_support_menu_keyboard(Database.get_user_tickets(update.effective_user.id))
         )
-        return ConversationHandler.END
-    
-    # Get ticket status
+        return SUPPORT_MENU
+
     ticket = Database.get_ticket(ticket_id)
-    
-    if not ticket or ticket['status'] != 'open':
-        # Ticket closed or not found
+
+    # User can send message if ticket exists and is not 'closed'
+    # Valid statuses for sending a message: 'open', 'pending_admin_reply', 'pending_user_reply'
+    if not ticket or ticket['status'] == 'closed':
         await update.message.reply_text(
-            "این تیکت بسته شده است و امکان ارسال پیام جدید وجود ندارد.",
-            reply_markup=get_main_menu_keyboard()
+            "این تیکت بسته شده است و امکان ارسال پیام جدید وجود ندارد. برای ادامه، لطفاً تیکت را بازگشایی کنید یا تیکت جدیدی ایجاد نمایید.",
+            reply_markup=get_support_menu_keyboard(Database.get_user_tickets(update.effective_user.id))
         )
-        return ConversationHandler.END
-    
-    # Add message to ticket
+        # Optionally, show the specific ticket view again so they can see the reopen button if applicable
+        # return await view_ticket(update, context, ticket_id) 
+        return SUPPORT_MENU # Or return to the specific ticket view if preferred
+
     user_id = update.effective_user.id
-    Database.add_ticket_message(
+    message_text = update.message.text
+
+    if not message_text.strip():
+        await update.message.reply_text("پیام شما نمی‌تواند خالی باشد. لطفاً متن پیام را وارد کنید.")
+        return VIEW_TICKET # Stay in the same state to allow user to re-enter message
+
+    # Add message to ticket, for user messages, is_admin_message is False (default)
+    success = Database.add_ticket_message(
         ticket_id=ticket_id,
-        user_id=user_id,
-        message=update.message.text,
-        is_user=True
+        sender_user_id=user_id,
+        message_text=message_text,
+        is_admin_message=False 
     )
-    
-    # View updated ticket
-    return await view_ticket(update, context, ticket_id)
+
+    if success:
+        # View updated ticket
+        # Ensure the view_ticket function is called correctly, it might need context or update object if called directly
+        # The current structure of view_ticket expects to be a handler, so we pass update and context.
+        await update.message.reply_text("پیام شما با موفقیت ارسال شد.") # Optimistic send
+        return await view_ticket(update, context, ticket_id=ticket_id)
+    else:
+        await update.message.reply_text(
+            "متاسفانه در ارسال پیام شما مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
+        )
+        # Stay in the same state or return to ticket view
+        return VIEW_TICKET
 
 async def close_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Close an open ticket"""
@@ -396,7 +481,9 @@ async def new_ticket_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def view_ticket_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler for view ticket callbacks"""
     # This is a wrapper around view_ticket for use with CallbackQueryHandler
-    return await view_ticket(update, context)
+    result_state = await view_ticket(update, context)
+    logger.debug(f"view_ticket_handler returning state: {result_state}")
+    return result_state
 
 async def close_ticket_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler for close ticket callbacks"""
@@ -422,17 +509,17 @@ ticket_conversation = ConversationHandler(
         ],
         NEW_TICKET_SUBJECT: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_ticket_subject),
-            CallbackQueryHandler(back_to_tickets, pattern="^back$")
+            MessageHandler(filters.TEXT & filters.Regex(f"^🔙 بازگشت$"), support_menu_handler)  # Go back to support menu
         ],
         NEW_TICKET_MESSAGE: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_ticket_message),
-            CallbackQueryHandler(back_to_tickets, pattern="^back$")
+            MessageHandler(filters.TEXT & filters.Regex(f"^🔙 بازگشت$"), new_ticket_handler)  # Go back to subject input
         ],
         VIEW_TICKET: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, send_ticket_message),
             CallbackQueryHandler(close_ticket_handler, pattern="^close_ticket_"),
             CallbackQueryHandler(reopen_ticket_handler, pattern="^reopen_ticket_"),
-            CallbackQueryHandler(back_to_tickets, pattern="^back$")
+            CallbackQueryHandler(back_to_tickets, pattern="^back_to_tickets$") # Go back to ticket list (support menu)
         ]
     },
     fallbacks=[
