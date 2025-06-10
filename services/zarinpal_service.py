@@ -48,10 +48,12 @@ class ZarinpalPaymentService:
                 logger.error("Zarinpal callback URL is not properly configured. Please set it in .env")
                 return {'status': -98, 'error_message': 'Zarinpal callback URL not configured.'}
 
-            logger.info(f"Creating Zarinpal payment request. Amount: {amount}, Description: {description}, Callback: {ZARINPAL_CALLBACK_URL}")
+            # Zarinpal API requires the amount in Tomans. Convert from Rials.
+            amount_toman = amount // 10
+            logger.info(f"Creating Zarinpal payment request. Amount: {amount} Rials ({amount_toman} Tomans), Description: {description}, Callback: {ZARINPAL_CALLBACK_URL}")
             
             response = client.request_payment(
-                amount=amount,
+                amount=amount_toman,
                 description=description,
                 callback_url=ZARINPAL_CALLBACK_URL,
                 mobile=user_mobile if user_mobile else None, # Ensure None if empty string
@@ -99,9 +101,11 @@ class ZarinpalPaymentService:
         """
         try:
             client = ZarinpalPaymentService._get_client()
-            logger.info(f"Verifying Zarinpal payment. Amount: {amount}, Authority: {authority}")
-            
-            response = client.verify_payment(authority=authority, amount=amount)
+            # Zarinpal API requires the amount in Tomans. Convert from Rials.
+            amount_toman = amount // 10
+            logger.info(f"Verifying Zarinpal payment. Amount: {amount} Rials ({amount_toman} Tomans), Authority: {authority}")
+        
+            response = client.verify_payment(authority=authority, amount=amount_toman)
             
             # zarinpal-python-sdk response structure:
             # Success: {'Status': 100, 'RefID': 12345, ...}

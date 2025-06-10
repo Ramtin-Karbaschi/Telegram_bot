@@ -103,6 +103,8 @@ if not PAYMENT_API_KEY:
     logger.warning("PAYMENT_API_KEY not set in .env. Using placeholder. Payment gateway communication might fail.")
 
 ZARINPAL_MERCHANT_ID = os.getenv("ZARINPAL_MERCHANT_ID")
+if not ZARINPAL_MERCHANT_ID:
+    logger.error("CRITICAL: ZARINPAL_MERCHANT_ID not set in .env. Zarinpal payment requests will fail.")
 ZARINPAL_CALLBACK_URL = os.getenv("ZARINPAL_CALLBACK_URL")
 if not ZARINPAL_CALLBACK_URL:
     logger.error("CRITICAL: ZARINPAL_CALLBACK_URL not set in .env. Zarinpal payment verification will fail.")
