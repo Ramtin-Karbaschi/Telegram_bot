@@ -18,7 +18,7 @@ from utils.keyboards import (
     get_subscription_plans_keyboard, get_main_menu_keyboard
 )
 from utils.constants import (
-    TEXT_MAIN_MENU_SUBSCRIPTION_STATUS,
+
     TEXT_GENERAL_BACK_TO_MAIN_MENU,
     CALLBACK_VIEW_SUBSCRIPTION_STATUS_FROM_REG,
     CALLBACK_BACK_TO_MAIN_MENU,
@@ -53,7 +53,6 @@ async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(
             "شما قبلاً ثبت‌نام کرده‌اید! می‌توانید از منوی اصلی برای مدیریت اشتراک خود استفاده کنید.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(TEXT_MAIN_MENU_SUBSCRIPTION_STATUS, callback_data=CALLBACK_VIEW_SUBSCRIPTION_STATUS_FROM_REG)],
                 [InlineKeyboardButton(TEXT_GENERAL_BACK_TO_MAIN_MENU, callback_data=CALLBACK_BACK_TO_MAIN_MENU)]
             ])
         )
@@ -158,7 +157,6 @@ async def get_fullname(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "ثبت نام اولیه شما با موفقیت انجام شد. برای تکمیل اطلاعات خود و استفاده از امکانات ربات، لطفاً از منوی «وضعیت اشتراک من» اقدام کنید.",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(TEXT_MAIN_MENU_SUBSCRIPTION_STATUS, callback_data=CALLBACK_VIEW_SUBSCRIPTION_STATUS_FROM_REG)],
             [InlineKeyboardButton(TEXT_GENERAL_BACK_TO_MAIN_MENU, callback_data=CALLBACK_BACK_TO_MAIN_MENU)]
         ])
     )

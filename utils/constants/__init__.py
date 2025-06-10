@@ -212,10 +212,10 @@ CALLBACK_START_PROFILE_EDIT = "start_profile_edit_conversation"
 TEXT_MAIN_MENU_HELP = "💡 راهنما"
 
 TEXT_MAIN_MENU_REGISTRATION = "📝 ثبت نام"
-TEXT_MAIN_MENU_SUBSCRIPTION_STATUS = "👤 وضعیت اشتراک من"
 TEXT_MAIN_MENU_EDIT_PROFILE = "👤 ویرایش پروفایل"
 TEXT_MAIN_MENU_SUPPORT = "🤝🏻 پشتیبانی"
 TEXT_MAIN_MENU_RULES = "⚠ قوانین"
+TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🎫 خرید اشتراک"
 
 # Profile Editing Callback Data
 CALLBACK_MAIN_MENU_EDIT_PROFILE = "main_menu_edit_profile"  # For triggering edit from main menu

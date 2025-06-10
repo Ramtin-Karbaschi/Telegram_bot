@@ -48,12 +48,14 @@ def migrate_plans_table():
 
         # Define columns to check and add {column_name: column_type}
         columns_to_ensure = {
-            'currency': 'TEXT NOT NULL DEFAULT \'IRT\'',
-            'days': 'INTEGER NOT NULL DEFAULT 0', # Default 0 to avoid issues if not set immediately
+            'currency': 'TEXT NOT NULL DEFAULT \'IRT\'', # This column seems to be a legacy or misnamed, actual price is in 'price'. Consider removing or clarifying its role.
+            'days': 'INTEGER NOT NULL DEFAULT 0',
             'description': 'TEXT',
             'is_active': 'BOOLEAN DEFAULT TRUE',
             'created_at': 'TEXT',
-            'updated_at': 'TEXT'
+            'updated_at': 'TEXT',
+            'original_price_irr': 'REAL',
+            'original_price_usdt': 'REAL'
         }
 
         for col_name, col_definition in columns_to_ensure.items():
@@ -76,8 +78,41 @@ def migrate_plans_table():
         if conn:
             conn.close()
 
+def migrate_payments_table():
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+
+        cursor.execute("PRAGMA table_info(payments)")
+        columns = [column[1] for column in cursor.fetchall()]
+
+        # Define columns to check and add {column_name: column_type_and_constraints}
+        columns_to_ensure = {
+            'plan_id': 'INTEGER REFERENCES plans(id)',
+            'gateway_ref_id': 'TEXT',
+            'created_at': 'TEXT',
+            'updated_at': 'TEXT'
+        }
+
+        for col_name, col_definition in columns_to_ensure.items():
+            if col_name not in columns:
+                print(f"Adding '{col_name}' column ({col_definition}) to 'payments' table...")
+                cursor.execute(f"ALTER TABLE payments ADD COLUMN {col_name} {col_definition}")
+                conn.commit()
+                print(f"'{col_name}' column added successfully.")
+            else:
+                print(f"'{col_name}' column already exists in 'payments' table.")
+
+    except sqlite3.Error as e:
+        print(f"SQLite error in migrate_payments_table: {e}")
+    finally:
+        if conn:
+            conn.close()
+
 if __name__ == "__main__":
     print(f"Attempting to migrate database: {DB_NAME}")
     migrate_subscriptions_table()
     migrate_plans_table()
+    migrate_payments_table()
     print("Migration attempt finished.")

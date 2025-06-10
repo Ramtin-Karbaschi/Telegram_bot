@@ -13,20 +13,32 @@ import config
 class Database:
     """SQLite database connection and initialization"""
     
-    def __init__(self, db_name=config.DATABASE_NAME):
-        self.db_name = db_name
+    def __init__(self, db_name=None):
+        if db_name is None:
+            if hasattr(config, 'DATABASE_NAME') and config.DATABASE_NAME:
+                self.db_name = config.DATABASE_NAME
+            else:
+                default_db_path = "default_database.db"
+                print(f"CRITICAL: DATABASE_NAME not found in config or passed as argument. Using default: {os.path.abspath(default_db_path)}")
+                self.db_name = default_db_path
+        else:
+            self.db_name = db_name
+            
+        print(f"Database class initialized. Attempting to use database at: {os.path.abspath(self.db_name)}") 
         self.conn = None
         self.cursor = None
         
     def connect(self):
         """Connect to the SQLite database"""
         try:
+            print(f"Connecting to: {os.path.abspath(self.db_name)}")
             self.conn = sqlite3.connect(self.db_name)
-            self.conn.row_factory = sqlite3.Row  # Return rows as dictionary-like objects
+            self.conn.row_factory = sqlite3.Row
             self.cursor = self.conn.cursor()
+            print(f"Successfully connected to {os.path.abspath(self.db_name)}")
             return True
         except sqlite3.Error as e:
-            print(f"Database connection error: {e}")
+            print(f"Database connection error for {os.path.abspath(self.db_name)}: {e}")
             return False
             
     def close(self):

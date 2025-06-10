@@ -97,15 +97,21 @@ if not PAYMENT_GATEWAY_URL:
     PAYMENT_GATEWAY_URL = _URL_NOT_SET_PLACEHOLDER
     logger.warning("PAYMENT_GATEWAY_URL not set in .env. Using placeholder: '%s'. Payment functionality might be affected.", PAYMENT_GATEWAY_URL)
 
-PAYMENT_CALLBACK_URL = os.getenv("PAYMENT_CALLBACK_URL")
-if not PAYMENT_CALLBACK_URL:
-    PAYMENT_CALLBACK_URL = _URL_NOT_SET_PLACEHOLDER
-    logger.warning("PAYMENT_CALLBACK_URL not set in .env. Using placeholder: '%s'. Payment verification might fail.", PAYMENT_CALLBACK_URL)
-
 PAYMENT_API_KEY = os.getenv("PAYMENT_API_KEY")
 if not PAYMENT_API_KEY:
     PAYMENT_API_KEY = _KEY_NOT_SET_PLACEHOLDER
     logger.warning("PAYMENT_API_KEY not set in .env. Using placeholder. Payment gateway communication might fail.")
+
+ZARINPAL_MERCHANT_ID = os.getenv("ZARINPAL_MERCHANT_ID")
+ZARINPAL_CALLBACK_URL = os.getenv("ZARINPAL_CALLBACK_URL")
+if not ZARINPAL_CALLBACK_URL:
+    logger.error("CRITICAL: ZARINPAL_CALLBACK_URL not set in .env. Zarinpal payment verification will fail.")
+
+# Nobitex API (for USDT price)
+NOBITEX_API_BASE_URL = os.getenv("NOBITEX_API_BASE_URL", "https://api.nobitex.ir")
+NOBITEX_API_KEY = os.getenv("NOBITEX_API_KEY", "") # API key for Nobitex
+if not NOBITEX_API_KEY:
+    logger.info("NOBITEX_API_KEY not set or empty in .env. Price fetching from Nobitex might fail if API key is required.")
 
 # Crypto payment settings
 TETHER_WALLET_ADDRESS = os.getenv("TETHER_WALLET_ADDRESS")

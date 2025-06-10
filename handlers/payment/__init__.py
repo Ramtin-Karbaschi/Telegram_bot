@@ -9,6 +9,7 @@ from handlers.payment.payment_handlers import (
     verify_payment_status,
     back_to_plans_handler,
     back_to_payment_methods_handler,
+    show_qr_code_handler, # Added for QR code display
     # Conversation states
     SELECT_PLAN,
     SELECT_PAYMENT_METHOD,

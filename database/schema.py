@@ -23,9 +23,11 @@ CREATE TABLE IF NOT EXISTS plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     description TEXT,
-    price REAL NOT NULL,
-    price_tether REAL, -- Added for crypto price
-    days INTEGER NOT NULL, -- Duration in days
+    price REAL NOT NULL,       -- Final payable price in IRR
+    original_price_irr REAL, -- Original price in IRR before discount, nullable
+    price_tether REAL,         -- Final payable price in USDT
+    original_price_usdt REAL,  -- Original price in USDT before discount, nullable
+    days INTEGER NOT NULL,     -- Duration in days
     features TEXT, -- JSON string for list of features
     is_active INTEGER DEFAULT 1, -- 0 for inactive, 1 for active
     display_order INTEGER DEFAULT 0 -- For ordering plans in lists
@@ -47,21 +49,26 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     updated_at TEXT,             -- Timestamp of when the subscription record was last updated (e.g., on renewal)
     FOREIGN KEY (user_id) REFERENCES users (user_id),
     FOREIGN KEY (plan_id) REFERENCES plans (id),
-    FOREIGN KEY (payment_id) REFERENCES payments (id) -- Added foreign key for payment_id
+    FOREIGN KEY (payment_id) REFERENCES payments (payment_id) -- Updated foreign key for payment_id
 )
 '''
 
 PAYMENTS_TABLE = '''
 CREATE TABLE IF NOT EXISTS payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    payment_id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
+    plan_id INTEGER,            -- Added to link payment to a specific plan
     amount REAL,
-    payment_date TEXT,
-    payment_method TEXT,
-    transaction_id TEXT,
+    payment_date TEXT,          -- Should be populated when payment is initiated or confirmed
+    payment_method TEXT,        -- e.g., 'zarinpal', 'crypto_usdt_trc20'
+    transaction_id TEXT,        -- Stores Zarinpal Authority or initial Crypto Tx Hash provided by user
+    gateway_ref_id TEXT,        -- Stores final Zarinpal RefID or confirmed Crypto Tx Hash from network
     description TEXT,
-    status TEXT DEFAULT 'pending',
-    FOREIGN KEY (user_id) REFERENCES users (user_id)
+    status TEXT DEFAULT 'pending', -- e.g., pending, pending_verification, completed, failed, cancelled, expired, refunded
+    created_at TEXT,            -- Timestamp of when the payment record was created
+    updated_at TEXT,            -- Timestamp of when the payment record was last updated
+    FOREIGN KEY (user_id) REFERENCES users (user_id),
+    FOREIGN KEY (plan_id) REFERENCES plans (id) -- Added foreign key for plan_id
 )
 '''
 

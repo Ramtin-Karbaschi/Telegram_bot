@@ -3,12 +3,13 @@ Main Telegram bot for Daraei Academy
 """
 import sys
 import os
+import asyncio
+import os
 
 # Add the project root directory to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
-
 
 import logging
 import html
@@ -96,7 +97,8 @@ from handlers.profile_handlers import (
 )
 from handlers.payment import (
     payment_conversation, select_plan, 
-    select_payment_method, verify_payment_status
+    select_payment_method, verify_payment_status,
+    show_qr_code_handler # Added for QR code display
 )
 from handlers.subscription import (
     subscription_status_handler, subscription_renew_handler,
@@ -120,8 +122,9 @@ from utils.constants import (
     WELCOME_MESSAGE, HELP_MESSAGE, RULES_MESSAGE,
     TEXT_MAIN_MENU_EDIT_PROFILE, # Added constant for edit profile button text
     TEXT_MAIN_MENU_JOIN_OR_REGISTER, # Added constant for the new join/register button
+    TEXT_MAIN_MENU_BUY_SUBSCRIPTION, # Added constant for buy subscription button
     # Assuming these constants exist or will be added for other menu items for consistency
-    TEXT_MAIN_MENU_REGISTRATION, TEXT_MAIN_MENU_SUBSCRIPTION_STATUS,
+    TEXT_MAIN_MENU_REGISTRATION,
     TEXT_MAIN_MENU_SUPPORT, TEXT_MAIN_MENU_RULES, TEXT_MAIN_MENU_HELP
 )
 
@@ -168,6 +171,20 @@ class MainBot:
         # Payment conversation handler
         self.application.add_handler(payment_conversation)
 
+        # Handler for back button from payment method selection to plan selection
+        self.application.add_handler(CommandHandler('subscribe', select_plan))
+        self.application.add_handler(CallbackQueryHandler(select_plan, pattern='^start_subscription_flow$'))
+
+        # Handler for back button from subscription plan selection
+        self.application.add_handler(CallbackQueryHandler(handle_back_to_main, pattern=r"^back_to_main_menu_from_plans$"))
+
+        # Handler for showing USDT QR code
+        self.application.add_handler(CallbackQueryHandler(show_qr_code_handler, pattern=r'^show_qr_code_'))
+
+        # Generic handler for 'back_to_main' callback (e.g., from support menu)
+        self.application.add_handler(CallbackQueryHandler(handle_back_to_main, pattern=r"^back_to_main$"))
+        self.application.add_handler(CallbackQueryHandler(handle_back_to_main, pattern=r"^main_menu_back$")) # Handler for back from help/rules
+        
         # Profile edit conversation handler
         self.application.add_handler(get_profile_edit_conv_handler())
         
@@ -184,9 +201,6 @@ class MainBot:
         
         # Text message handlers for menu items
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_SUBSCRIPTION_STATUS}$"), view_active_subscription # Changed to view_active_subscription
-        ))
-        self.application.add_handler(MessageHandler(
             filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_SUPPORT}$"), support_message_handler
         ))
         self.application.add_handler(MessageHandler(
@@ -197,6 +211,9 @@ class MainBot:
         ))
         self.application.add_handler(MessageHandler(
             filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_HELP}$"), help_handler # Handler for Help button
+        ))
+        self.application.add_handler(MessageHandler(
+            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_BUY_SUBSCRIPTION}$"), select_plan # Handler for Buy Subscription button
         ))
         
         # Generic Update Logger - Should be one of the last handlers or in a high group number
@@ -213,19 +230,32 @@ class MainBot:
             view_active_subscription, pattern=f"^{CALLBACK_VIEW_SUBSCRIPTION_STATUS_FROM_REG}$"
         ))
         self.application.add_handler(CallbackQueryHandler(
-            select_plan, pattern="^plan_"
-        ))
-        self.application.add_handler(CallbackQueryHandler(
-            select_payment_method, pattern="^payment_method_"
-        ))
-        self.application.add_handler(CallbackQueryHandler(
             verify_payment_status, pattern="^verify_payment_"
         ))
         
         # Support handlers
         self.application.add_handler(CallbackQueryHandler(
+            support_message_handler, pattern="^main_menu_support$" 
+        ))
+        self.logger.info(f"CRITICAL_LOG: CallbackQueryHandler for main_menu_support ('main_menu_support') has been set up.")
+
+        # Add CallbackQueryHandlers for main_menu_help and main_menu_rules
+        self.application.add_handler(CallbackQueryHandler(
+            help_handler, pattern="^main_menu_help$"
+        ))
+        self.logger.info("CRITICAL_LOG: CallbackQueryHandler for main_menu_help has been set up.")
+
+        self.application.add_handler(CallbackQueryHandler(
+            rules_handler, pattern="^main_menu_rules$"
+        ))
+        self.logger.info("CRITICAL_LOG: CallbackQueryHandler for main_menu_rules has been set up.")
+
+        # Handler for the main support menu (e.g., after /support or clicking the support button that leads to the support options)
+        self.application.add_handler(CallbackQueryHandler(
             support_menu_handler, pattern="^support_menu$"
         ))
+        self.logger.info("CRITICAL_LOG: CallbackQueryHandler for support_menu has been set up.")
+
         self.application.add_handler(CallbackQueryHandler(
             support_ticket_list_handler, pattern="^ticket_list$"
         ))
@@ -237,6 +267,9 @@ class MainBot:
         ))
         self.application.add_handler(CallbackQueryHandler(
             close_ticket_handler, pattern="^close_ticket_"
+        ))
+        self.application.add_handler(CallbackQueryHandler(
+            handle_back_to_main, pattern=r"^back_to_main_menu_from_plans$"
         ))
         self.application.add_handler(CallbackQueryHandler(
             reopen_ticket_handler, pattern=r"^reopen_ticket_"

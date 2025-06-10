@@ -168,7 +168,8 @@ class ManagerBot:
     async def stop(self):
         """Stop the bot"""
         self.logger.info("Stopping Manager Bot")
-        await self.application.updater.stop()
+        if self.application.updater and self.application.updater.running:
+            await self.application.updater.stop()
         await self.application.stop()
         await self.application.shutdown()
         self.logger.info("Manager Bot stopped")

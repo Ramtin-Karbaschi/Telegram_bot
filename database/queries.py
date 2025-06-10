@@ -194,6 +194,156 @@ class DatabaseQueries:
                     return False 
         return False
 
+    @staticmethod
+    def create_crypto_payment_request(user_id: int, rial_amount: float, usdt_amount_requested: float = None, wallet_address: str = None, expires_at: datetime = None):
+        """
+        Creates a preliminary crypto payment request in the database.
+        'usdt_amount_requested' can be None initially and updated later.
+        Assumes 'payments' table has: user_id, amount (for rial), usdt_amount_requested,
+        payment_method, status, description, wallet_address, expires_at, created_at, updated_at.
+        """
+        db = Database()
+        if db.connect():
+            now_iso = datetime.now().isoformat()
+            expires_at_iso = expires_at.isoformat() if expires_at else None
+            
+            description = f"Crypto payment for user ID {user_id}"
+
+            try:
+                db.execute(
+                    """INSERT INTO payments (user_id, amount, usdt_amount_requested, payment_method, status, description, wallet_address, expires_at, created_at, updated_at)
+                       VALUES (?, ?, ?, 'crypto', 'pending', ?, ?, ?, ?, ?)""",
+                    (user_id, rial_amount, usdt_amount_requested, description, wallet_address, expires_at_iso, now_iso, now_iso)
+                )
+                payment_id = db.cursor.lastrowid # Corrected: Use cursor.lastrowid
+                db.commit()
+                return payment_id
+            except sqlite3.Error as e:
+                config.logger.error(f"SQLite error in create_crypto_payment_request: {e}") # Use logger
+                return None
+            finally:
+                db.close()
+        return None
+
+    @staticmethod
+    def update_crypto_payment_request_with_amount(payment_request_id: int, usdt_amount: float):
+        """
+        Updates an existing crypto payment request with the calculated USDT amount.
+        Assumes 'payments' table has: usdt_amount_requested, updated_at, payment_id, payment_method.
+        """
+        db = Database()
+        if db.connect():
+            now_iso = datetime.now().isoformat()
+            try:
+                db.execute(
+                    "UPDATE payments SET usdt_amount_requested = ?, updated_at = ? WHERE payment_id = ? AND payment_method = 'crypto' AND status = 'pending'",
+                    (usdt_amount, now_iso, payment_request_id)
+                )
+                db.commit()
+                # Check if any row was actually updated; rowcount might be 0 if no matching record or value is the same
+                return db.cursor.rowcount > 0 
+            except sqlite3.Error as e:
+                config.logger.error(f"SQLite error in update_crypto_payment_request_with_amount: {e}") # Use logger
+                return False
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def update_payment_transaction_id(payment_id: int, transaction_id: str, status: str = "pending_verification"):
+        """
+        Updates the transaction ID and status of a payment record.
+        Typically used for Zarinpal payments after getting an authority.
+        """
+        db = Database()
+        if db.connect():
+            try:
+                # now_iso = datetime.now().isoformat() # Temporarily removed for updated_at
+                db.execute(
+                    "UPDATE payments SET transaction_id = ?, status = ? WHERE payment_id = ?",
+                    (transaction_id, status, payment_id) # Temporarily removed now_iso
+                )
+                db.commit()
+                return db.cursor.rowcount > 0  # Corrected to use db.cursor.rowcount
+            except sqlite3.Error as e:
+                config.logger.error(f"SQLite error in update_payment_transaction_id for payment_id {payment_id}: {e}")
+                return False
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def get_payment_by_authority(authority: str):
+        """
+        Retrieves payment details from the database using the Zarinpal authority code.
+        Args:
+            authority: The Authority code provided by Zarinpal.
+        Returns:
+            A dictionary containing payment details (payment_id, user_id, plan_id, amount, status)
+            if found, otherwise None.
+        """
+        db = Database()
+        if db.connect():
+            try:
+                # Assuming 'transaction_id' stores the Zarinpal Authority and 'plan_id' column exists.
+                # Also assuming 'payments' table has 'payment_method' to distinguish zarinpal payments
+                db.execute(
+                    """SELECT p.payment_id, p.user_id, p.plan_id, p.amount, p.status
+                       FROM payments p
+                       WHERE p.transaction_id = ? AND p.payment_method = 'zarinpal'""",
+                    (authority,)
+                )
+                result = db.fetchone()
+                # Convert tuple to dict if result is not None
+                if result:
+                    columns = [desc[0] for desc in db.cursor.description]
+                    return dict(zip(columns, result))
+                return None
+            except sqlite3.Error as e:
+                config.logger.error(f"Database error in get_payment_by_authority for authority {authority}: {e}")
+                return None
+            finally:
+                db.close()
+        return None
+
+    @staticmethod
+    def update_payment_verification_status(payment_id: int, new_status: str, zarinpal_ref_id: str = None):
+        """
+        Updates the status of a payment after verification attempt and stores Zarinpal's RefID.
+        Args:
+            payment_id: The ID of the payment record.
+            new_status: The new status (e.g., 'completed', 'failed', 'already_verified').
+            zarinpal_ref_id: Zarinpal's final reference ID after successful verification.
+                               Assumes a 'gateway_ref_id' column exists in the 'payments' table.
+        """
+        db = Database()
+        if db.connect():
+            try:
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                if zarinpal_ref_id:
+                    db.execute(
+                        """UPDATE payments
+                           SET status = ?, gateway_ref_id = ?, updated_at = ?
+                           WHERE payment_id = ?""",
+                        (new_status, zarinpal_ref_id, now, payment_id)
+                    )
+                else:
+                    db.execute(
+                        """UPDATE payments
+                           SET status = ?, updated_at = ?
+                           WHERE payment_id = ?""",
+                        (new_status, now, payment_id)
+                    )
+                db.commit()
+                # Check if the update was successful
+                return db.cursor.rowcount > 0
+            except sqlite3.Error as e:
+                config.logger.error(f"Database error in update_payment_verification_status for payment_id {payment_id}: {e}")
+                return False
+            finally:
+                db.close()
+        return False
+
     # Plan-related queries
     @staticmethod
     def get_active_plans():
@@ -201,7 +351,7 @@ class DatabaseQueries:
         db = Database()
         if db.connect():
             db.execute(
-                "SELECT id, name, description, price, days, features FROM plans WHERE is_active = 1 ORDER BY id ASC"
+                "SELECT id, name, description, price, original_price_irr, price_tether, original_price_usdt, days, features, display_order FROM plans WHERE is_active = 1 ORDER BY display_order ASC, id ASC"
             )
             result = db.fetchall()
             db.close()
@@ -214,7 +364,7 @@ class DatabaseQueries:
         db = Database()
         if db.connect():
             db.execute(
-                "SELECT id, name, description, price, days, features, is_active FROM plans WHERE id = ?",
+                "SELECT id, name, description, price, original_price_irr, price_tether, original_price_usdt, days, features, is_active, display_order FROM plans WHERE id = ?",
                 (plan_id,)
             )
             result = db.fetchone()
@@ -601,20 +751,25 @@ class DatabaseQueries:
         return None
     
     @staticmethod
-    def update_payment_status(payment_id, status, transaction_id=None):
-        """Update payment status"""
+    def update_payment_status(payment_id, status, transaction_id=None, error_message=None):
+        """Update payment status and optionally an error message in description."""
         db = Database()
         if db.connect():
+            sql_query = "UPDATE payments SET status = ?"
+            params = [status]
+
             if transaction_id:
-                db.execute(
-                    "UPDATE payments SET status = ?, transaction_id = ? WHERE id = ?",
-                    (status, transaction_id, payment_id)
-                )
-            else:
-                db.execute(
-                    "UPDATE payments SET status = ? WHERE id = ?",
-                    (status, payment_id)
-                )
+                sql_query += ", transaction_id = ?"
+                params.append(transaction_id)
+        
+            if error_message:
+                sql_query += ", description = ?"
+                params.append(error_message)
+        
+            sql_query += " WHERE payment_id = ?"
+            params.append(payment_id)
+
+            db.execute(sql_query, tuple(params))
             db.commit()
             db.close()
             return True

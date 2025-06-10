@@ -164,6 +164,29 @@ def admin_only_decorator(func):
 
 # --- Other Helper Functions ---
 
+import io
+import qrcode
+
+def generate_qr_code(data: str) -> io.BytesIO:
+    """Generate a QR code image from the given data and return it as BytesIO object."""
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(data)
+    qr.make(fit=True)
+
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    # Save image to a bytes buffer
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format='PNG')
+    img_byte_arr.seek(0)  # Rewind the buffer to the beginning
+    return img_byte_arr
+
+
 async def send_invalid_membership_notification(bot, user_id):
     """Send notification about invalid membership"""
     try:

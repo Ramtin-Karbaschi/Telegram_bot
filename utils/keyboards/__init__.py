@@ -4,8 +4,42 @@ Keyboard utilities for the Daraei Academy Telegram bot
 
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-# import config # No longer needed directly here
-from utils import ui_texts
+
+
+def get_main_reply_keyboard(user_id=None, is_admin=False, has_active_subscription=False, is_registered=False):
+    """Get the main menu keyboard as a ReplyKeyboardMarkup for all options."""
+    # Import constants inside the function to avoid circular imports if this file grows
+    from utils import constants
+
+    keyboard_buttons = []
+
+    row1 = []
+    if is_registered:
+        row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION))
+    else:
+        row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION))
+    keyboard_buttons.append(row1)
+
+    row2 = [
+        KeyboardButton(constants.TEXT_MAIN_MENU_HELP),
+        KeyboardButton(constants.TEXT_MAIN_MENU_SUPPORT),
+        KeyboardButton(constants.TEXT_MAIN_MENU_RULES)
+    ]
+    keyboard_buttons.append(row2)
+
+    if has_active_subscription or is_admin:
+        keyboard_buttons.append([KeyboardButton(constants.MAIN_MENU_BUTTON_TEXT_GET_CHANNEL_LINK)])
+
+    return ReplyKeyboardMarkup(keyboard_buttons, resize_keyboard=True, one_time_keyboard=False)
+
+
+def get_main_menu_inline_keyboard():
+    """Get an inline keyboard for the main menu (for edit_text)."""
+    keyboard = [
+        [InlineKeyboardButton("🏠 منوی اصلی", callback_data="main_menu_inline")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
 from utils import constants
 from database.queries import DatabaseQueries # Import DatabaseQueries
 
@@ -13,44 +47,44 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG) # Ensure this logger also picks up debugs if not configured globally
 
 def get_main_menu_keyboard(user_id=None, is_admin=False, has_active_subscription=False, is_registered=False):
-    """Get the main menu keyboard with all options, dynamically showing channel link button and registration/subscription status button."""
+    """Get the main menu keyboard as an InlineKeyboardMarkup for all options, including buy subscription as callback."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     keyboard_buttons = []
 
     if is_registered:
-        keyboard_buttons.append([KeyboardButton(constants.TEXT_MAIN_MENU_SUBSCRIPTION_STATUS)])
+        keyboard_buttons.append([
+            InlineKeyboardButton("🎫 خرید اشتراک", callback_data="start_subscription_flow")
+        ])
     else:
-        keyboard_buttons.append([KeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION)])
+        keyboard_buttons.append([InlineKeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION, callback_data="start_registration_flow")])
 
     keyboard_buttons.append([
-        KeyboardButton(constants.TEXT_MAIN_MENU_HELP),
-        KeyboardButton(constants.TEXT_MAIN_MENU_SUPPORT),
-        KeyboardButton(constants.TEXT_MAIN_MENU_RULES)
+        InlineKeyboardButton(constants.TEXT_MAIN_MENU_HELP, callback_data="main_menu_help"),
+        InlineKeyboardButton(constants.TEXT_MAIN_MENU_SUPPORT, callback_data="main_menu_support"),
+        InlineKeyboardButton(constants.TEXT_MAIN_MENU_RULES, callback_data="main_menu_rules")
     ])
 
     if has_active_subscription or is_admin:
-        # Ensure this button is added correctly relative to others if needed
-        # For now, appending it. If it should be in a specific row, adjust list construction.
-        keyboard_buttons.append([KeyboardButton(constants.MAIN_MENU_BUTTON_TEXT_GET_CHANNEL_LINK)])
-    
-    # Removed commented out logic for MAIN_MENU_BUTTON_TEXT_REGISTER_OR_LOGIN as it's now handled by is_registered
+        keyboard_buttons.append([InlineKeyboardButton(constants.MAIN_MENU_BUTTON_TEXT_GET_CHANNEL_LINK, callback_data="main_menu_channel_link")])
 
-    return ReplyKeyboardMarkup(keyboard_buttons, resize_keyboard=True)
+    return InlineKeyboardMarkup(keyboard_buttons)
 
-def get_back_button(text="🔙 بازگشت"):
+
+def get_back_button(text="↩ بازگشت"):
     """Get a single back button"""
     keyboard = [[KeyboardButton(text)]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_back_to_main_button():
     """Get a button to return to main menu"""
-    keyboard = [[KeyboardButton("بازگشت به منوی اصلی")]]
+    keyboard = [[KeyboardButton("↩ بازگشت به منوی اصلی")]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_contact_button():
     """Get a button to share contact information"""
     keyboard = [
         [KeyboardButton("📱 اشتراک گذاری شماره تماس", request_contact=True)],
-        [KeyboardButton("🔙 بازگشت")]
+        [KeyboardButton("↩ بازگشت")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -63,7 +97,7 @@ def get_education_keyboard():
         [KeyboardButton("کارشناسی ارشد")],
         [KeyboardButton("دکتری")],
         [KeyboardButton("سایر")],
-        [KeyboardButton("🔙 بازگشت")]
+        [KeyboardButton("↩ بازگشت")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -74,63 +108,62 @@ def get_occupation_keyboard():
         [KeyboardButton("فارکس")],
         [KeyboardButton("کریپتو")],
         [KeyboardButton("سایر")],
-        [KeyboardButton("🔙 بازگشت")]
+        [KeyboardButton("↩ بازگشت")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-def get_subscription_plans_keyboard():
-    """Get keyboard with subscription plan options"""
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from database.queries import DatabaseQueries # Assuming DatabaseQueries is correctly imported elsewhere or adjust as needed
+from utils.constants.all_constants import TEXT_GENERAL_BACK
+import logging
+
+logger = logging.getLogger(__name__)
+
+def get_subscription_plans_keyboard(telegram_id=None): # Added telegram_id as optional param, might be needed later
+    """Get keyboard with subscription plan options, showing discounted prices."""
     keyboard = []
     active_plans = DatabaseQueries.get_active_plans()
 
     if not active_plans:
         keyboard.append([InlineKeyboardButton("در حال حاضر طرح فعالی وجود ندارد.", callback_data='no_plans_available')])
     else:
+        plan_buttons_row = []
         for plan in active_plans:
             plan_id = plan['id']
-            plan_name = plan['name']
-            price_irr = plan['price']
-            price_usdt = None # price_tether is no longer fetched from the database
-            duration_days = plan['days']
-
-            price_irr_formatted = f"{int(price_irr):,}" if price_irr is not None else "N/A"
-            price_usdt_formatted = f"{price_usdt}" if price_usdt is not None else "N/A"
-            
-            duration_text = f"{duration_days} روز"
-            if duration_days % 30 == 0 and duration_days // 30 > 0:
-                months = duration_days // 30
-                duration_text = f"{months} ماه{'ه' if months > 1 else ''}"
-            elif duration_days % 7 == 0 and duration_days // 7 > 0:
-                weeks = duration_days // 7
-                duration_text = f"{weeks} هفته{' ' if weeks > 1 else ''}"
-
-            button_text = f"{plan_name} ({duration_text}) - {price_irr_formatted} تومان"
-            if price_usdt is not None and price_usdt > 0:
-                button_text += f" / {price_usdt_formatted} تتر"
-            
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"plan_{plan_id}")])
+            button_text = plan['name'] # Use plan's name directly for the button
+            plan_buttons_row.append(InlineKeyboardButton(button_text, callback_data=f"plan_{plan_id}"))
+        
+        if plan_buttons_row: # If there are any plan buttons
+            keyboard.append(plan_buttons_row) # Add them as a single row
     
-    logger.debug(f"KEYBOARDS: Inspecting ui_texts module before use. Attributes: {dir(ui_texts)}")
-    logger.debug(f"KEYBOARDS: ui_texts module file path: {ui_texts.__file__}")
-    keyboard.append([InlineKeyboardButton(ui_texts.BACK_BUTTON_TEXT, callback_data="back_to_main_menu_from_plans")]) # Differentiated callback
+    # Ensure TEXT_GENERAL_BACK is defined and imported correctly
+    try:
+        back_button_text = TEXT_GENERAL_BACK
+    except AttributeError:
+        logger.warning("'TEXT_GENERAL_BACK' not found, using default '↩ بازگشت'. Check 'utils.constants.all_constants'.")
+        back_button_text = "↩ بازگشت"
+        
+    keyboard.append([InlineKeyboardButton(back_button_text, callback_data="back_to_main_menu_from_plans")])
     return InlineKeyboardMarkup(keyboard)
 
 def get_payment_methods_keyboard():
     """Get keyboard with payment method options"""
     keyboard = [
-        [InlineKeyboardButton("💳 پرداخت با تومان", callback_data="payment_rial")],
-        [InlineKeyboardButton("💲 پرداخت با تتر (USDT)", callback_data="payment_crypto")],
+        [
+            InlineKeyboardButton("💳 پرداخت با تومان", callback_data="payment_rial"),
+            InlineKeyboardButton("💲 پرداخت با تتر (USDT)", callback_data="payment_crypto")
+        ],
         [get_back_to_plans_button()]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 def get_back_to_plans_button():
     """Get a button to go back to plans selection"""
-    return InlineKeyboardButton("🔙 بازگشت به طرح‌ها", callback_data="back_to_plans")
+    return InlineKeyboardButton("↩ بازگشت به طرح‌ها", callback_data="back_to_plans")
 
 def get_back_to_payment_methods_button():
     """Get a button to go back to payment methods"""
-    return InlineKeyboardButton("🔙 بازگشت به روش‌های پرداخت", callback_data="back_to_payment_methods")
+    return InlineKeyboardButton("↩ بازگشت به روش‌های پرداخت", callback_data="back_to_payment_methods")
 
 def get_payment_verification_keyboard():
     """Get keyboard for payment verification"""
@@ -160,7 +193,7 @@ def get_support_menu_keyboard(tickets=None):
     keyboard.append([InlineKeyboardButton("🎫 تیکت جدید", callback_data="new_ticket")])
     
     # Add back button
-    keyboard.append([InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="back_to_main")])
+    keyboard.append([InlineKeyboardButton("↩ بازگشت به منوی اصلی", callback_data="back_to_main")])
     
     return InlineKeyboardMarkup(keyboard)
 
@@ -175,7 +208,7 @@ def get_profile_edit_menu_keyboard():
         [InlineKeyboardButton("شماره همراه", callback_data=constants.CALLBACK_PROFILE_EDIT_PHONE)],
         [InlineKeyboardButton("شهر محل سکونت", callback_data=constants.CALLBACK_PROFILE_EDIT_CITY)],
         [InlineKeyboardButton("ایمیل", callback_data=constants.CALLBACK_PROFILE_EDIT_EMAIL)],
-        [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU_FROM_EDIT)]
+        [InlineKeyboardButton("↩ بازگشت به منوی اصلی", callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU_FROM_EDIT)]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -188,7 +221,7 @@ def get_education_inline_keyboard(back_callback=constants.CALLBACK_PROFILE_EDIT_
         [InlineKeyboardButton("کارشناسی ارشد", callback_data="education_کارشناسی ارشد")],
         [InlineKeyboardButton("دکتری", callback_data="education_دکتری")],
         [InlineKeyboardButton("سایر", callback_data="education_سایر")],
-        [InlineKeyboardButton("🔙 بازگشت به منوی ویرایش", callback_data=back_callback)]
+        [InlineKeyboardButton("↩ بازگشت به منوی ویرایش", callback_data=back_callback)]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -199,7 +232,7 @@ def get_occupation_inline_keyboard(back_callback=constants.CALLBACK_PROFILE_EDIT
         [InlineKeyboardButton("فارکس", callback_data="occupation_فارکس")],
         [InlineKeyboardButton("کریپتو", callback_data="occupation_کریپتو")],
         [InlineKeyboardButton("سایر", callback_data="occupation_سایر")],
-        [InlineKeyboardButton("🔙 بازگشت به منوی ویرایش", callback_data=back_callback)]
+        [InlineKeyboardButton("↩ بازگشت به منوی ویرایش", callback_data=back_callback)]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -208,7 +241,7 @@ def get_edit_field_action_keyboard(cancel_callback=constants.CALLBACK_PROFILE_ED
     keyboard = [
         [
             InlineKeyboardButton("لغو ویرایش این مورد", callback_data=cancel_callback),
-            InlineKeyboardButton("بازگشت به منوی ویرایش", callback_data=back_to_menu_callback)
+            InlineKeyboardButton("↩ بازگشت به منوی ویرایش", callback_data=back_to_menu_callback)
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -219,14 +252,14 @@ def get_phone_edit_keyboard(back_callback=constants.CALLBACK_PROFILE_EDIT_BACK_T
     reply_keyboard_markup = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton("📱 اشتراک گذاری شماره تماس", request_contact=True)],
-            [KeyboardButton("بازگشت به منوی ویرایش")] # This text will be caught by a MessageHandler
+            [KeyboardButton("↩ بازگشت به منوی ویرایش")] # This text will be caught by a MessageHandler
         ],
         resize_keyboard=True,
         one_time_keyboard=True
     )
     # InlineKeyboard for fallback if user types or wants to go back without using ReplyKeyboard
     inline_keyboard_markup = InlineKeyboardMarkup([
-         [InlineKeyboardButton("🔙 بازگشت به منوی ویرایش", callback_data=back_callback)]
+         [InlineKeyboardButton("↩ بازگشت به منوی ویرایش", callback_data=back_callback)]
     ])
     return reply_keyboard_markup, inline_keyboard_markup
 
@@ -251,7 +284,7 @@ def get_ticket_conversation_keyboard(ticket_id, is_open=True):
     
     # Add back button
     keyboard.append([
-        InlineKeyboardButton("🔙 بازگشت به لیست تیکت‌ها", callback_data="back_to_tickets")
+        InlineKeyboardButton("↩ بازگشت به لیست تیکت‌ها", callback_data="back_to_tickets")
     ])
     
     return InlineKeyboardMarkup(keyboard)

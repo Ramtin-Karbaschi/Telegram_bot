@@ -29,15 +29,17 @@ def initialize_database():
         cursor.execute(table_sql)
         
     # Add subscription plans
+    # id, name, description, price (IRR final), original_price_irr, price_tether (final), original_price_usdt, days, features, is_active, display_order
     subscription_plans = [
-        (1, "یک ماهه", "اشتراک یک ماهه دارای اکادمی", 500000, 30, "دسترسی به تمام محتوای اکادمی", 1),
-        (2, "سه ماهه", "اشتراک سه ماهه دارای اکادمی با ۱۰٪ تخفیف", 1350000, 90, "دسترسی به تمام محتوای اکادمی", 1),
-        (3, "شش ماهه", "اشتراک شش ماهه دارای اکادمی با ۲۰٪ تخفیف", 2400000, 180, "دسترسی به تمام محتوای اکادمی + جلسات پرسش و پاسخ", 1),
-        (4, "یک ساله", "اشتراک یک ساله دارای اکادمی با ۳۰٪ تخفیف", 4200000, 365, "دسترسی به تمام محتوای اکادمی + جلسات پرسش و پاسخ + مشاوره اختصاصی", 1)
+        (1, "یک ماهه", "اشتراک یک ماهه آکادمی دارایی", 500000, 550000, None, None, 30, '["دسترسی به تمام محتوای آکادمی"]', 1, 1),
+        (2, "سه ماهه", "اشتراک سه ماهه آکادمی دارایی (۱۰٪ تخفیف)", 1350000, 1500000, None, None, 90, '["دسترسی به تمام محتوای آکادمی"]', 1, 2),
+        (3, "شش ماهه", "اشتراک شش ماهه آکادمی دارایی (۲۰٪ تخفیف)", 2400000, 3000000, None, None, 180, '["دسترسی به تمام محتوای آکادمی", "جلسات پرسش و پاسخ"]', 1, 3),
+        (4, "یک ساله", "اشتراک یک ساله آکادمی دارایی (۳۰٪ تخفیف)", 4200000, 6000000, None, None, 365, '["دسترسی به تمام محتوای آکادمی", "جلسات پرسش و پاسخ", "مشاوره اختصاصی"]', 1, 4)
+        # Add price_tether and original_price_usdt values if/when USDT payment is fully integrated and priced
     ]
     
     cursor.executemany(
-        "INSERT INTO plans (id, name, description, price, duration, features, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO plans (id, name, description, price, original_price_irr, price_tether, original_price_usdt, days, features, is_active, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         subscription_plans
     )
     

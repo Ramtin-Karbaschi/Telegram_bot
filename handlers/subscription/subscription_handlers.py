@@ -189,15 +189,27 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
     profile_message = "\n".join(profile_info_parts)
 
     # Check if user is admin
+    hide_main_menu_button = context.user_data.pop('hide_main_menu_button', False)
+
     if is_admin(user_id, config.ADMIN_USER_IDS):
         subscription_status_text = "شما کاربر ادمین با دسترسی نامحدود هستید."
         final_message = f"اطلاعات حساب کاربری شما:\n\n{profile_message}\n\nوضعیت اشتراک:\n{subscription_status_text}"
         
-        keyboard_buttons = [
-            [InlineKeyboardButton("دریافت لینک کانال", callback_data="get_channel_link")],
-            [InlineKeyboardButton("اصلاح و تکمیل اطلاعات", callback_data=CALLBACK_START_PROFILE_EDIT)],
-            [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="back_to_main_menu")]
-        ]
+        keyboard_buttons = []
+        if is_active_subscription:
+            keyboard_buttons.append([
+                InlineKeyboardButton("تمدید اشتراک", callback_data="start_subscription_flow")
+            ])
+            keyboard_buttons.append([
+                InlineKeyboardButton("دریافت لینک کانال", callback_data="get_channel_link")
+            ])
+        else:
+            # InlineKeyboardButton("خرید اشتراک", callback_data="start_subscription_flow") removed for admin
+            pass # Placeholder if no other buttons are added here for admin without active sub
+        keyboard_buttons.append([
+            InlineKeyboardButton("اصلاح و تکمیل اطلاعات", callback_data=CALLBACK_START_PROFILE_EDIT)
+        ])
+
     else:
         # Logic for regular users
         subscription_status_text = SUBSCRIPTION_STATUS_NONE 
@@ -219,14 +231,9 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
                     start_date=subscription_data['start_date'][:10],
                     end_date=subscription_data['end_date'][:10]
                 )
-            else: # Expired subscription
-                subscription_status_text = SUBSCRIPTION_STATUS_EXPIRED.format(
-                    plan_name=plan_name_for_msg,
-                    start_date=subscription_data['start_date'][:10],
-                    end_date=subscription_data['end_date'][:10]
-                )
-        # If subscription_data is None, subscription_status_text remains SUBSCRIPTION_STATUS_NONE
-        
+            else: # Expired 
+                pass
+
         final_message = f"اطلاعات حساب کاربری شما:\n\n{profile_message}\n\nوضعیت اشتراک:\n{subscription_status_text}"
 
         keyboard_buttons = []
@@ -239,15 +246,13 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
                 [InlineKeyboardButton("دریافت لینک کانال", callback_data="get_channel_link")]
             )
         else: # No active subscription (None or expired)
-            keyboard_buttons.append(
-                [InlineKeyboardButton("خرید اشتراک", callback_data="start_subscription_flow")]
-            )
+            # InlineKeyboardButton("خرید اشتراک", callback_data=f"{CALLBACK_VIEW_PLANS_PREFIX}") removed for regular user
+            pass # Placeholder if no other buttons are added here for user without active sub
         
         # Common buttons for all regular users
-        keyboard_buttons.extend([
-            [InlineKeyboardButton("اصلاح و تکمیل اطلاعات", callback_data=CALLBACK_START_PROFILE_EDIT)],
-            [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="back_to_main_menu")]
-        ])
+        keyboard_buttons.append(
+            [InlineKeyboardButton("اصلاح و تکمیل اطلاعات", callback_data=CALLBACK_START_PROFILE_EDIT)]
+        )
 
     reply_markup = InlineKeyboardMarkup(keyboard_buttons)
 
