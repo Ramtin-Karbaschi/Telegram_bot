@@ -11,8 +11,6 @@ from telegram.ext import ContextTypes
 from functools import wraps
 import config
 from config import ALL_ADMINS_LIST
-from database.queries import DatabaseQueries as Database
-
 
 def get_current_time():
     """Get current time in Tehran timezone"""
@@ -48,6 +46,9 @@ async def generate_channel_link(bot, user_id):
             expire_date=int((datetime.datetime.now() + datetime.timedelta(hours=24)).timestamp())
         )
         
+        # Lazy import to avoid circular dependency
+        from database.queries import DatabaseQueries as Database
+        
         # Store the link in database
         if invite_link and invite_link.invite_link:
             Database.create_invite_link(user_id, invite_link.invite_link)
@@ -70,6 +71,9 @@ async def send_expiration_reminder(bot, user_id, days_left):
             text=message
         )
         
+        # Lazy import to avoid circular dependency
+        from database.queries import DatabaseQueries as Database
+        
         # Record notification in database
         Database.add_notification(user_id, f"expiration_{days_left}")
         
@@ -87,6 +91,8 @@ async def send_expired_notification(bot, user_id):
             chat_id=user_id,
             text=MEMBERSHIP_EXPIRED
         )
+        
+        from database.queries import DatabaseQueries as Database
         
         # Record notification in database
         Database.add_notification(user_id, "expired")
@@ -196,6 +202,8 @@ async def send_invalid_membership_notification(bot, user_id):
             chat_id=user_id,
             text=INVALID_MEMBERSHIP
         )
+        
+        from database.queries import DatabaseQueries as Database
         
         # Record notification in database
         Database.add_notification(user_id, "invalid")
