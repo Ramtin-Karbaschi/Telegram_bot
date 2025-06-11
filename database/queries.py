@@ -753,7 +753,7 @@ class DatabaseQueries:
             return result
         return None
     
-     @staticmethod
+    @staticmethod
     def get_payment_by_id(payment_id):
         """Alias for `get_payment` so existing handlers calling this name work."""
         return DatabaseQueries.get_payment(payment_id)
