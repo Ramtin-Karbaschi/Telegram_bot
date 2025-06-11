@@ -108,16 +108,6 @@ SUBSCRIPTION_PLANS_MESSAGE = """
 📋 لطفاً نوع اشتراک مورد نظر خود را انتخاب کنید:
 """
 
-PAYMENT_METHOD_MESSAGE = """
-💳 روش پرداخت
-
-طرح انتخابی: {plan_name}
-مبلغ: {plan_price} تومان
-معادل ارزی: {plan_tether} تتر
-
-لطفاً روش پرداخت مورد نظر خود را انتخاب کنید:
-"""
-
 RIAL_PAYMENT_MESSAGE = """
 💰 پرداخت ریالی
 
@@ -168,6 +158,9 @@ PAYMENT_FAILED_MESSAGE = """
 
 لطفاً مجدداً تلاش کنید یا با پشتیبانی تماس بگیرید.
 """
+
+# Alias for backward compatibility (old name used in some handlers)
+PAYMENT_ERROR_MESSAGE = PAYMENT_FAILED_MESSAGE
 
 SUBSCRIPTION_STATUS_MESSAGE = """
 👤 وضعیت اشتراک شما:
