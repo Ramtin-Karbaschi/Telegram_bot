@@ -7,10 +7,12 @@ import asyncio
 import logging
 import sys
 import os
+import json
 from bots import MainBot, ManagerBot
 from database.models import Database
 from database.queries import DatabaseQueries
 import config
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(
@@ -35,6 +37,9 @@ print(f"[LOG_DIAGNOSTIC] Dispatcher logger propagate: {dispatcher_logger.propaga
 
 logger = logging.getLogger(__name__)
 
+# Load environment variables from .env file
+load_dotenv()
+
 async def main():
     """Start both bots"""
     logger.info("Starting Daraei Academy Telegram Bot System")
@@ -49,13 +54,22 @@ async def main():
     
     # Create bot instances
     main_bot = MainBot()
-    # Pass necessary config and main_bot's application instance to ManagerBot
+    
+    # Parse admin configuration from environment variable
+    admin_config_str = os.getenv('ALL_ADMINS_CONFIG', '[]')
+    admin_config = json.loads(admin_config_str)
+
+    # Create manager bot instance
     manager_bot = ManagerBot(
-        manager_bot_token=config.MANAGER_BOT_TOKEN,
-        admin_users_config=config.MANAGER_BOT_ADMINS_DICT, # Use the new consolidated admin dict
-        db_name=config.DATABASE_NAME,
-        main_bot_app=main_bot.application # Pass the application instance of the main bot
+        manager_bot_token=os.getenv('MANAGER_BOT_TOKEN'),
+        admin_users_config=admin_config,  # Pass the parsed JSON list here
+        db_name=os.getenv('DB_FILENAME'),
+        main_bot_app=main_bot.application  # Pass the main bot's app instance
     )
+    
+    # Store manager_bot instance in main bot's application for cross-bot communication
+    main_bot.application.manager_bot = manager_bot
+    logger.info("Manager bot instance stored in main bot application context")
     
     try:
         # Start both bots

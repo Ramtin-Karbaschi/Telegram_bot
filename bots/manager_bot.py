@@ -19,6 +19,7 @@ from database.queries import DatabaseQueries
 from utils.helpers import is_user_in_admin_list, get_alias_from_admin_list, admin_only_decorator as admin_only
 import config # For other config vars like CHANNEL_ID
 from database.models import Database as DBConnection # For DB connection
+from handlers.admin_ticket_handlers import AdminTicketHandler  # Fixed import
 
 # States for ConversationHandler
 VIEWING_TICKET, REPLYING_TO_TICKET = range(2)
@@ -45,7 +46,7 @@ async def manager_bot_error_handler(update: object, context: ContextTypes.DEFAUL
         f"{user_info}"
     )
     
-    if config.MANAGER_BOT_ERROR_CONTACT_IDS:
+    if hasattr(config, 'MANAGER_BOT_ERROR_CONTACT_IDS') and config.MANAGER_BOT_ERROR_CONTACT_IDS:
         for chat_id in config.MANAGER_BOT_ERROR_CONTACT_IDS:
             try:
                 await context.bot.send_message(
@@ -81,23 +82,8 @@ class ManagerBot:
         Database.init_database() 
         self.main_bot_app = main_bot_app # Store main_bot_app if provided
         
-        # Conversation Handler for replying to tickets
-        reply_conv_handler = ConversationHandler(
-            # TODO: When implementing prompt_ticket_reply_callback, ensure it's decorated with @admin_only.
-            # Also consider if cancel_reply_callback needs @admin_only if it can be triggered independently as a command.
-            entry_points=[CallbackQueryHandler(self.prompt_ticket_reply_callback, pattern='^reply_ticket_(\d+)$')],
-            states={
-                REPLYING_TO_TICKET: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_ticket_reply)],
-            },
-            fallbacks=[CommandHandler('cancel', self.cancel_reply_callback)],
-            per_message=False
-        )
-
-        self.application.add_handler(reply_conv_handler)
-        # TODO: When implementing view_ticket_callback, ensure it's decorated with @admin_only.
-        self.application.add_handler(CallbackQueryHandler(self.view_ticket_callback, pattern='^view_ticket_(\d+)$'))
-        # TODO: When implementing close_ticket_callback, ensure it's decorated with @admin_only.
-        self.application.add_handler(CallbackQueryHandler(self.close_ticket_callback, pattern='^close_ticket_(\d+)$'))
+        # Initialize ticket handler
+        self.ticket_handler = AdminTicketHandler()  # Fixed class name
         
         # Setup task handlers
         self.setup_tasks()
@@ -106,28 +92,12 @@ class ManagerBot:
         
         # Add error handler for ManagerBot
         self.application.add_error_handler(manager_bot_error_handler)
-    
+
     def setup_tasks(self):
-        """Setup periodic tasks"""
-        # Validate channel memberships every hour
-        self.application.job_queue.run_repeating(
-            self.validate_memberships,
-            interval=60,  # Every minute
-            first=10  # Start after 10 seconds
-        )
-        
-        # Process admin tickets every 5 minutes
-        self.application.job_queue.run_repeating(
-            self.process_admin_tickets,
-            interval=300,  # Every 5 minutes
-            first=60  # Start after 1 minute
-        )
-        
-        self.application.job_queue.run_daily(
-            self.send_expiration_reminders,
-            time=datetime.time(hour=13, minute=0)  # Run at 13:00 PM every day
-        )
-    
+        """Setup background tasks"""
+        # Add any background tasks here if needed
+        pass
+
     async def start(self):
         """Start the bot"""
         self.logger.info("Starting Manager Bot")
@@ -404,7 +374,7 @@ class ManagerBot:
                     except Forbidden as e:
                         self.logger.error(f"Forbidden to get chat member {user_id_to_check} for channel '{current_channel_title}': {e}.")
                     except Exception as e:
-                        self.logger.error(f"Unexpected error checking member {user_id_to_check} in channel '{current_channel_title}': {e}", exc_info=True)
+                        self.logger.error(f"Unexpected error checking member {user_id_to_kick_check} in channel '{current_channel_title}': {e}", exc_info=True)
                 
                 # Part 2: Identify and kick users in channel with non-active/expired/no DB subscription
                 users_with_non_active_subs_db = DatabaseQueries.get_users_with_non_active_subscription_records()
@@ -564,400 +534,17 @@ class ManagerBot:
         except Exception as e:
             self.logger.error(f"Error sending expiration reminders: {e}")
     
-    # --- Command Handlers ---
-    @admin_only
-    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle the /start command for admin users with an inline keyboard."""
-        user = update.effective_user
-        admin_alias = get_alias_from_admin_list(user.id, self.admin_config) or user.first_name
-
-        keyboard = [
-            [InlineKeyboardButton("مشاهده و مدیریت تیکت‌ها", callback_data="view_tickets_command")],
-            # TODO: Add more buttons here for other commands later
-            # e.g., [InlineKeyboardButton("اعتبارسنجی دستی اعضا", callback_data="validate_now_command")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await update.message.reply_text(
-            f"سلام {admin_alias}! به ربات مدیریت آکادمی دارایی خوش آمدید.\n"
-            f"لطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
-            reply_markup=reply_markup
-        )
-
-    @admin_only
-    async def view_tickets_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Display a list of open support tickets."""
-        self.logger.info(f"Admin {update.effective_user.id} requested to view tickets.")
-        try:
-            # TODO: Implement Database.get_open_tickets() in database/queries.py
-            # This method should return a list of dicts, e.g.:
-            # [{'ticket_id': 1, 'user_id': 123, 'user_name': 'John Doe', 'subject': 'Issue with X', 'status': 'open', 'created_at': 'YYYY-MM-DD HH:MM'}]
-            open_tickets = Database.get_open_tickets() # Assuming this method exists
-
-            if not open_tickets:
-                await update.message.reply_text("در حال حاضر هیچ تیکت بازی وجود ندارد.")
-                return
-
-            message_text = "لیست تیکت‌های باز:\n\n"
-            keyboard = []
-            for ticket in open_tickets:
-                # Ensure all expected keys are present, provide defaults if not
-                ticket_id = ticket.get('ticket_id', 'N/A')
-                user_name = ticket.get('user_name', 'کاربر ناشناس')
-                subject_or_snippet = ticket.get('subject', ticket.get('message_snippet', 'بدون موضوع'))
-                created_at = ticket.get('created_at', 'زمان نامشخص')
-                
-                ticket_info = f"ID: {ticket_id} - کاربر: {user_name} - موضوع: {subject_or_snippet} ({created_at})"
-                # Callback data for viewing a specific ticket
-                callback_data = f"view_ticket_{ticket_id}"
-                keyboard.append([InlineKeyboardButton(ticket_info, callback_data=callback_data)])
-            
-            if not keyboard:
-                 await update.message.reply_text("خطایی در پردازش تیکت‌ها رخ داد. لطفاً دوباره تلاش کنید.")
-                 return
-
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(message_text, reply_markup=reply_markup)
-
-        except AttributeError as e:
-            # This might happen if Database.get_open_tickets is not yet implemented
-            self.logger.error(f"Error calling Database.get_open_tickets: {e}. It might not be implemented yet.")
-            await update.message.reply_text("سیستم تیکت در حال حاضر قادر به دریافت لیست تیکت‌ها نیست. (خطای پیکربندی)")
-        except Exception as e:
-            self.logger.error(f"Error in view_tickets_command: {e}")
-            await update.message.reply_text("خطایی در نمایش تیکت‌ها رخ داد. لطفاً دوباره تلاش کنید.")
-
-    @admin_only
-    async def validate_memberships_now_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Command to run membership validation immediately. Admin only."""
-        user_alias = get_alias_from_admin_list(update.effective_user.id, self.admin_config)
-        self.logger.info(f"User {user_alias} ({update.effective_user.id}) triggered validate_memberships_now_command.")
-        await update.message.reply_text("در حال شروع اعتبارسنجی عضویت‌ها... این فرآیند ممکن است کمی طول بکشد.")
-        try:
-            await self.validate_memberships(context) # Pass context if needed by the original method, or None
-            await update.message.reply_text("اعتبارسنجی عضویت‌ها با موفقیت انجام شد.")
-            self.logger.info("Membership validation triggered by admin completed successfully.")
-        except Exception as e:
-            self.logger.error(f"Error during admin-triggered membership validation: {e}", exc_info=True)
-            await update.message.reply_text(f"خطایی در هنگام اعتبارسنجی عضویت‌ها رخ داد: {e}")
-
-    @admin_only
-    async def validate_memberships_now_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Command to run membership validation immediately. Admin only."""
-        user_alias = get_alias_from_admin_list(update.effective_user.id, self.admin_config)
-        self.logger.info(f"User {user_alias} ({update.effective_user.id}) triggered validate_memberships_now_command.")
-        await update.message.reply_text("در حال شروع اعتبارسنجی عضویت‌ها... این فرآیند ممکن است کمی طول بکشد.")
-        try:
-            await self.validate_memberships(context) # Pass context if needed by the original method, or None
-            await update.message.reply_text("اعتبارسنجی عضویت‌ها با موفقیت انجام شد.")
-            self.logger.info("Membership validation triggered by admin completed successfully.")
-        except Exception as e:
-            self.logger.error(f"Error during admin-triggered membership validation: {e}", exc_info=True)
-            await update.message.reply_text(f"خطایی در هنگام اعتبارسنجی عضویت‌ها رخ داد: {e}")
-
-    @admin_only
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle the /help command for admin users."""
-        user = update.effective_user
-        admin_alias = get_alias_from_admin_list(user.id, self.admin_config) or user.first_name
-        await update.message.reply_text(
-            f"سلام {admin_alias}! به ربات مدیریت آکادمی دارایی خوش آمدید.\n"
-            f"از دستورات زیر برای مدیریت استفاده کنید:\n"
-            f"/tickets - مشاهده و مدیریت تیکت‌های پشتیبانی\n"
-            f"/validate_now - اعتبارسنجی عضویت‌ها\n"
-            f"/help - راهنمای دستورات",
-            # TODO: Add more commands and an inline keyboard menu later
-        )
-
-    @admin_only
-    async def view_ticket_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handles the 'view_ticket_X' callback to display ticket details using DatabaseQueries.get_ticket_details."""
-        query = update.callback_query
-        await query.answer()  # Acknowledge callback query
-        
-        try:
-            ticket_id = int(query.data.split('_')[-1])
-        except (IndexError, ValueError):
-            self.logger.error(f"Invalid ticket_id in callback_data: {query.data}")
-            await query.edit_message_text(text="خطا: شناسه تیکت نامعتبر است.")
-            return
-
-        admin_alias = get_alias_from_admin_list(query.from_user.id, self.admin_config) or query.from_user.first_name
-        self.logger.info(f"Admin {admin_alias} ({query.from_user.id}) is viewing ticket ID: {ticket_id}")
-
-        try:
-            ticket_data = DatabaseQueries.get_ticket_details(ticket_id) # Returns a dict with ticket info and 'messages' list, or None
-            
-            if not ticket_data:
-                await query.edit_message_text(text=f"تیکت با شناسه {ticket_id} یافت نشد.")
-                return
-
-            user_id = ticket_data.get('user_id')
-            # 'user_name' is fetched by get_ticket_details as u.full_name
-            user_name_from_db = ticket_data.get('user_name', '') 
-            subject = ticket_data.get('subject', 'بدون موضوع')
-            status = ticket_data.get('status', 'نامشخص')
-            created_at = ticket_data.get('created_at', 'نامشخص')
-            
-            user_display_info = f"کاربر ID: {user_id}"
-            if user_name_from_db:
-                user_display_info = f"{html.escape(user_name_from_db)} (ID: {user_id})"
-            # Optionally, still check MainBot cache for username if preferred for display
-            elif self.main_bot_app and hasattr(self.main_bot_app, 'user_data_cache') and user_id in self.main_bot_app.user_data_cache:
-                cached_name = self.main_bot_app.user_data_cache[user_id].get('name', '')
-                cached_username = self.main_bot_app.user_data_cache[user_id].get('username', '')
-                if cached_name:
-                    user_display_info = f"{html.escape(cached_name)} (@{cached_username})" if cached_username else html.escape(cached_name)
-                    user_display_info += f" (ID: {user_id})"
-
-            message_text = (
-                f"مشاهده جزئیات تیکت ID: <code>{ticket_id}</code>\n"
-                f"👤 ارسال‌کننده: {user_display_info}\n"
-                f"ርዕሰ ጉዳይ: {html.escape(subject)}\n"
-                f"📅 تاریخ ایجاد: {created_at}\n"
-                f" وضعیت: {html.escape(status)}\n"
-                f"--------------------\n"
-                f"پیام‌های تیکت:\n"
-            )
-            
-            ticket_messages = ticket_data.get('messages', []) # List of message dicts
-            if ticket_messages:
-                for msg in ticket_messages:
-                    # map fields from get_ticket_details's message structure
-                    sender_type = "ادمین" if msg.get('is_admin') else "کاربر"
-                    msg_text = html.escape(msg.get('message', 'پیام خالی')) # 'message' field from db
-                    msg_time = msg.get('timestamp', '') # 'timestamp' field from db
-                    message_text += f"\n[{msg_time}] <b>{sender_type}</b>: {msg_text}"
-            else:
-                message_text += "\n<i>هیچ پیامی برای این تیکت ثبت نشده است.</i>"
-
-            keyboard = []
-            if status.lower() != 'closed' and status.lower() != 'بسته شده':
-                keyboard.append([
-                    InlineKeyboardButton("پاسخ به تیکت", callback_data=f"reply_ticket_{ticket_id}"),
-                    InlineKeyboardButton("بستن تیکت", callback_data=f"close_ticket_{ticket_id}")
-                ])
-            else:
-                 message_text += "\n\n<i>این تیکت بسته شده است.</i>"
-            
-            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-            
-            await query.edit_message_text(
-                text=message_text,
-                reply_markup=reply_markup,
-                parse_mode=ParseMode.HTML
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error in view_ticket_callback for ticket_id {ticket_id}: {e}", exc_info=True)
-            await query.edit_message_text(text="خطایی در نمایش جزئیات تیکت رخ داد. لطفاً دوباره تلاش کنید یا با پشتیبانی فنی تماس بگیرید.")
-
-    @admin_only
-    async def prompt_ticket_reply_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Asks the admin to send their reply for a specific ticket."""
-        query = update.callback_query
-        await query.answer()
-
-        try:
-            ticket_id = int(query.data.split('_')[-1])
-        except (IndexError, ValueError):
-            self.logger.error(f"Invalid ticket_id in callback_data for reply: {query.data}")
-            await query.edit_message_text(text="خطا: شناسه تیکت برای پاسخ نامعتبر است.")
-            return ConversationHandler.END # End conversation if ticket_id is invalid
-
-        # Store ticket_id for the next step (handle_ticket_reply)
-        context.user_data['replying_to_ticket_id'] = ticket_id
-        
-        admin_alias = get_alias_from_admin_list(query.from_user.id, self.admin_config) or query.from_user.first_name
-        self.logger.info(f"Admin {admin_alias} ({query.from_user.id}) is initiating reply to ticket ID: {ticket_id}")
-
-        # It's often better to send a new message for prompts in conversations 
-        # rather than editing the message with the inline keyboard.
-        await query.message.reply_text(
-            f"در حال پاسخ به تیکت ID: <code>{ticket_id}</code>.\n"
-            f"لطفاً پاسخ خود را ارسال کنید. برای لغو از دستور /cancel استفاده نمایید.",
-            parse_mode=ParseMode.HTML
-        )
-        # You might want to edit the original message to remove the "Reply" button or indicate it's being replied to.
-        # For example: await query.edit_message_reply_markup(reply_markup=None) 
-        # or await query.edit_message_text(text=query.message.text + "\n\n⏳ در حال پاسخ...")
-
-        return REPLYING_TO_TICKET # Transition to the state where we expect the admin's text message
-
-    @admin_only
-    async def handle_ticket_reply(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Handles the admin's text reply to a ticket and saves it."""
-        admin_user = update.effective_user
-        reply_text = update.message.text
-        ticket_id = context.user_data.get('replying_to_ticket_id')
-
-        if not ticket_id:
-            self.logger.warning(f"Admin {admin_user.id} sent a reply but no 'replying_to_ticket_id' found in context.")
-            await update.message.reply_text("خطایی رخ داد: مشخص نیست به کدام تیکت پاسخ می‌دهید. لطفاً دوباره تلاش کنید.")
-            return ConversationHandler.END
-
-        admin_alias = get_alias_from_admin_list(admin_user.id, self.admin_config) or admin_user.first_name
-        self.logger.info(f"Admin {admin_alias} ({admin_user.id}) replied to ticket ID: {ticket_id} with text: '{reply_text[:50]}...' ")
-
-        try:
-            # Use the existing add_ticket_message from DatabaseQueries
-            # add_ticket_message(ticket_id, sender_user_id, message_text, is_admin_message=False)
-            success = DatabaseQueries.add_ticket_message(
-                ticket_id=ticket_id,
-                sender_user_id=admin_user.id, # The admin is the sender
-                message_text=reply_text,
-                is_admin_message=True
-            )
-
-            if success:
-                await update.message.reply_text(f"پاسخ شما برای تیکت ID: <code>{ticket_id}</code> با موفقیت ثبت شد.", parse_mode=ParseMode.HTML)
-                
-                # --- Notify the original user (via MainBot) --- 
-                # This part requires careful implementation and access to MainBot's instance and user data
-                ticket_info = DatabaseQueries.get_ticket_details(ticket_id) # Fetch ticket to get original user_id
-                if ticket_info and self.main_bot_app:
-                    original_user_id = ticket_info.get('user_id')
-                    if original_user_id:
-                        try:
-                            # Construct the message for the user
-                            user_notification_text = (
-                                f"پاسخ جدیدی برای تیکت شما (ID: {ticket_id}) از طرف پشتیبانی ارسال شده است.\n\n"
-                                f"پاسخ: {html.escape(reply_text)}\n\n"
-                                f"می‌توانید برای مشاهده کامل تیکت یا ارسال پاسخ مجدد، از طریق ربات اصلی اقدام کنید."
-                                # Consider adding a deep link or command to view the ticket in MainBot if available
-                            )
-                            await self.main_bot_app.bot.send_message(
-                                chat_id=original_user_id,
-                                text=user_notification_text,
-                                parse_mode=ParseMode.HTML
-                            )
-                            self.logger.info(f"Notified user {original_user_id} about admin reply to ticket {ticket_id}.")
-                        except Exception as e:
-                            self.logger.error(f"Failed to notify user {original_user_id} for ticket {ticket_id} via MainBot: {e}", exc_info=True)
-                    else:
-                        self.logger.warning(f"Could not find original user_id for ticket {ticket_id} to send notification.")
-                elif not self.main_bot_app:
-                    self.logger.warning("MainBot application instance not available. Cannot notify user of admin reply.")
-                # --- End of user notification --- 
-
-            else:
-                await update.message.reply_text("خطایی در ثبت پاسخ شما رخ داد. لطفاً با پشتیبانی فنی تماس بگیرید.")
-        
-        except Exception as e:
-            self.logger.error(f"Error in handle_ticket_reply for ticket {ticket_id}: {e}", exc_info=True)
-            await update.message.reply_text("یک خطای داخلی هنگام پردازش پاسخ شما رخ داد.")
-        
-        finally:
-            # Clean up context
-            if 'replying_to_ticket_id' in context.user_data:
-                del context.user_data['replying_to_ticket_id']
-        
-        return ConversationHandler.END # End the conversation
-
-    @admin_only
-    async def cancel_reply_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Cancels the ongoing ticket reply conversation."""
-        user = update.effective_user
-        admin_alias = get_alias_from_admin_list(user.id, self.admin_config) or user.first_name
-        self.logger.info(f"Admin {admin_alias} ({user.id}) cancelled the ticket reply process.")
-        
-        await update.message.reply_text(
-            "عملیات پاسخ به تیکت لغو شد."
-        )
-        
-        # Clean up context
-        if 'replying_to_ticket_id' in context.user_data:
-            del context.user_data['replying_to_ticket_id']
-            
-        return ConversationHandler.END
-
-    @admin_only
-    async def close_ticket_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Closes a specific ticket."""
-        query = update.callback_query
-        await query.answer() # Acknowledge the callback query
-
-        try:
-            ticket_id = int(query.data.split('_')[-1])
-        except (IndexError, ValueError):
-            self.logger.error(f"Invalid ticket_id in callback_data for close: {query.data}")
-            await query.edit_message_text(text="خطا: شناسه تیکت برای بستن نامعتبر است.")
-            return
-
-        admin_user = query.from_user
-        admin_alias = get_alias_from_admin_list(admin_user.id, self.admin_config) or admin_user.first_name
-        self.logger.info(f"Admin {admin_alias} ({admin_user.id}) is attempting to close ticket ID: {ticket_id}")
-
-        try:
-            # Assuming a method like update_ticket_status exists in DatabaseQueries
-            # The status "بسته شده" should be consistent with your DB schema/enums
-            success = DatabaseQueries.update_ticket_status(ticket_id, "بسته شده") 
-
-            if success:
-                self.logger.info(f"Ticket ID: {ticket_id} successfully closed by admin {admin_alias} ({admin_user.id}).")
-                
-                # Edit the original message to reflect the ticket is closed
-                original_message_text = query.message.text # Get the current text
-                # Remove or alter the keyboard
-                await query.edit_message_text(
-                    text=f"{original_message_text}\n\n---\n✅ تیکت با موفقیت توسط شما بسته شد.",
-                    reply_markup=None # Remove inline keyboard
-                )
-
-                # --- Notify the original user (via MainBot) ---
-                ticket_info = DatabaseQueries.get_ticket_details(ticket_id) # Fetch ticket to get original user_id
-                if ticket_info and self.main_bot_app:
-                    original_user_id = ticket_info.get('user_id')
-                    if original_user_id:
-                        try:
-                            user_notification_text = (
-                                f"تیکت پشتیبانی شما (ID: {ticket_id}) توسط تیم پشتیبانی بسته شد.\n\n"
-                                f"امیدواریم مشکل شما برطرف شده باشد. در صورت نیاز به راهنمایی بیشتر، می‌توانید تیکت جدیدی ایجاد کنید."
-                            )
-                            await self.main_bot_app.bot.send_message(
-                                chat_id=original_user_id,
-                                text=user_notification_text,
-                                parse_mode=ParseMode.HTML
-                            )
-                            self.logger.info(f"Notified user {original_user_id} about closure of ticket {ticket_id}.")
-                        except Exception as e:
-                            self.logger.error(f"Failed to notify user {original_user_id} for ticket {ticket_id} closure: {e}", exc_info=True)
-                    else:
-                        self.logger.warning(f"Could not find original user_id for closed ticket {ticket_id} to send notification.")
-                elif not self.main_bot_app:
-                    self.logger.warning("MainBot application instance not available. Cannot notify user of ticket closure.")
-                # --- End of user notification ---
-
-            else:
-                self.logger.error(f"Failed to close ticket ID: {ticket_id} in database.")
-                await query.edit_message_text(text=f"{query.message.text}\n\n---\n⚠️ خطایی در بستن تیکت رخ داد. لطفاً دوباره تلاش کنید یا با پشتیبانی فنی تماس بگیرید.")
-
-        except Exception as e:
-            self.logger.error(f"Error in close_ticket_callback for ticket {ticket_id}: {e}", exc_info=True)
-            # Avoid editing if the original message is gone or in an unexpected state
-            try:
-                await query.edit_message_text(text="یک خطای داخلی هنگام تلاش برای بستن تیکت رخ داد.")
-            except Exception as ie:
-                self.logger.error(f"Further error trying to inform admin about close_ticket_callback failure: {ie}")
-
     def setup_handlers(self):
         """Setup command, message, and callback query handlers."""
         # Command Handlers for admin actions
         self.application.add_handler(CommandHandler("start", self.start_command))
-        # CommandHandler for direct /tickets command
         self.application.add_handler(CommandHandler("tickets", self.view_tickets_command))
-        # CallbackQueryHandler for the inline button from start_command
-        self.application.add_handler(CallbackQueryHandler(self.view_tickets_command, pattern='^view_tickets_command$'))
         self.application.add_handler(CommandHandler("validate_now", self.validate_memberships_now_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
 
-        # ConversationHandler for ticket replies and other CallbackQueryHandlers 
-        # (for viewing/closing tickets) are added directly in the __init__ method.
-        # This is because ConversationHandler has a more complex setup with entry_points, states, and fallbacks.
-        # Individual CallbackQueryHandlers for actions like 'view_ticket' or 'close_ticket' are also in __init__.
-        # TODO: Ensure all callback methods (prompt_ticket_reply_callback, handle_ticket_reply, 
-        # cancel_reply_callback, view_ticket_callback, close_ticket_callback) are implemented 
-        # and decorated with @admin_only if they perform sensitive actions or provide admin-level info.
+        # Add ticket management handlers from the ticket handler
+        for handler in self.ticket_handler.get_handlers():
+            self.application.add_handler(handler)
 
     # --- Background Tasks --- (This comment was likely part of process_admin_tickets or similar)
     async def process_admin_tickets(self, context: ContextTypes.DEFAULT_TYPE):
@@ -997,3 +584,48 @@ class ManagerBot:
         self.logger.info(f"Admin {admin_user.id} responded: {user_input}")
         # Example: await update.message.reply_text("پاسخ شما ثبت شد.")
         pass
+
+    async def send_new_ticket_notification(self, notif_message: str):
+        """
+        Sends a notification message to admins with the 'main_bot_support_staff' role.
+        """
+        try:
+            # First check if we have an admin config
+            if not self.admin_config:
+                self.logger.warning("ManagerBot: Admin config is not loaded. Cannot send support notification.")
+                return
+
+            # Debug log to see what's in admin_config
+            self.logger.info(f"ManagerBot: Admin config contains {len(self.admin_config)} entries.")
+            
+            # Try to send to each admin with the right role
+            notified_count = 0
+            for admin_info in self.admin_config:
+                # Check if admin_info is a dictionary and has the required role and chat_id
+                if isinstance(admin_info, dict):
+                    roles = admin_info.get('roles', [])
+                    chat_id = admin_info.get('chat_id')
+                    
+                    # Debug the roles to see what's available
+                    self.logger.info(f"ManagerBot: Admin {admin_info.get('alias', 'Unknown')} has roles: {roles}")
+                    
+                    if 'main_bot_support_staff' in roles and chat_id:
+                        try:
+                            await self.application.bot.send_message(
+                                chat_id=chat_id,
+                                text=notif_message,
+                                parse_mode=ParseMode.HTML
+                            )
+                            notified_count += 1
+                            self.logger.info(f"ManagerBot: Sent new ticket notification to admin {chat_id} ({admin_info.get('alias', 'Unknown')}).")
+                        except Exception as e:
+                            self.logger.error(f"ManagerBot: Failed to send notification to admin {chat_id}: {e}")
+            
+            # Log the result
+            if notified_count == 0:
+                self.logger.warning("ManagerBot: No admins with 'main_bot_support_staff' role found or notifications failed for all targeted admins.")
+            else:
+                self.logger.info(f"ManagerBot: Successfully sent new ticket notification to {notified_count} support staff admin(s).")
+        
+        except Exception as e:
+            self.logger.error(f"ManagerBot: Error in send_new_ticket_notification: {e}", exc_info=True)

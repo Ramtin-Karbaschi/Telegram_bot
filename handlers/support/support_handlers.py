@@ -14,6 +14,7 @@ from utils.constants import (
 )
 import config
 import logging
+import json
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -168,20 +169,15 @@ async def get_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"📋 موضوع: {subject}\n"
         f"📝 پیام اولیه: {message[:100]}{'...' if len(message) > 100 else ''}" # Show first 100 chars of message
     )
-    
-    if hasattr(config, 'ADMIN_IDS') and isinstance(config.ADMIN_IDS, list) and config.ADMIN_IDS:
-        for admin_id in config.ADMIN_IDS:
-            try:
-                await context.bot.send_message(
-                    chat_id=admin_id,
-                    text=admin_notification_message,
-                    parse_mode=ParseMode.HTML
-                )
-            except Exception as e:
-                logger.error(f"Failed to send new ticket notification to admin {admin_id}: {e}")
-    else:
-        logger.warning("ADMIN_IDS not configured or not a list. Cannot send new ticket notification to admins.")
-            
+
+    try:
+        if hasattr(context.application, 'manager_bot'):
+            await context.application.manager_bot.send_new_ticket_notification(admin_notification_message)
+            logger.info(f"Notification about ticket #{formatted_ticket_id} sent to admins via manager_bot.")
+        else:
+            logger.warning("Manager bot instance not found in context.application. Cannot send admin notification.")
+    except Exception as e:
+        logger.error(f"error sending notification to the admin bot: {e}", exc_info=True)
     return ConversationHandler.END
 
 async def view_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE, ticket_id=None):
