@@ -41,8 +41,6 @@ def get_main_menu_inline_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 from utils import constants
-from database.queries import DatabaseQueries # Import DatabaseQueries
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG) # Ensure this logger also picks up debugs if not configured globally
 
@@ -113,7 +111,6 @@ def get_occupation_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from database.queries import DatabaseQueries # Assuming DatabaseQueries is correctly imported elsewhere or adjust as needed
 from utils.constants.all_constants import TEXT_GENERAL_BACK
 import logging
 
@@ -122,7 +119,9 @@ logger = logging.getLogger(__name__)
 def get_subscription_plans_keyboard(telegram_id=None): # Added telegram_id as optional param, might be needed later
     """Get keyboard with subscription plan options, showing discounted prices."""
     keyboard = []
-    active_plans = DatabaseQueries.get_active_plans()
+    # Lazy import to avoid circular dependency
+    from database.queries import DatabaseQueries as _DB
+    active_plans = _DB.get_active_plans()
 
     if not active_plans:
         keyboard.append([InlineKeyboardButton("در حال حاضر طرح فعالی وجود ندارد.", callback_data='no_plans_available')])

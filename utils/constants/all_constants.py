@@ -108,7 +108,7 @@ CALLBACK_PROFILE_EDIT_EMAIL = "profile_edit_email"
 # Constants for payment flow
 PAYMENT_METHOD_MESSAGE = """
 💳 روش پرداخت برای طرح «{plan_name}»
-قیمت ریالی: {plan_price} تومان
+قیمت ریالی: {plan_price} ریال
 قیمت تتر: {plan_tether} USDT
 
 لطفاً روش پرداخت مورد نظر خود را انتخاب کنید:
