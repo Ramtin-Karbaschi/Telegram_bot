@@ -161,6 +161,18 @@ except ValueError:
     CRYPTO_PAYMENT_TIMEOUT_MINUTES = 30
 
 
+# --- Conversation Timeouts ---
+PAYMENT_CONVERSATION_TIMEOUT_STR = os.getenv("PAYMENT_CONVERSATION_TIMEOUT", "1800") # 30 minutes in seconds
+try:
+    PAYMENT_CONVERSATION_TIMEOUT = int(PAYMENT_CONVERSATION_TIMEOUT_STR)
+except ValueError:
+    logger.warning(
+        f"Invalid value for PAYMENT_CONVERSATION_TIMEOUT in .env: '{PAYMENT_CONVERSATION_TIMEOUT_STR}'. "
+        f"Using default value: 1800."
+    )
+    PAYMENT_CONVERSATION_TIMEOUT = 1800
+
+
 # Specific Payment Gateway URLs
 RIAL_GATEWAY_URL = os.getenv("RIAL_GATEWAY_URL")
 if not RIAL_GATEWAY_URL:
