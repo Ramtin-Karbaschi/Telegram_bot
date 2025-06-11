@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import config
 from database.models import Database
 from database.schema import ALL_TABLES
+from utils.helpers import get_current_time  # ensure Tehran-tz aware now
 
 class DatabaseQueries:
     """Class for handling database operations"""
@@ -510,7 +511,9 @@ class DatabaseQueries:
         """
         db = Database()
         if db.connect():
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # Use Tehran timezone aware "now" to avoid offset issues
+            now_str = get_current_time().strftime("%Y-%m-%d %H:%M:%S")
+            
             try:
                 db.execute(
                     """SELECT s.id, s.user_id, s.plan_id, s.payment_id, 
@@ -719,16 +722,16 @@ class DatabaseQueries:
     
     # Payment-related queries
     @staticmethod
-    def add_payment(user_id, amount, payment_method, description, transaction_id=None, status="pending"):
+    def add_payment(user_id, amount, payment_method, description, transaction_id=None, status="pending", plan_id=None):
         """Add a new payment"""
         db = Database()
         if db.connect():
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             db.execute(
                 """INSERT INTO payments 
-                (user_id, amount, payment_date, payment_method, transaction_id, description, status) 
-                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (user_id, amount, now, payment_method, transaction_id, description, status)
+                (user_id, plan_id, amount, payment_date, payment_method, transaction_id, description, status) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, plan_id, amount, now, payment_method, transaction_id, description, status)
             )
             payment_id = db.cursor.lastrowid
             db.commit()
@@ -738,17 +741,22 @@ class DatabaseQueries:
     
     @staticmethod
     def get_payment(payment_id):
-        """Get payment details"""
+        """Get payment details by its primary key `payment_id`. (Legacy alias for `get_payment_by_id`.)"""
         db = Database()
         if db.connect():
             db.execute(
-                "SELECT * FROM payments WHERE id = ?",
+                "SELECT * FROM payments WHERE payment_id = ?",
                 (payment_id,)
             )
             result = db.fetchone()
             db.close()
             return result
         return None
+    
+     @staticmethod
+    def get_payment_by_id(payment_id):
+        """Alias for `get_payment` so existing handlers calling this name work."""
+        return DatabaseQueries.get_payment(payment_id)
     
     @staticmethod
     def update_payment_status(payment_id, status, transaction_id=None, error_message=None):
