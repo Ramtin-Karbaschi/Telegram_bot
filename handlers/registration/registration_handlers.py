@@ -27,7 +27,6 @@ from utils.constants import (
     SUBSCRIPTION_PLANS_MESSAGE,
     CITY_REQUEST, EMAIL_REQUEST
 )
-from handlers.payment import select_plan # Added import for select_plan
 import config
 
 logger = logging.getLogger(__name__)

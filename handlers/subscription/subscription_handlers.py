@@ -37,11 +37,19 @@ async def activate_or_extend_subscription(
 
     try:
         plan_details = Database.get_plan_by_id(plan_id)
+        # Convert sqlite3.Row to dict for safe .get access
+        if plan_details and not isinstance(plan_details, dict):
+            try:
+                plan_details = dict(plan_details)
+            except Exception:
+                # Fallback: create dict manually from row keys
+                plan_details = {key: plan_details[idx] for idx, key in enumerate(plan_details.keys())}
+
         if not plan_details:
             logger.error(f"Plan with ID {plan_id} not found for user_id: {user_id}.")
             return False, "اطلاعات طرح اشتراک یافت نشد."
 
-        plan_duration_days = plan_details.get('days')
+        plan_duration_days = plan_details.get('days') if isinstance(plan_details, dict) else None
         if plan_duration_days is None:
             logger.error(f"Plan duration (days) not found for plan_id: {plan_id}, user_id: {user_id}.")
             return False, "مدت زمان طرح اشتراک مشخص نشده است."
@@ -188,12 +196,16 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
     ]
     profile_message = "\n".join(profile_info_parts)
 
+    # Initialize subscription active flag
+    is_active_subscription = False
+
     # Check if user is admin
     hide_main_menu_button = context.user_data.pop('hide_main_menu_button', False)
 
     if is_admin(user_id, config.ADMIN_USER_IDS):
+        # Admins have unlimited access; treat as active
+        is_active_subscription = True
         subscription_status_text = "شما کاربر ادمین با دسترسی نامحدود هستید."
-        final_message = f"اطلاعات حساب کاربری شما:\n\n{profile_message}\n\nوضعیت اشتراک:\n{subscription_status_text}"
         
         keyboard_buttons = []
         if is_active_subscription:
@@ -203,9 +215,7 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
             keyboard_buttons.append([
                 InlineKeyboardButton("دریافت لینک کانال", callback_data="get_channel_link")
             ])
-        else:
-            # InlineKeyboardButton("خرید اشتراک", callback_data="start_subscription_flow") removed for admin
-            pass # Placeholder if no other buttons are added here for admin without active sub
+        pass  # Admins without an explicit subscription still retain unlimited access
         keyboard_buttons.append([
             InlineKeyboardButton("اصلاح و تکمیل اطلاعات", callback_data=CALLBACK_START_PROFILE_EDIT)
         ])
@@ -214,25 +224,39 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
         # Logic for regular users
         subscription_status_text = SUBSCRIPTION_STATUS_NONE 
         plan_name_for_msg = "نامشخص" # Default plan name
-        is_active_subscription = False # Flag to track active subscription
 
         if subscription_data:
             plan_id = subscription_data['plan_id']
             plan_details = Database.get_plan_by_id(plan_id) # Fetch from DB
-            plan_name_for_msg = plan_details['name'] if plan_details else "نامشخص"
-            
-            days_left = calculate_days_left(subscription_data['end_date'])
-            
-            if days_left > 0:
-                is_active_subscription = True # Set flag
-                subscription_status_text = SUBSCRIPTION_STATUS_ACTIVE.format(
-                    plan_name=plan_name_for_msg,
-                    days_left=days_left,
-                    start_date=subscription_data['start_date'][:10],
-                    end_date=subscription_data['end_date'][:10]
-                )
-            else: # Expired 
-                pass
+            # Convert sqlite3.Row to dict for safe .get access
+            if plan_details and not isinstance(plan_details, dict):
+                try:
+                    plan_details = dict(plan_details)
+                except Exception:
+                    # Fallback: create dict manually from row keys
+                    plan_details = {key: plan_details[idx] for idx, key in enumerate(plan_details.keys())}
+
+            if plan_details:
+                plan_name_for_msg = plan_details.get('name') if isinstance(plan_details, dict) else "نامشخص"
+                
+                days_left = calculate_days_left(subscription_data['end_date'])
+                
+                if days_left > 0:
+                    # Active subscription
+                    is_active_subscription = True
+                    subscription_status_text = SUBSCRIPTION_STATUS_ACTIVE.format(
+                        plan_name=plan_name_for_msg,
+                        days_left=days_left,
+                        start_date=subscription_data['start_date'][:10],
+                        end_date=subscription_data['end_date'][:10]
+                    )
+                else:
+                    # Subscription expired
+                    subscription_status_text = SUBSCRIPTION_STATUS_EXPIRED.format(
+                        plan_name=plan_name_for_msg,
+                        start_date=subscription_data['start_date'][:10],
+                        end_date=subscription_data['end_date'][:10]
+                    )
 
         final_message = f"اطلاعات حساب کاربری شما:\n\n{profile_message}\n\nوضعیت اشتراک:\n{subscription_status_text}"
 
@@ -245,9 +269,11 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
             keyboard_buttons.append(
                 [InlineKeyboardButton("دریافت لینک کانال", callback_data="get_channel_link")]
             )
-        else: # No active subscription (None or expired)
-            # InlineKeyboardButton("خرید اشتراک", callback_data=f"{CALLBACK_VIEW_PLANS_PREFIX}") removed for regular user
-            pass # Placeholder if no other buttons are added here for user without active sub
+        else:  # No active subscription (None or expired)
+            # Provide button for buying/renewing subscription
+            keyboard_buttons.append(
+                [InlineKeyboardButton("خرید/تمدید اشتراک", callback_data="start_subscription_flow")]
+            )
         
         # Common buttons for all regular users
         keyboard_buttons.append(
