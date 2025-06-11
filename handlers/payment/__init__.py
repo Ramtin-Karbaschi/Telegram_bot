@@ -3,31 +3,30 @@ Payment handlers package initialization
 """
 
 from handlers.payment.payment_handlers import (
-    # Handler functions
-    select_plan,
-    select_payment_method,
-    verify_payment_status,
-    back_to_plans_handler,
-    back_to_payment_methods_handler,
-    show_qr_code_handler, # Added for QR code display
-    # Conversation states
+    # Entry point for the subscription flow
+    start_subscription_flow,
+
+    # The main conversation handler for payments
+    payment_conversation,
+
+    # Conversation states (optional, but good for reference)
     SELECT_PLAN,
     SELECT_PAYMENT_METHOD,
     PROCESS_PAYMENT,
     VERIFY_PAYMENT,
-    # Conversation handler
-    payment_conversation
+
+    # New export
+    show_qr_code_handler,
+    verify_payment_status,
 )
 
 __all__ = [
-    'select_plan',
-    'select_payment_method',
-    'verify_payment_status',
-    'back_to_plans_handler',
-    'back_to_payment_methods_handler',
-    'SELECT_PLAN',
-    'SELECT_PAYMENT_METHOD',
-    'PROCESS_PAYMENT',
-    'VERIFY_PAYMENT',
-    'payment_conversation'  # Added this line
+    "start_subscription_flow",
+    "payment_conversation",
+    "SELECT_PLAN",
+    "SELECT_PAYMENT_METHOD",
+    "PROCESS_PAYMENT",
+    "VERIFY_PAYMENT",
+    "show_qr_code_handler",
+    "verify_payment_status",
 ]
