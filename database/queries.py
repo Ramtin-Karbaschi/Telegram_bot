@@ -988,3 +988,55 @@ class DatabaseQueries:
             finally:
                 db.close()
         return users
+    
+    @staticmethod
+    def get_pending_tickets(self):
+        try:
+            query = """
+            SELECT ticket_id, user_id, subject, message, created_at, status 
+            FROM tickets 
+            WHERE status = 'open' OR status = 'pending'
+            ORDER BY created_at DESC
+            """
+            result = self.execute_query(query)
+            return result if result else []
+        except Exception as e:
+            return []
+
+    @staticmethod    
+    def get_ticket_by_id(self, ticket_id):
+        try:
+            query = """
+            SELECT ticket_id, user_id, subject, message, created_at, status 
+            FROM tickets 
+            WHERE ticket_id = ?
+            """
+            result = self.execute_query(query, (ticket_id,))
+            return result[0] if result else None
+        except Exception as e:
+            return None
+        
+    @staticmethod
+    def close_ticket(self, ticket_id, admin_id):
+        try:
+            query = """
+            UPDATE tickets 
+            SET status = 'closed', closed_at = datetime('now'), closed_by = ?
+            WHERE ticket_id = ?
+            """
+            return self.execute_query(query, (admin_id, ticket_id), fetch=False)
+        except Exception as e:
+            return False
+
+    @staticmethod
+    def get_user_by_id(self, user_id):
+        try:
+            query = """
+            SELECT user_id, telegram_id, phone, first_name, last_name, username, registration_date
+            FROM users 
+            WHERE user_id = ?
+            """
+            result = self.execute_query(query, (user_id,))
+            return result[0] if result else None
+        except Exception as e:
+            return None

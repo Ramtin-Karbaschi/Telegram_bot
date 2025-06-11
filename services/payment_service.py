@@ -2,7 +2,6 @@
 Payment service for the Daraei Academy Telegram bot
 """
 
-import aiohttp
 import random
 import json
 import config
