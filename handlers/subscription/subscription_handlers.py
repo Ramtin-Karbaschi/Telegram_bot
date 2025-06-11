@@ -37,6 +37,8 @@ async def activate_or_extend_subscription(
 
     try:
         plan_details = Database.get_plan_by_id(plan_id)
+        logger.info(f"Retrieved plan details: {plan_details}")
+        
         # Convert sqlite3.Row to dict for safe .get access
         if plan_details and not isinstance(plan_details, dict):
             try:
@@ -50,10 +52,15 @@ async def activate_or_extend_subscription(
             return False, "اطلاعات طرح اشتراک یافت نشد."
 
         plan_duration_days = plan_details.get('days') if isinstance(plan_details, dict) else None
+        logger.info(f"Plan duration days: {plan_duration_days}")
+        
         if plan_duration_days is None:
             logger.error(f"Plan duration (days) not found for plan_id: {plan_id}, user_id: {user_id}.")
             return False, "مدت زمان طرح اشتراک مشخص نشده است."
 
+        # Log the parameters being passed to add_subscription
+        logger.info(f"Calling Database.add_subscription with params: user_id={user_id}, plan_id={plan_id}, payment_id={payment_table_id}, plan_duration_days={plan_duration_days}, amount_paid={payment_amount}, payment_method={payment_method}")
+        
         # The payment_id argument in add_subscription refers to the ID in the 'payments' or 'crypto_payments' table.
         subscription_id = Database.add_subscription(
             user_id=user_id,
@@ -64,13 +71,16 @@ async def activate_or_extend_subscription(
             payment_method=payment_method,
             # status is 'active' by default in add_subscription
         )
+        
+        logger.info(f"Database.add_subscription returned: {subscription_id}")
 
         if subscription_id:
             logger.info(f"Successfully activated/extended subscription_id: {subscription_id} for user_id: {user_id} with plan '{plan_name}'. Payment ID: {payment_table_id} ({payment_method}).")
-            # UserAction.log_user_action(user_id, "subscription_activated", {details...}) # TODO: Implement UserAction
             
-            # Optionally send a direct confirmation here, or rely on the calling handler
-            # await context.bot.send_message(telegram_id, f"اشتراک شما برای طرح '{plan_name}' با موفقیت فعال/تمدید شد.")
+            # Verify the subscription was actually created
+            verification_subscription = Database.get_user_active_subscription(user_id)
+            logger.info(f"Verification - active subscription after creation: {verification_subscription}")
+            
             return True, f"اشتراک شما برای طرح '{plan_name}' با موفقیت فعال/تمدید شد."
         else:
             logger.error(f"Failed to add/extend subscription in DB for user_id: {user_id}, plan_id: {plan_id}, payment_table_id: {payment_table_id}.")

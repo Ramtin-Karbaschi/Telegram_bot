@@ -43,6 +43,7 @@ from utils.constants.all_constants import ZARINPAL_VERIFY_SUCCESS_STATUS, ZARINP
 from utils.helpers import calculate_days_left, generate_qr_code
 from handlers.subscription.subscription_handlers import activate_or_extend_subscription
 from utils.user_actions import UserAction
+from handlers.subscription.subscription_handlers import activate_or_extend_subscription
 
 # Conversation states
 SELECT_PLAN = 0
@@ -959,16 +960,19 @@ async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TY
                 'payment_method': payment_method
             }
         )
-        subscription_record_id = Database.add_subscription(
+        activation_success, activation_message = await activate_or_extend_subscription(
             user_id=user_db_id if user_db_id else telegram_id,
+            telegram_id=telegram_id,
             plan_id=plan_id,
-            payment_id=payment_id,
-            plan_duration_days=plan_duration_days,
-            amount_paid=float(amount_paid),
-            payment_method=payment_method
+            plan_name=plan_name,
+            payment_amount=float(amount_paid),
+            payment_method=payment_method,
+            transaction_id=gateway_transaction_id,
+            context=context,
+            payment_table_id=payment_id
         )
 
-        if subscription_record_id:
+        if activation_success:
             UserAction.log_user_action(
                 telegram_id=telegram_id,
                 user_db_id=user_db_id,

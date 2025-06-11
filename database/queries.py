@@ -5,6 +5,7 @@ Database queries for the Daraei Academy Telegram bot
 import sqlite3
 from datetime import datetime, timedelta
 import config
+import logging
 from database.models import Database
 from database.schema import ALL_TABLES
 from utils.helpers import get_current_time  # ensure Tehran-tz aware now
@@ -408,8 +409,8 @@ class DatabaseQueries:
 
     @staticmethod
     def add_subscription(user_id: int, plan_id: int, payment_id: int, 
-                         plan_duration_days: int, amount_paid: float, 
-                         payment_method: str, status: str = 'active'):
+                     plan_duration_days: int, amount_paid: float, 
+                     payment_method: str, status: str = 'active'):
         """
         Adds a new subscription or extends an existing active one for a user.
         If an active subscription exists, its end_date is extended.
@@ -429,10 +430,15 @@ class DatabaseQueries:
         """
         db = Database()
         if not db.connect():
+            print(f"Failed to connect to database in add_subscription for user {user_id}")
             return None
 
         try:
+            print(f"DEBUG: add_subscription called with user_id={user_id}, plan_id={plan_id}, payment_id={payment_id}")
+            
             current_active_sub = DatabaseQueries.get_user_active_subscription(user_id) 
+            print(f"DEBUG: Current active subscription: {current_active_sub}")
+            
             now_dt = datetime.now()
             
             if current_active_sub:
@@ -451,6 +457,8 @@ class DatabaseQueries:
                 new_end_date_dt = start_point_for_new_duration + timedelta(days=plan_duration_days)
                 new_end_date_str = new_end_date_dt.strftime("%Y-%m-%d %H:%M:%S")
 
+                print(f"DEBUG: Updating existing subscription {current_active_sub['id']} with new end date {new_end_date_str}")
+                
                 if DatabaseQueries._update_existing_subscription(
                     subscription_id=current_active_sub['id'],
                     plan_id=plan_id,
@@ -460,6 +468,7 @@ class DatabaseQueries:
                     payment_method=payment_method,
                     status=status
                 ):
+                    print(f"DEBUG: Successfully updated subscription {current_active_sub['id']}")
                     return current_active_sub['id']
                 else:
                     print(f"Failed to update existing subscription for user {user_id}.")
@@ -471,6 +480,8 @@ class DatabaseQueries:
                 start_date_str = start_date_dt.strftime("%Y-%m-%d %H:%M:%S")
                 end_date_str = end_date_dt.strftime("%Y-%m-%d %H:%M:%S")
 
+                print(f"DEBUG: Creating new subscription - start: {start_date_str}, end: {end_date_str}")
+
                 db.execute(
                     """INSERT INTO subscriptions 
                        (user_id, plan_id, payment_id, start_date, end_date, amount_paid, status, payment_method, created_at, updated_at) 
@@ -479,13 +490,19 @@ class DatabaseQueries:
                      payment_method, now_dt.strftime("%Y-%m-%d %H:%M:%S"), now_dt.strftime("%Y-%m-%d %H:%M:%S"))
                 )
                 subscription_id = db.cursor.lastrowid
+                print(f"DEBUG: Inserted new subscription with ID: {subscription_id}")
+                
                 db.commit()
+                print(f"DEBUG: Committed transaction for subscription {subscription_id}")
+                
                 return subscription_id
         except sqlite3.Error as e:
             print(f"Database error in add_subscription for user {user_id}: {e}")
+            db.rollback()  # Add rollback on error
             return None
         except Exception as e:
             print(f"Unexpected error in add_subscription for user {user_id}: {e}")
+            db.rollback()  # Add rollback on error
             return None
         finally:
             db.close()
@@ -1048,3 +1065,32 @@ class DatabaseQueries:
             return result[0] if result else None
         except Exception as e:
             return None
+
+    @staticmethod
+    def get_user_by_telegram_id(telegram_id):
+        """Get user by telegram ID"""
+        db = Database()
+        if db.connect():
+            db.execute("SELECT * FROM users WHERE user_id = ?", (telegram_id,))
+            result = db.fetchone()
+            db.close()
+            return result
+        return None
+
+    @staticmethod
+    def get_user_subscriptions(user_id):
+        """Get all subscriptions for a user"""
+        db = Database()
+        if db.connect():
+            db.execute(
+                """SELECT s.*, p.name as plan_name 
+                   FROM subscriptions s 
+                   LEFT JOIN plans p ON s.plan_id = p.id 
+                   WHERE s.user_id = ? 
+                   ORDER BY s.created_at DESC""",
+                (user_id,)
+            )
+            result = db.fetchall()
+            db.close()
+            return result
+        return []
