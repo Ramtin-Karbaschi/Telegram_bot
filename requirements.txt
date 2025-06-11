@@ -1,7 +1,6 @@
 python-telegram-bot[job-queue]==20.8
 zarinpal-python-sdk>=0.2
 pytz==2023.3
-aiohttp==3.8.5
 python-dotenv==1.0.0
 jdatetime>=2.0
 qrcode[pil]==7.4.2  # For QR code generation with image support
