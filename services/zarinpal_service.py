@@ -27,7 +27,7 @@ class ZarinpalPaymentService:
         return ZarinpalPaymentService._client
 
     @staticmethod
-    def create_payment_request(amount: int, description: str, user_email: str = None, user_mobile: str = None) -> dict:
+    def create_payment_request(amount: int, description: str, callback_url: str, user_email: str = None, user_mobile: str = None) -> dict:
         """
         Creates a payment request with Zarinpal using zarinpal-python-sdk.
 
@@ -44,20 +44,22 @@ class ZarinpalPaymentService:
         try:
             client = ZarinpalPaymentService._get_client()
             
-            if not ZARINPAL_CALLBACK_URL or ZARINPAL_CALLBACK_URL == "https://t.me/YOUR_BOT_USERNAME/payment_callback":
-                logger.error("Zarinpal callback URL is not properly configured. Please set it in .env")
-                return {'status': -98, 'error_message': 'Zarinpal callback URL not configured.'}
+            if not callback_url:
+                logger.error("Dynamic Zarinpal callback URL was not provided to create_payment_request.")
+                return {'status': -98, 'error_message': 'Callback URL not provided.'}
 
             # Zarinpal API requires the amount in Tomans. Convert from Rials.
             amount_toman = amount // 10
             logger.info(f"Creating Zarinpal payment request. Amount: {amount} Rials ({amount_toman} Tomans), Description: {description}, Callback: {ZARINPAL_CALLBACK_URL}")
             
+            # First, request payment without the callback to get the authority
             response = client.request_payment(
                 amount=amount_toman,
                 description=description,
-                callback_url=ZARINPAL_CALLBACK_URL,
-                mobile=user_mobile if user_mobile else None, # Ensure None if empty string
-                email=user_email if user_email else None    # Ensure None if empty string
+                # The final callback_url with authority is set by Zarinpal, but we must provide a base
+                callback_url=callback_url, 
+                mobile=user_mobile if user_mobile else None,
+                email=user_email if user_email else None
             )
             
             # zarinpal-python-sdk response structure:
@@ -72,6 +74,8 @@ class ZarinpalPaymentService:
                 # The SDK's example shows constructing it for sandbox. For production, it's www.zarinpal.com
                 # payment_url = response.get('PaymentURL') # Not directly provided by this SDK's request_payment
                 payment_url = f"https://www.zarinpal.com/pg/StartPay/{authority}"
+                # The actual callback URL used by Zarinpal includes the authority in the query string.
+                # The deep link is constructed in the handler.
                 logger.info(f"Zarinpal payment request successful. Authority: {authority}, Payment URL: {payment_url}")
                 return {'status': status, 'authority': authority, 'payment_url': payment_url}
             else:
