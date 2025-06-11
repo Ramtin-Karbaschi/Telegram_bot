@@ -4,7 +4,7 @@ Payment handlers for the Daraei Academy Telegram bot
 
 from services.crypto_payment_service import CryptoPaymentService
 from services.zarinpal_service import ZarinpalPaymentService # Added for Zarinpal
-from config import CRYPTO_WALLET_ADDRESS, CRYPTO_PAYMENT_TIMEOUT_MINUTES, RIAL_GATEWAY_URL, CRYPTO_GATEWAY_URL # Added CRYPTO_WALLET_ADDRESS, CRYPTO_PAYMENT_TIMEOUT_MINUTES
+from config import CRYPTO_WALLET_ADDRESS, CRYPTO_PAYMENT_TIMEOUT_MINUTES, RIAL_GATEWAY_URL, CRYPTO_GATEWAY_URL, PAYMENT_CONVERSATION_TIMEOUT # Added CRYPTO_WALLET_ADDRESS, CRYPTO_PAYMENT_TIMEOUT_MINUTES
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ParseMode # Added for message formatting
@@ -61,136 +61,93 @@ async def back_to_main_menu_from_payment_handler(update: Update, context: Contex
     context.user_data['hide_main_menu_button'] = True
     return await view_active_subscription(update, context)
 
-async def select_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles plan selection, can be an entry point from /subscribe or a callback query."""
-    """Handle subscription plan selection"""
-    user = update.effective_user
-    user_id = user.id
-    
-    # Update user activity
-    Database.update_user_activity(user_id)
-    
-    # Check if it's a callback query
-    if update.callback_query:
-        query = update.callback_query
-        await query.answer() # Answer all callback queries early
+async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry point for the subscription flow. Displays subscription plans."""
+    query = update.callback_query
+    user_id = update.effective_user.id
 
-        if query.data == "start_subscription_flow":
-            # This is the entry point from the main menu "خرید اشتراک" button.
-            # Display the subscription plans.
-            # Clear any previous plan selection from context to ensure a fresh start.
-            if 'selected_plan_details' in context.user_data:
-                del context.user_data['selected_plan_details']
-            if 'live_usdt_price' in context.user_data:
-                del context.user_data['live_usdt_price']
-            
-            await query.message.edit_text(
-                text=SUBSCRIPTION_PLANS_MESSAGE,
-                reply_markup=get_subscription_plans_keyboard(user_id),
-                parse_mode=ParseMode.HTML
-            )
-            return SELECT_PLAN
-
-        elif query.data == "back_to_plans":
-            # User clicked 'Back to plans', so re-display the plans.
-            await query.message.edit_text(
-                text=SUBSCRIPTION_PLANS_MESSAGE,
-                reply_markup=get_subscription_plans_keyboard(user_id),
-                parse_mode=ParseMode.HTML
-            )
-            return SELECT_PLAN # Stay in the plan selection state
-
-        # If not 'start_subscription_flow' or 'back_to_plans', proceed with plan selection logic
-        callback_data = query.data.split('_')
-        
-        # Plan ID is directly from the callback data (e.g. "plan_1")
-        # The format is "plan_X" where X is the numeric ID from the database
-        if len(callback_data) > 1 and callback_data[0] == 'plan':
-            try:
-                numeric_plan_id = int(callback_data[1])
-            except ValueError:
-                await query.message.edit_text("خطا: شناسه طرح نامعتبر است (فرمت اشتباه).")
-                # Log this error for admin
-                print(f"Error: Invalid plan_id format from callback: {query.data} for user {user_id}")
-                # Consider sending a message to admin here
-                return SELECT_PLAN # Or end conversation
-        else:
-            await query.message.edit_text("خطا: درخواست نامعتبر است (داده‌های ورودی اشتباه).")
-            logger.error(f"Error: Invalid callback data structure for plan selection: {query.data} for user {user_id}")
-            return SELECT_PLAN # Or end conversation
-
-        selected_plan = Database.get_plan_by_id(numeric_plan_id)
-
-        if not selected_plan or not selected_plan['is_active']:
-            await query.message.edit_text("خطا: طرح انتخاب شده معتبر نیست یا دیگر فعال نمی‌باشد. لطفاً مجدداً یک طرح را انتخاب کنید.")
-            # Reshow plans
-            await query.message.reply_text(
-                SUBSCRIPTION_PLANS_MESSAGE,
-                reply_markup=get_subscription_plans_keyboard(user_id),
-                parse_mode=ParseMode.HTML
-            )
-            # It might be better to end the current message and send a new one
-            # await query.delete_message() # If you want to remove the old message
-            return SELECT_PLAN
-        
-        # Store plan details in user data
-        context.user_data['selected_plan_details'] = dict(selected_plan) # Ensure it's a mutable dict
-        
-        # Answer callback query
-        await query.answer()
-        
-        plan_price_irr_formatted = f"{int(selected_plan['price']):,}" if selected_plan['price'] is not None else "N/A"
-        
-        usdt_rate = await get_usdt_to_irr_rate()
-        if usdt_rate and selected_plan['price'] is not None:
-            converted_usdt_price = convert_irr_to_usdt(float(selected_plan['price']), usdt_rate)
-            plan_price_usdt_formatted = f"{converted_usdt_price}" if converted_usdt_price is not None else "N/A"
-            if converted_usdt_price is not None:
-                context.user_data['live_usdt_price'] = converted_usdt_price
-        else:
-            plan_price_usdt_formatted = "N/A"
-            if not usdt_rate:
-                logger.warning("Failed to fetch USDT rate, showing N/A for USDT price.")
-            if selected_plan['price'] is None:
-                logger.warning("Plan price is N/A, cannot convert to USDT.")
-
-        message_text = PAYMENT_METHOD_MESSAGE.format(
-            plan_name=selected_plan['name'],
-            plan_price=plan_price_irr_formatted,
-            plan_tether=plan_price_usdt_formatted
-        )
-        await query.message.edit_text(
-            text=message_text,
-            reply_markup=get_payment_methods_keyboard()
-        )
-        
-        return SELECT_PAYMENT_METHOD
-    
-    # If called by a command (update.message is not None) or if it's a callback that needs to show plans again.
-    # This part is crucial: select_plan can be an entry point.
-    # If update.message exists, it's likely from a CommandHandler.
-    # If update.callback_query exists, it's from a CallbackQueryHandler.
-
-    # The initial display of plans when entering the conversation:
-    if update.message: # Typically from CommandHandler or first message
-        await update.message.reply_text(
-            SUBSCRIPTION_PLANS_MESSAGE,
-            reply_markup=get_subscription_plans_keyboard(user_id),
-            parse_mode=ParseMode.HTML
-        )
-    elif update.callback_query and not context.user_data.get('selected_plan_details'):
-        # This case might occur if 'start_subscription_flow' callback leads here to show plans
-        # Ensure query is answered if it's a callback
-        query = update.callback_query
+    # If called via CallbackQuery
+    if query:
         await query.answer()
         await query.message.edit_text(
             text=SUBSCRIPTION_PLANS_MESSAGE,
             reply_markup=get_subscription_plans_keyboard(user_id),
             parse_mode=ParseMode.HTML
         )
+    # If called via Message (e.g. reply keyboard)
+    elif update.message:
+        await update.message.reply_text(
+            text=SUBSCRIPTION_PLANS_MESSAGE,
+            reply_markup=get_subscription_plans_keyboard(user_id),
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        logger.error("start_subscription_flow called but neither callback_query nor message is present in update.")
+        return ConversationHandler.END
+
+    # Clear any previous plan selection from context to ensure a fresh start.
+    context.user_data.pop('selected_plan_details', None)
+    context.user_data.pop('live_usdt_price', None)
+    return SELECT_PLAN
+
+async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the user's plan selection and proceeds to payment method selection."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    logger.info(f"[select_plan_handler] User {user_id} triggered with data: {query.data}")
+    await query.answer()
+
+    Database.update_user_activity(user_id)
+
+    # The ConversationHandler's pattern ensures query.data starts with 'plan_'
+    callback_data = query.data.split('_')
+    try:
+        numeric_plan_id = int(callback_data[1])
+    except (ValueError, IndexError):
+        logger.error(f"[select_plan_handler] Invalid plan_id format from callback: {query.data} for user {user_id}")
+        await query.message.edit_text("خطا: شناسه طرح نامعتبر است.")
         return SELECT_PLAN
 
-    return SELECT_PLAN
+    selected_plan = Database.get_plan_by_id(numeric_plan_id)
+    logger.info(f"[select_plan_handler] Selected plan: {selected_plan}")
+    if not selected_plan or not selected_plan['is_active']:
+        logger.warning(f"[select_plan_handler] Plan not found or inactive: {numeric_plan_id}")
+        await query.message.edit_text(
+            "خطا: طرح انتخاب شده معتبر نیست یا دیگر فعال نمی‌باشد. لطفاً مجدداً یک طرح را انتخاب کنید.",
+            reply_markup=get_subscription_plans_keyboard(user_id)
+        )
+        return SELECT_PLAN
+
+    context.user_data['selected_plan_details'] = dict(selected_plan)
+    plan_price_irr_formatted = f"{int(selected_plan['price']):,}" if selected_plan['price'] is not None else "N/A"
+    usdt_rate = await get_usdt_to_irr_rate()
+    if usdt_rate and selected_plan['price'] is not None:
+        converted_usdt_price = convert_irr_to_usdt(float(selected_plan['price']), usdt_rate)
+        plan_price_usdt_formatted = f"{converted_usdt_price}" if converted_usdt_price is not None else "N/A"
+        if converted_usdt_price is not None:
+            context.user_data['live_usdt_price'] = converted_usdt_price
+    else:
+        plan_price_usdt_formatted = "N/A"
+        logger.warning(f"[select_plan_handler] Could not calculate USDT price for plan {numeric_plan_id}. USDT rate: {usdt_rate}")
+
+    message_text = PAYMENT_METHOD_MESSAGE.format(
+        plan_name=selected_plan['name'],
+        plan_price=plan_price_irr_formatted,
+        plan_tether=plan_price_usdt_formatted
+    )
+    logger.info(f"[select_plan_handler] Sending payment methods keyboard for user {user_id}.")
+    keyboard = get_payment_methods_keyboard()
+    for row in keyboard.inline_keyboard:
+        for btn in row:
+            logger.info(f"[select_plan_handler] Button text: {btn.text}, callback_data: {btn.callback_data}")
+    await query.message.edit_text(
+        text=message_text,
+        reply_markup=keyboard
+    )
+    logger.info(f"[select_plan_handler] Returning SELECT_PAYMENT_METHOD for user {user_id}.")
+    return SELECT_PAYMENT_METHOD
+    
+
 
 async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle payment method selection"""
@@ -258,9 +215,12 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         amount_for_zarinpal = int(plan_price_irr) 
 
         logger.info(f"Requesting Zarinpal payment for user {telegram_id}, plan {plan_id}, amount {amount_for_zarinpal} IRR.")
+        bot_username = (await context.bot.get_me()).username
+        # The callback_url will be dynamically constructed inside the service
         zarinpal_request = ZarinpalPaymentService.create_payment_request(
             amount=amount_for_zarinpal,
-            description=description
+            description=description,
+            callback_url=f"https://t.me/{bot_username}" # Base URL for deep linking
         )
         logger.info(f"User {telegram_id} (DB ID: {user_db_id}): Zarinpal request result: {zarinpal_request}")
 
@@ -268,55 +228,45 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             authority = zarinpal_request.get('authority')
             payment_url = zarinpal_request.get('payment_url')
 
-            # Update payment record with authority
-            Database.update_payment_transaction_id(payment_db_id, str(authority))
+            # Immediately update the database with the authority code
+            Database.update_payment_transaction_id(payment_db_id, str(authority), status='pending_verification')
 
             context.user_data['zarinpal_authority'] = authority
             context.user_data['rial_amount_for_zarinpal'] = amount_for_zarinpal
-            context.user_data['selected_plan_id'] = plan_id # Already set, but good to ensure
+            context.user_data['selected_plan_id'] = plan_id
             context.user_data['payment_db_id_zarinpal'] = payment_db_id
             context.user_data['selected_plan_name'] = plan_name
-
-            logger.info(f"User {telegram_id} (DB ID: {user_db_id}): Rial payment_db_id: {payment_db_id}. About to call ZarinpalPaymentService.create_payment_request with amount: {amount_for_zarinpal}, authority: {context.user_data.get('zarinpal_authority')}")
-
-            UserAction.log_user_action(
-                telegram_id,
-                action_type='zarinpal_payment_initiated',
-                details={
-                    'payment_db_id': payment_db_id,
-                    'plan_id': plan_id,
-                    'amount': amount_for_zarinpal,
-                    'zarinpal_authority': authority
-                }
-            )
+            
+            # Create the deep link for user's manual return
+            callback_deeplink = f"https://t.me/{bot_username}?start=zarinpal_verify_{authority}"
 
             message_text = (
                 f"برای تکمیل خرید اشتراک «{plan_name}» به مبلغ {amount_for_zarinpal:,} ریال، لطفاً از طریق لینک زیر پرداخت خود را انجام دهید.\n\n"
-                f"پس از پرداخت، دکمه 'پرداخت انجام شد، بررسی شود' را فشار دهید."
+                f"⚠️ **مهم:** پس از تکمیل پرداخت در سایت زرین‌پال، **روی دکمه زیر کلیک کنید** تا اشتراک شما فعال شود."
             )
             await query.message.edit_text(
-                message_text,
+                text=message_text,
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("ورود به درگاه پرداخت زرین‌پال", url=payment_url)],
-                    [InlineKeyboardButton("پرداخت انجام شد، بررسی شود", callback_data=VERIFY_ZARINPAL_PAYMENT_CALLBACK)],
+                    [InlineKeyboardButton("✅ پرداخت را انجام دادم، تایید کن", url=callback_deeplink)],
                     [get_back_to_payment_methods_button()]
                 ]),
                 parse_mode=ParseMode.HTML
             )
+            logger.info(f"User {telegram_id} (DB ID: {user_db_id}): Payment method keyboard shown with callback_data: {query.data}. Returning VERIFY_PAYMENT.")
             return VERIFY_PAYMENT
-        else:
-            error_code = zarinpal_request.get('status', 'N/A')
-            error_msg_zarinpal = zarinpal_request.get('error_message', 'خطای نامشخص در اتصال به درگاه')
-            logger.error(f"Zarinpal payment request failed for user {telegram_id}, plan {plan_id}. Status: {error_code}, Message: {error_msg_zarinpal}")
-            DatabaseQueries.update_payment_status(payment_db_id, 'failed', error_message=f"zarinpal_req_err_{error_code}")
+        
+        else: # ERROR or other statuses
+            Database.update_payment_status(payment_db_id, 'failed', error_message=f"zarinpal_req_err_{zarinpal_request.get('status')}")
+            logger.error(f"Zarinpal payment request failed for user {telegram_id}. Response: {zarinpal_request}")
             await query.message.edit_text(
-                f"متاسفانه در ایجاد لینک پرداخت مشکلی پیش آمد.\nخطا: {error_msg_zarinpal} (کد: {error_code})\nلطفاً دقایقی دیگر مجدداً تلاش کنید یا روش پرداخت دیگری را انتخاب نمایید.",
+                f"متاسفانه در ایجاد لینک پرداخت مشکلی پیش آمد.\nخطا: {zarinpal_request.get('message')} (کد: {zarinpal_request.get('status')})\nلطفاً دقایقی دیگر مجدداً تلاش کنید یا روش پرداخت دیگری را انتخاب نمایید.",
                 reply_markup=InlineKeyboardMarkup([
                     [get_back_to_payment_methods_button()],
                     [InlineKeyboardButton(TEXT_GENERAL_BACK_TO_MAIN_MENU, callback_data=CALLBACK_BACK_TO_MAIN_MENU)]
                 ])
             )
-            UserAction.log_user_action(telegram_id, 'zarinpal_request_failed', {'plan_id': plan_id, 'error_code': error_code, 'error_message': error_msg_zarinpal})
+            UserAction.log_user_action(telegram_id, 'zarinpal_request_failed', {'plan_id': plan_id, 'error_code': zarinpal_request.get('status'), 'error_message': zarinpal_request.get('message')})
             # Do not end conversation, let user go back or choose another method
             return SELECT_PAYMENT_METHOD
 
@@ -1097,7 +1047,7 @@ async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TY
             )
         
         await query.message.edit_text(
-            PAYMENT_FAILED_MESSAGE,
+            PAYMENT_ERROR_MESSAGE,
             reply_markup=get_payment_methods_keyboard()
         )
         context.user_data.pop('payment_id', None)
@@ -1337,42 +1287,60 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
     return SELECT_PAYMENT_METHOD
 
 
+async def cancel_subscription_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancels and ends the payment conversation, cleaning up user_data."""
+    user_id = update.effective_user.id
+    logger.info(f"User {user_id} cancelled the subscription/payment flow.")
+    
+    # Clean up user_data related to the payment flow
+    for key in ['selected_plan_details', 'live_usdt_price', 'payment_method', 'payment_info', 'payment_db_id', 'zarinpal_authority']:
+        context.user_data.pop(key, None)
+
+    cancel_message = "فرایند خرید اشتراک لغو شد. برای شروع مجدد، از منوی اصلی اقدام کنید."
+    
+    query = update.callback_query
+    if query:
+        await query.answer()
+        # Using edit_message_text to provide feedback and remove the inline keyboard.
+        await query.edit_message_text(text=cancel_message, reply_markup=None)
+    else:
+        # If cancelled via /cancel command
+        await update.message.reply_text(text=cancel_message, reply_markup=get_main_menu_keyboard(user_id))
+
+    return ConversationHandler.END
+
+
 payment_conversation = ConversationHandler(
-    # Entry point might need adjustment, e.g. a command /subscribe or a main menu button callback
     entry_points=[
-        CommandHandler('subscribe', select_plan), # Entry via /subscribe command
-        CallbackQueryHandler(select_plan, pattern='^start_subscription_flow$') # Entry via callback button
+        CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'),
+        MessageHandler(filters.Regex(r"^(🎫 خرید اشتراک)$"), start_subscription_flow),
     ],
     states={
-        SELECT_PLAN: [CallbackQueryHandler(select_plan, pattern='^plan_(\d+)$')], # Regex for plan_ID
+        SELECT_PLAN: [
+            CallbackQueryHandler(select_plan_handler, pattern='^plan_'),
+            MessageHandler(filters.Regex(r"^(🎫 خرید اشتراک)$"), start_subscription_flow),
+        ],
         SELECT_PAYMENT_METHOD: [
             CallbackQueryHandler(select_payment_method, pattern='^payment_(rial|crypto)$'),
-            CallbackQueryHandler(back_to_plans_handler, pattern='^back_to_plans$') 
+            CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
+            MessageHandler(filters.Regex(r"^(🎫 خرید اشتراک)$"), start_subscription_flow),
         ],
         VERIFY_PAYMENT: [
             CallbackQueryHandler(verify_payment_status, pattern='^payment_verify$'),
-            CallbackQueryHandler(copy_wallet_address_handler, pattern='^copy_wallet_addr_'),
-            CallbackQueryHandler(copy_usdt_amount_handler, pattern='^copy_usdt_amount_'),
-            CallbackQueryHandler(payment_verify_crypto_handler, pattern='^payment_verify_crypto$'),
-            CallbackQueryHandler(show_qr_code_handler, pattern='^show_qr_code_'), # Handler for QR code button
-            CallbackQueryHandler(payment_verify_zarinpal_handler, pattern=f'^{VERIFY_ZARINPAL_PAYMENT_CALLBACK}$'), # Added for Zarinpal
-            CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$')
+            CallbackQueryHandler(payment_verify_zarinpal_handler, pattern=f'^{VERIFY_ZARINPAL_PAYMENT_CALLBACK}$'),
+            CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$'),
+            MessageHandler(filters.Regex(r"^(🎫 خرید اشتراک)$"), start_subscription_flow),
         ],
     },
     fallbacks=[
-        CommandHandler('cancel_payment', cancel_payment), # Specific command for payment cancel
-        CallbackQueryHandler(cancel_payment, pattern='^cancel_payment_flow$'), # Specific callback for payment cancel
-        CallbackQueryHandler(back_to_main_menu_from_payment_handler, pattern='^back_to_main_menu_from_plans$'),
-        CallbackQueryHandler(back_to_main_menu_from_payment_handler, pattern='^back_to_main_menu_from_payment$'),
-        CallbackQueryHandler(back_to_main_menu_from_payment_handler, pattern='^back_to_main_menu_from_verification$'),
+        CommandHandler('cancel', cancel_subscription_flow),
+        CallbackQueryHandler(cancel_subscription_flow, pattern='^cancel_payment_flow$'),
+        CallbackQueryHandler(back_to_main_menu_from_payment_handler, pattern='^back_to_main_menu$'),
     ],
-    map_to_parent={
-        # If this conversation is part of a larger one, map states appropriately
-        ConversationHandler.END: ConversationHandler.END 
-    },
-    # Allow re-entry into the conversation if it was previously ended by a sub-conversation
-    allow_reentry=True,
-    # Name for persistence
+    conversation_timeout=config.PAYMENT_CONVERSATION_TIMEOUT,
     name="payment_flow_conversation",
-    persistent=True # Consider if you need persistence for payment states across bot restarts
+    persistent=True,
+    per_user=True,
+    per_chat=True,
+    allow_reentry=True
 )
