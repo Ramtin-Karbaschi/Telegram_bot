@@ -167,7 +167,8 @@ async def get_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"👤 کاربر: {update.effective_user.full_name} (ID: {user_id})\n"
         f"🎫 شناسه تیکت: {formatted_ticket_id}\n"
         f"📋 موضوع: {subject}\n"
-        f"📝 پیام اولیه: {message[:100]}{'...' if len(message) > 100 else ''}" # Show first 100 chars of message
+        f"📝 پیام اولیه: {message[:100]}{'...' if len(message) > 100 else ''}\n" # Show first 100 chars of message
+        f"جهت مشاهده اطلاعات بیسشتر از دستور /tickets استفاده کنید."
     )
 
     try:
