@@ -84,11 +84,96 @@ import config
 from database.queries import DatabaseQueries as Database
 from database.models import Database as DBConnection
 from handlers.core import (
-    start_handler, help_handler, menu_handler, rules_handler,
+    start_handler as core_start_handler, help_handler, menu_handler, rules_handler,
     unknown_message_handler, handle_back_to_main,
     registration_message_handler, # subscription_status_message_handler removed
     support_message_handler
 )
+from services.zarinpal_service import ZarinpalPaymentService
+from database.queries import DatabaseQueries
+from handlers.subscription.subscription_handlers import activate_or_extend_subscription
+from utils.constants.all_constants import ZARINPAL_VERIFY_SUCCESS_STATUS, ZARINPAL_ALREADY_VERIFIED_STATUS
+
+from telegram.ext import CommandHandler
+
+async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    args = context.args
+
+    # Check for Zarinpal deep link
+    if args and args[0].startswith('zarinpal_verify_'):
+        authority = args[0].replace('zarinpal_verify_', '')
+        logger.info(f"User {user_id} returned from Zarinpal with authority: {authority}")
+
+        payment = DatabaseQueries.get_payment_by_authority(authority)
+
+        if not payment:
+            logger.warning(f"No payment record found for authority: {authority}. User: {user_id}")
+            await update.message.reply_text("خطا: اطلاعات این تراکنش در سیستم یافت نشد. لطفاً با پشتیبانی تماس بگیرید.")
+            return
+
+        payment_db_id = payment['payment_id']
+        plan_id = payment['plan_id']
+        rial_amount = payment['amount']
+
+        if payment['status'] == 'completed':
+            logger.info(f"Payment {payment_db_id} for user {user_id} was already completed.")
+            await update.message.reply_text("✅ پرداخت شما قبلاً با موفقیت تایید و اشتراک شما فعال شده است.")
+            # Optionally, show main menu
+            await core_start_handler(update, context)
+            return
+
+        # Verify with Zarinpal
+        await update.message.reply_text("در حال بررسی و تایید پرداخت شما... لطفاً چند لحظه صبر کنید.")
+        verification_result = ZarinpalPaymentService.verify_payment(amount=int(rial_amount), authority=authority)
+
+        if verification_result and verification_result.get('status') in [ZARINPAL_VERIFY_SUCCESS_STATUS, ZARINPAL_ALREADY_VERIFIED_STATUS]:
+            ref_id = verification_result.get('ref_id')
+            logger.info(f"Zarinpal verification successful for payment {payment_db_id}. RefID: {ref_id}")
+            
+            # Update database
+            DatabaseQueries.update_payment_verification_status(payment_db_id, 'completed', str(ref_id))
+            
+            # Activate subscription
+            # Gather required arguments for activate_or_extend_subscription
+            telegram_id = user_id  # In this context, user_id is Telegram ID
+            plan_name = payment.get('plan_name', 'بدون عنوان')
+            payment_amount = rial_amount
+            payment_method = payment.get('payment_method', 'rial')
+            transaction_id = verification_result.get('ref_id', '')
+            payment_table_id = payment_db_id
+
+            try:
+                success, message = await activate_or_extend_subscription(
+                    user_id,
+                    telegram_id,
+                    plan_id,
+                    plan_name,
+                    payment_amount,
+                    payment_method,
+                    transaction_id,
+                    context,
+                    payment_table_id
+                )
+            except Exception as e:
+                logger.exception(f"Exception in activate_or_extend_subscription: {e}")
+                await update.message.reply_text(f"❌ خطا در فعال‌سازی اشتراک: {e}")
+                return
+
+            if success:
+                await update.message.reply_text(f"✅ {message}")
+            else:
+                await update.message.reply_text(f"❌ {message}")
+        else:
+            error_code = verification_result.get('status', 'N/A')
+            error_message_zarinpal = verification_result.get('error_message', 'خطای نامشخص')
+            logger.error(f"Zarinpal verification failed for payment {payment_db_id}. Status: {error_code}, Message: {error_message_zarinpal}")
+            DatabaseQueries.update_payment_status(payment_db_id, 'failed', error_message=f"zarinpal_verify_err_{error_code}")
+            await update.message.reply_text(f"❌ متاسفانه در تایید پرداخت شما مشکلی پیش آمد. (کد خطا: {error_code})\nلطفاً با پشتیبانی تماس بگیرید.")
+    else:
+        # Default start handler behavior
+        await core_start_handler(update, context)
+
 from handlers.registration import (
     registration_conversation
 )
@@ -96,9 +181,10 @@ from handlers.profile_handlers import (
     get_profile_edit_conv_handler, start_profile_edit_conversation # Corrected function name
 )
 from handlers.payment import (
-    payment_conversation, select_plan, 
-    select_payment_method, verify_payment_status,
-    show_qr_code_handler # Added for QR code display
+    payment_conversation,
+    start_subscription_flow,
+    show_qr_code_handler,
+    verify_payment_status
 )
 from handlers.subscription import (
     subscription_status_handler, subscription_renew_handler,
@@ -172,8 +258,8 @@ class MainBot:
         self.application.add_handler(payment_conversation)
 
         # Handler for back button from payment method selection to plan selection
-        self.application.add_handler(CommandHandler('subscribe', select_plan))
-        self.application.add_handler(CallbackQueryHandler(select_plan, pattern='^start_subscription_flow$'))
+        self.application.add_handler(CommandHandler('subscribe', start_subscription_flow))
+        self.application.add_handler(CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'))
 
         # Handler for back button from subscription plan selection
         self.application.add_handler(CallbackQueryHandler(handle_back_to_main, pattern=r"^back_to_main_menu_from_plans$"))
@@ -213,7 +299,7 @@ class MainBot:
             filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_HELP}$"), help_handler # Handler for Help button
         ))
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_BUY_SUBSCRIPTION}$"), select_plan # Handler for Buy Subscription button
+            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_BUY_SUBSCRIPTION}$"), start_subscription_flow # Handler for Buy Subscription button
         ))
         
         # Generic Update Logger - Should be one of the last handlers or in a high group number
@@ -290,6 +376,9 @@ class MainBot:
             handle_back_to_main, pattern="^back_to_main_menu$"
         ))
         
+        # Add the combined start handler with a high priority (low group number) to catch deep links first
+        self.application.add_handler(CommandHandler('start', start_handler), group=0)
+
         # Unknown message handler (must be added last)
         self.application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND, unknown_message_handler
