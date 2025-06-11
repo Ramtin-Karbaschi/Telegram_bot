@@ -150,7 +150,7 @@ def get_payment_methods_keyboard():
     """Get keyboard with payment method options"""
     keyboard = [
         [
-            InlineKeyboardButton("💳 پرداخت با تومان", callback_data="payment_rial"),
+            InlineKeyboardButton("💳 پرداخت ریالی", callback_data="payment_rial"),
             InlineKeyboardButton("💲 پرداخت با تتر (USDT)", callback_data="payment_crypto")
         ],
         [get_back_to_plans_button()]
