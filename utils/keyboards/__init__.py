@@ -27,8 +27,7 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, has_active_subscriptio
     ]
     keyboard_buttons.append(row2)
 
-    if has_active_subscription or is_admin:
-        keyboard_buttons.append([KeyboardButton(constants.MAIN_MENU_BUTTON_TEXT_GET_CHANNEL_LINK)])
+
 
     return ReplyKeyboardMarkup(keyboard_buttons, resize_keyboard=True, one_time_keyboard=False)
 
@@ -62,8 +61,7 @@ def get_main_menu_keyboard(user_id=None, is_admin=False, has_active_subscription
         InlineKeyboardButton(constants.TEXT_MAIN_MENU_RULES, callback_data="main_menu_rules")
     ])
 
-    if has_active_subscription or is_admin:
-        keyboard_buttons.append([InlineKeyboardButton(constants.MAIN_MENU_BUTTON_TEXT_GET_CHANNEL_LINK, callback_data="main_menu_channel_link")])
+
 
     return InlineKeyboardMarkup(keyboard_buttons)
 
