@@ -197,6 +197,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
         payment_db_id = Database.add_payment(
             user_id=user_db_id,
+            plan_id=plan_id,  # Associate payment with the plan
             amount=plan_price_irr,  # Amount for the plan in IRR
             payment_method='zarinpal', # Payment gateway used
             description=db_description, # Detailed description for the payment
