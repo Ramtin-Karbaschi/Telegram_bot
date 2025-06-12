@@ -9,7 +9,7 @@ from handlers.subscription.subscription_handlers import (
     view_active_subscription,
     subscription_status_handler,
     subscription_renew_handler,
-    get_channel_link_handler, # Added this
+ # Added this
     # Conversation states
     SUBSCRIPTION_STATUS
 )
@@ -19,7 +19,7 @@ __all__ = [
     'view_active_subscription',
     'subscription_status_handler',
     'subscription_renew_handler',
-    'get_channel_link_handler', # Added this
+
     'activate_or_extend_subscription',
     'SUBSCRIPTION_STATUS'
 ]
