@@ -74,7 +74,7 @@ async def error_handler(update: object, context: "telegram.ext.CallbackContext")
         except Exception as e:
             logger.error(f"Failed to send error message to user: {e}")
 
-from telegram import Update, BotCommand # Added for type hinting in error_handler and BotCommand
+from telegram import Update, Bot, BotCommand, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ConversationHandler, filters, ContextTypes, TypeHandler, # Added TypeHandler
@@ -92,9 +92,30 @@ from handlers.core import (
 from services.zarinpal_service import ZarinpalPaymentService
 from database.queries import DatabaseQueries
 from handlers.subscription.subscription_handlers import activate_or_extend_subscription
+from utils.constants.all_constants import (
+    ZARINPAL_PAYMENT_VERIFIED_SUCCESS_AND_SUB_ACTIVATED_MESSAGE_USER,
+    ZARINPAL_PAYMENT_VERIFIED_SUCCESS_SUB_ACTIVATION_FAILED_MESSAGE_USER,
+    ZARINPAL_PAYMENT_VERIFIED_SUCCESS_PLAN_NOT_FOUND_MESSAGE_USER
+)
 from utils.constants.all_constants import ZARINPAL_VERIFY_SUCCESS_STATUS, ZARINPAL_ALREADY_VERIFIED_STATUS
 
 from telegram.ext import CommandHandler
+from telegram.constants import ParseMode
+
+async def send_and_schedule_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup, delay_seconds: int):
+    """Sends a message and schedules its deletion."""
+    message = await update.message.reply_text(text, reply_markup=reply_markup)
+    
+    async def delete_message_task():
+        await asyncio.sleep(delay_seconds)
+        try:
+            await context.bot.delete_message(chat_id=message.chat_id, message_id=message.message_id)
+            logger.info(f"Automatically deleted channel link message {message.message_id} from chat {message.chat_id}.")
+        except Exception as e:
+            logger.error(f"Failed to auto-delete channel link message {message.message_id}: {e}")
+
+    asyncio.create_task(delete_message_task())
+
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -131,39 +152,55 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ref_id = verification_result.get('ref_id')
             logger.info(f"Zarinpal verification successful for payment {payment_db_id}. RefID: {ref_id}")
             
-            # Update database
-            DatabaseQueries.update_payment_verification_status(payment_db_id, 'completed', str(ref_id))
-            
-            # Activate subscription
-            # Gather required arguments for activate_or_extend_subscription
-            telegram_id = user_id  # In this context, user_id is Telegram ID
-            plan_name = payment.get('plan_name', 'بدون عنوان')
-            payment_amount = rial_amount
-            payment_method = payment.get('payment_method', 'rial')
-            transaction_id = verification_result.get('ref_id', '')
-            payment_table_id = payment_db_id
+            # Update database and then re-fetch to ensure data consistency
+            update_success = DatabaseQueries.update_payment_verification_status(payment_db_id, 'completed', str(ref_id))
 
-            try:
-                success, message = await activate_or_extend_subscription(
-                    user_id,
-                    telegram_id,
-                    plan_id,
-                    plan_name,
-                    payment_amount,
-                    payment_method,
-                    transaction_id,
-                    context,
-                    payment_table_id
-                )
-            except Exception as e:
-                logger.exception(f"Exception in activate_or_extend_subscription: {e}")
-                await update.message.reply_text(f"❌ خطا در فعال‌سازی اشتراک: {e}")
-                return
+            if update_success:
+                # Re-fetch payment details to ensure we have the latest status and ref_id
+                updated_payment_details = DatabaseQueries.get_payment_by_id(payment_db_id)
+                if updated_payment_details and updated_payment_details['status'] == 'completed':
+                    plan_info = DatabaseQueries.get_plan_by_id(plan_id)
+                    user_record = DatabaseQueries.get_user_details(user_id) # Fetch user record to get internal DB ID
+                    if plan_info and user_record:
+                        user_db_id = user_record['user_id']
+                        subscription_id = DatabaseQueries.add_subscription(
+                            user_id=user_db_id, # Use internal DB user_id
+                            plan_id=plan_id,
+                            payment_id=payment_db_id,
+                            plan_duration_days=plan_info['days'],
+                            amount_paid=rial_amount,
+                            payment_method='zarinpal'
+                        )
+                        if subscription_id:
+                            await update.message.reply_text(ZARINPAL_PAYMENT_VERIFIED_SUCCESS_AND_SUB_ACTIVATED_MESSAGE_USER.format(ref_id=ref_id, plan_name=plan_info['name']))
+                            
+                            # Send channel links and schedule for deletion
+                            channels_info_str = os.getenv('TELEGRAM_CHANNELS_INFO')
+                            if channels_info_str:
+                                try:
+                                    channels = json.loads(channels_info_str)
+                                    keyboard = [[InlineKeyboardButton(f"ورود به {channel['title']}", url=channel['link'])] for channel in channels]
+                                    
+                                    reply_markup = InlineKeyboardMarkup(keyboard)
+                                    text = "🎉 عالی! اشتراک شما با موفقیت فعال شد. اکنون می‌توانید از طریق لینک‌های زیر به کانال و گروه دسترسی داشته باشید:\n\n⚠️ این لینک‌ها پس از ۵ دقیقه منقضی می‌شوند."
+                                    
+                                    # Send the message and schedule it for deletion
+                                    await send_and_schedule_deletion(update, context, text, reply_markup, 300)
 
-            if success:
-                await update.message.reply_text(f"✅ {message}")
+                                except json.JSONDecodeError:
+                                    logger.error("Failed to parse TELEGRAM_CHANNELS_INFO from .env")
+                                except Exception as e:
+                                    logger.error(f"An error occurred while sending channel links: {e}")
+                        else:
+                            await update.message.reply_text(ZARINPAL_PAYMENT_VERIFIED_SUCCESS_SUB_ACTIVATION_FAILED_MESSAGE_USER.format(ref_id=ref_id))
+                    else:
+                        await update.message.reply_text(ZARINPAL_PAYMENT_VERIFIED_SUCCESS_PLAN_NOT_FOUND_MESSAGE_USER.format(ref_id=ref_id))
+                else:
+                    logger.error(f"Failed to verify payment update in DB for payment_id {payment_db_id}. Status is not 'completed'.")
+                    await update.message.reply_text("خطایی در به‌روزرسانی اطلاعات پرداخت رخ داد. لطفاً با پشتیبانی تماس بگیرید.")
             else:
-                await update.message.reply_text(f"❌ {message}")
+                logger.error(f"Failed to execute update_payment_verification_status for payment_id {payment_db_id}.")
+                await update.message.reply_text("خطایی در ثبت اطلاعات پرداخت رخ داد. لطفاً با پشتیبانی تماس بگیرید.")
         else:
             error_code = verification_result.get('status', 'N/A')
             error_message_zarinpal = verification_result.get('error_message', 'خطای نامشخص')
@@ -188,7 +225,7 @@ from handlers.payment import (
 )
 from handlers.subscription import (
     subscription_status_handler, subscription_renew_handler,
-    get_channel_link_handler, view_active_subscription # Added view_active_subscription
+    view_active_subscription # Added view_active_subscription
 )
 from handlers.support import (
     support_menu_handler, support_ticket_list_handler,
@@ -302,11 +339,6 @@ class MainBot:
             filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_BUY_SUBSCRIPTION}$"), start_subscription_flow # Handler for Buy Subscription button
         ))
         
-        # Generic Update Logger - Should be one of the last handlers or in a high group number
-        # to catch updates not handled by more specific handlers.
-        self.application.add_handler(TypeHandler(Update, log_all_updates), group=100) # High group number means lower priority
-        self.logger.info("CRITICAL_LOG: Generic TypeHandler (log_all_updates) has been set up in group 100.")
-
         # Callback query handlers for subscription and support
         self.application.add_handler(CallbackQueryHandler(
             subscription_status_handler, pattern="^subscription_status$"
@@ -336,6 +368,10 @@ class MainBot:
         ))
         self.logger.info("CRITICAL_LOG: CallbackQueryHandler for main_menu_rules has been set up.")
 
+        # Status command handler
+        self.application.add_handler(CommandHandler("status", subscription_status_handler))
+        self.logger.info("CRITICAL_LOG: CommandHandler for status has been set up.")
+
         # Handler for the main support menu (e.g., after /support or clicking the support button that leads to the support options)
         self.application.add_handler(CallbackQueryHandler(
             support_menu_handler, pattern="^support_menu$"
@@ -361,15 +397,10 @@ class MainBot:
             reopen_ticket_handler, pattern=r"^reopen_ticket_"
         ))
 
-        # Channel link handler
-        self.application.add_handler(CallbackQueryHandler(
-            get_channel_link_handler, pattern="^get_channel_link$"
-        ))
-
-        # Generic Update Logger - Should be one of the last handlers or in a high group number
-        # to catch updates not handled by more specific handlers.
         self.application.add_handler(TypeHandler(Update, log_all_updates), group=100) # High group number means lower priority
         self.logger.info("CRITICAL_LOG: Generic TypeHandler (log_all_updates) has been set up in group 100.")
+
+
         
         # Back to main menu handler
         self.application.add_handler(CallbackQueryHandler(
