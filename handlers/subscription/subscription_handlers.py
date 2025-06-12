@@ -4,6 +4,7 @@ Subscription handlers for the Daraei Academy Telegram bot
 
 from datetime import datetime # Added this import
 import jdatetime
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ParseMode # Added for message formatting
 from telegram.ext import ContextTypes, ConversationHandler
@@ -20,6 +21,57 @@ import logging
 
 # Configure logger
 logger = logging.getLogger(__name__)
+
+async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
+    """Deletes a message."""
+    job = context.job
+    chat_id = job.chat_id
+    message_id = job.data['message_id']
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        logger.info(f"Successfully deleted channel link message {message_id} from chat {chat_id}.")
+    except Exception as e:
+        logger.error(f"Failed to delete message {message_id} from chat {chat_id}: {e}")
+
+async def send_channel_links_and_confirmation(telegram_id: int, context: ContextTypes.DEFAULT_TYPE):
+    """Sends a confirmation message with channel links and schedules it for deletion."""
+    message_text = "🎉 اشتراک شما فعال است!\n\nمی‌توانید از طریق لینک‌های زیر به کانال‌ها دسترسی داشته باشید:"
+    
+    keyboard = []
+    if hasattr(config, 'TELEGRAM_CHANNELS_INFO') and config.TELEGRAM_CHANNELS_INFO:
+        for channel in config.TELEGRAM_CHANNELS_INFO:
+            if isinstance(channel, dict) and 'title' in channel and 'link' in channel:
+                keyboard.append([InlineKeyboardButton(channel['title'], url=channel['link'])])
+    
+    if not keyboard:
+        logger.warning(f"TELEGRAM_CHANNELS_INFO is not configured correctly for user {telegram_id}.")
+        await context.bot.send_message(
+            chat_id=telegram_id,
+            text="🎉 اشتراک شما با موفقیت فعال شد!"
+        )
+        return
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    try:
+        sent_message = await context.bot.send_message(
+            chat_id=telegram_id,
+            text=message_text,
+            reply_markup=reply_markup
+        )
+        logger.info(f"Sent channel links to user {telegram_id}. Message ID: {sent_message.message_id}")
+
+        context.job_queue.run_once(
+            delete_message_job,
+            300,  # 5 minutes
+            chat_id=telegram_id,
+            data={'message_id': sent_message.message_id},
+            name=f"delete_msg_{telegram_id}_{sent_message.message_id}"
+        )
+        logger.info(f"Scheduled message {sent_message.message_id} for deletion in 5 minutes for user {telegram_id}.")
+
+    except Exception as e:
+        logger.error(f"Failed to send channel links message to user {telegram_id}: {e}")
 
 async def activate_or_extend_subscription(
     user_id: int,
@@ -77,6 +129,9 @@ async def activate_or_extend_subscription(
         if subscription_id:
             logger.info(f"Successfully activated/extended subscription_id: {subscription_id} for user_id: {user_id} with plan '{plan_name}'. Payment ID: {payment_table_id} ({payment_method}).")
             
+            # Send confirmation and channel links
+            await send_channel_links_and_confirmation(telegram_id=telegram_id, context=context)
+
             # Verify the subscription was actually created
             verification_subscription = Database.get_user_active_subscription(user_id)
             logger.info(f"Verification - active subscription after creation: {verification_subscription}")
@@ -232,19 +287,29 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
 
     else:
         # Logic for regular users
-        subscription_status_text = SUBSCRIPTION_STATUS_NONE 
+        subscription_status_text = SUBSCRIPTION_STATUS_NONE
         plan_name_for_msg = "نامشخص" # Default plan name
+        plan_details = None
 
         if subscription_data:
-            plan_id = subscription_data['plan_id']
-            plan_details = Database.get_plan_by_id(plan_id) # Fetch from DB
-            # Convert sqlite3.Row to dict for safe .get access
-            if plan_details and not isinstance(plan_details, dict):
-                try:
-                    plan_details = dict(plan_details)
-                except Exception:
-                    # Fallback: create dict manually from row keys
-                    plan_details = {key: plan_details[idx] for idx, key in enumerate(plan_details.keys())}
+            # subscription_data is already a dict-like object from the database
+            end_date_str = subscription_data['end_date']
+            plan_name = subscription_data['plan_name']
+            
+            # Calculate remaining time
+            try:
+                end_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S")
+                remaining = end_date - datetime.now()
+                if remaining.total_seconds() > 0:
+                    days = remaining.days
+                    hours, remainder = divmod(remaining.seconds, 3600)
+                    minutes, _ = divmod(remainder, 60)
+                    subscription_status_text = f"پلن فعال: {plan_name}\n" \
+                                               f"اعتبار باقی‌مانده: {days} روز و {hours} ساعت و {minutes} دقیقه"
+                else:
+                    subscription_status_text = "اشتراک شما به پایان رسیده است."
+            except (ValueError, TypeError):
+                subscription_status_text = f"پلن فعال: {plan_name} (تاریخ پایان نامعتبر)"
 
             if plan_details:
                 plan_name_for_msg = plan_details.get('name') if isinstance(plan_details, dict) else "نامشخص"
@@ -299,56 +364,7 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
 
     return SUBSCRIPTION_STATUS
 
-async def get_channel_link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the 'Get Channel Link' button press."""
-    query = update.callback_query
-    await query.answer()
-    user_id = update.effective_user.id
 
-    is_admin_user = is_admin(user_id, config.ADMIN_USER_IDS) # Ensure config.ADMIN_USER_IDS is your actual admin list variable
-    subscription = Database.get_user_active_subscription(user_id)
-
-    if is_admin_user or (subscription and calculate_days_left(subscription['end_date']) > 0):
-        if hasattr(config, 'TELEGRAM_CHANNELS_INFO') and config.TELEGRAM_CHANNELS_INFO:
-            channel_links_parts = ["در ادامه لینک کانال‌ها و گروه‌های اختصاصی شما آمده است:"]
-            for channel_info in config.TELEGRAM_CHANNELS_INFO:
-                title = channel_info.get('title', 'کانال')
-                link = channel_info.get('link')
-                if link:
-                    channel_links_parts.append(f"- [{title}]({link})")
-            
-            if len(channel_links_parts) > 1: # More than just the intro text
-                full_message = "\n".join(channel_links_parts)
-                await query.message.reply_text(
-                    full_message,
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="back_to_main_menu")]
-                    ])
-                )
-            else: # Only intro text, meaning no valid links were found
-                await query.message.reply_text(
-                    "در حال حاضر لینک معتبری برای کانال‌ها و گروه‌ها تعریف نشده است. لطفاً با پشتیبانی تماس بگیرید.",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="back_to_main_menu")]
-                    ])
-                )
-        else:
-            await query.message.reply_text(
-                "هیچ اطلاعاتی برای کانال‌ها و گروه‌ها در پیکربندی یافت نشد. لطفاً با پشتیبانی تماس بگیرید.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="back_to_main_menu")]
-                ])
-            )
-    else:
-        await query.message.reply_text(
-            "شما اشتراک فعالی برای دریافت لینک کانال ندارید. لطفاً ابتدا اشتراک خود را فعال یا تمدید کنید.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("خرید/تمدید اشتراک", callback_data="subscription_renew")],
-                [InlineKeyboardButton("بازگشت", callback_data="back_to_main_menu")]
-            ])
-        )
-    return ConversationHandler.END # Or appropriate state if part of a conversation
 
 # Create handler functions that will be imported by main_bot.py
 async def subscription_status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
