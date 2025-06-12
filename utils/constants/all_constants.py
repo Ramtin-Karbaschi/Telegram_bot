@@ -51,6 +51,7 @@ RULES_MESSAGE = """
 
 # Main Menu Button Texts
 TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🎫 خرید اشتراک"
+MAIN_MENU_BUTTON_TEXT_GET_CHANNEL_LINK = "دریافت لینک کانال‌ها"
 
 # Profile Editing specific constants
 PROFILE_EDIT_MENU_PROMPT = "کدام بخش از اطلاعات خود را می‌خواهید ویرایش کنید؟"
