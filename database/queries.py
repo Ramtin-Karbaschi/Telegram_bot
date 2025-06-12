@@ -442,7 +442,7 @@ class DatabaseQueries:
             now_dt = datetime.now()
             
             if current_active_sub:
-                current_end_date_str = current_active_sub.get('end_date')
+                current_end_date_str = current_active_sub['end_date']
                 try:
                     current_end_date_dt = datetime.strptime(current_end_date_str, "%Y-%m-%d %H:%M:%S")
                 except (ValueError, TypeError) as e:
@@ -498,11 +498,13 @@ class DatabaseQueries:
                 return subscription_id
         except sqlite3.Error as e:
             print(f"Database error in add_subscription for user {user_id}: {e}")
-            db.rollback()  # Add rollback on error
+            if db.conn:
+                db.conn.rollback()  # Use the connection object for rollback
             return None
         except Exception as e:
             print(f"Unexpected error in add_subscription for user {user_id}: {e}")
-            db.rollback()  # Add rollback on error
+            if db.conn:
+                db.conn.rollback()  # Use the connection object for rollback
             return None
         finally:
             db.close()
