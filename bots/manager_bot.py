@@ -7,12 +7,12 @@ import asyncio
 from database.queries import DatabaseQueries as Database # Added Database import
 import datetime
 from typing import Optional # Added for type hinting
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember, ChatMemberUpdated
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters, ContextTypes, 
-    CallbackQueryHandler, ConversationHandler, ChatMemberHandler, TypeHandler # Added TypeHandler
+    CallbackQueryHandler, ConversationHandler, TypeHandler # Added TypeHandler
 )
-from telegram.constants import ParseMode, ChatMemberStatus
+from telegram.constants import ParseMode
 from telegram.error import BadRequest, Forbidden
 import html
 from database.queries import DatabaseQueries
@@ -22,7 +22,7 @@ from database.models import Database as DBConnection # For DB connection
 from handlers.admin_ticket_handlers import AdminTicketHandler  # Fixed import
 
 # States for ConversationHandler
-VIEWING_TICKET, REPLYING_TO_TICKET = range(2)
+
 
 # Configure logging
 logging.basicConfig(
@@ -103,17 +103,6 @@ class ManagerBot:
         self.logger.info("Starting Manager Bot")
         await self.application.initialize()
         
-        # Add ChatMemberHandler for channel membership control
-        # ChatMemberHandler by default listens to CHAT_MEMBER and MY_CHAT_MEMBER updates.
-        class DebugChatMemberHandler(ChatMemberHandler):
-            def check_update(self, update):
-                # FOR DEBUGGING: Always return True to ensure callback is called
-                return True
-                
-        chat_member_handler = DebugChatMemberHandler(self.handle_chat_member_update)
-        self.application.add_handler(chat_member_handler, group=-1) # group=-1 to prioritize it
-        self.logger.info("ChatMemberHandler (Debug Version) for channel membership control has been set up.")
-
         # Add a generic handler to log all updates for debugging
         # Note: Ensure 'Update' is imported from 'telegram'
         all_updates_handler = TypeHandler(Update, self.log_all_updates)
@@ -144,97 +133,7 @@ class ManagerBot:
         await self.application.shutdown()
         self.logger.info("Manager Bot stopped")
 
-    async def handle_chat_member_update(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        self.logger.critical(f"CRITICAL_LOG: handle_chat_member_update CALLED for update: {update}")
-        """Handles chat member updates to manage channel access based on subscription."""
-        if not update.chat_member:
-            self.logger.debug("ChatMemberHandler received an update without chat_member data.")
-            return
 
-        chat_member_data = update.chat_member
-        chat_id = chat_member_data.chat.id
-        user = chat_member_data.new_chat_member.user
-        bot = context.bot # Get bot instance from context
-
-        # Get monitored channel IDs from config
-        monitored_channel_ids = []
-        if hasattr(config, 'TELEGRAM_CHANNELS_INFO') and config.TELEGRAM_CHANNELS_INFO:
-            monitored_channel_ids = [channel_info['id'] for channel_info in config.TELEGRAM_CHANNELS_INFO if isinstance(channel_info, dict) and 'id' in channel_info]
-
-        # Ensure this update is for one of the monitored channels
-        if not monitored_channel_ids:
-            self.logger.warning("TELEGRAM_CHANNELS_INFO is not configured or empty. ChatMemberHandler will not process any updates.")
-            return
-        
-        if chat_id not in monitored_channel_ids:
-            # self.logger.debug(f"ChatMemberUpdate for chat_id {chat_id} which is not in monitored list. Ignoring.") # Can be noisy
-            return
-
-        self.logger.info(f"Chat member update in channel {chat_id} for user {user.id} ({user.full_name}). "
-                         f"Old status: {chat_member_data.old_chat_member.status}, New status: {chat_member_data.new_chat_member.status}")
-
-        # Check if a user has effectively joined the channel as a regular member
-        is_newly_joined_member = (
-            chat_member_data.new_chat_member.status == ChatMemberStatus.MEMBER and
-            chat_member_data.old_chat_member.status not in [
-                ChatMemberStatus.MEMBER, 
-                ChatMemberStatus.ADMINISTRATOR, 
-                ChatMemberStatus.OWNER  
-            ]
-        )
-        # Covers cases like: LEFT -> MEMBER, KICKED -> MEMBER (if added by admin after being kicked by bot)
-
-        if is_newly_joined_member:
-            user_id_to_check = user.id
-            self.logger.info(f"User {user_id_to_check} ({user.full_name}) detected as newly joined/added to channel {chat_id}.")
-
-            # 0. Check if user is an admin of the channel - skip if admin
-            try:
-                # Get the title of the current chat for logging and potentially for _get_channel_members if it uses it
-                current_channel_title = chat_member_data.chat.title if chat_member_data.chat.title else f"Channel ID: {chat_id}"
-                admin_user_ids = await self._get_channel_members(bot, channel_id=chat_id, channel_title=current_channel_title)
-            except Exception as e:
-                self.logger.error(f"Failed to get channel admins in ChatMemberHandler: {e}", exc_info=True)
-                admin_user_ids = [] # Proceed with caution, or deny access if admin list is crucial and unavailable
-            
-            if user_id_to_check in admin_user_ids:
-                self.logger.info(f"User {user_id_to_check} is an admin. Skipping membership check.")
-                return
-
-            # 1. Check subscription status in DB
-            has_active_subscription = False
-            try:
-                active_subscriptions_db = DatabaseQueries.get_all_active_subscribers()
-                active_subscriber_ids_db = {sub['user_id'] for sub in active_subscriptions_db}
-                if user_id_to_check in active_subscriber_ids_db:
-                    has_active_subscription = True
-            except Exception as e:
-                self.logger.error(f"Database error while checking subscription for user {user_id_to_check} in ChatMemberHandler: {e}", exc_info=True)
-                # Decide behavior: kick or allow if DB check fails? For safety, assume no subscription.
-                has_active_subscription = False
-            
-            if not has_active_subscription:
-                self.logger.info(f"User {user_id_to_check} ({user.full_name}) has no active subscription. Kicking from channel {chat_id}.")
-                try:
-                    await bot.ban_chat_member(chat_id=chat_id, user_id=user_id_to_check, until_date=None)
-                    self.logger.info(f"Successfully banned user {user_id_to_check} from channel {chat_id}.")
-                    await bot.unban_chat_member(chat_id=chat_id, user_id=user_id_to_check)
-                    self.logger.info(f"Successfully unbanned user {user_id_to_check} from channel {chat_id} (to allow rejoining).")
-                    
-                    reason = "شما اشتراک فعالی برای عضویت در این کانال ندارید و یا اشتراک شما منقضی شده است."
-                    await self.send_membership_status_notification(bot, user_id_to_check, reason, is_kicked=True)
-                except Forbidden as e_forbidden:
-                    self.logger.error(f"FORBIDDEN error when trying to kick user {user_id_to_check} via ChatMemberHandler: {e_forbidden}. Bot might lack permissions or target is admin.")
-                except BadRequest as e_bad_request:
-                    self.logger.error(f"BAD_REQUEST error when trying to kick user {user_id_to_check} via ChatMemberHandler: {e_bad_request}. (e.g. user not found in chat)")
-                except Exception as e_generic:
-                    self.logger.error(f"Generic error when trying to kick user {user_id_to_check} via ChatMemberHandler: {e_generic}", exc_info=True)
-            else:
-                self.logger.info(f"User {user_id_to_check} ({user.full_name}) has an active subscription. Allowing access.")
-        elif chat_member_data.new_chat_member.status == ChatMemberStatus.LEFT:
-            self.logger.info(f"User {user.id} ({user.full_name}) left channel {chat_id}.")
-        elif chat_member_data.new_chat_member.status == ChatMemberStatus.BANNED:
-            self.logger.info(f"User {user.id} ({user.full_name}) was kicked/banned from channel {chat_id}.")
 
     # --- Command Handlers ---
     @admin_only
@@ -483,40 +382,6 @@ class ManagerBot:
         except Exception as e:
             self.logger.error(f"Unexpected error sending membership status notification to {user_id}: {e}", exc_info=True)
     
-    async def send_expiration_reminders(self, context):
-        """Send reminders to users with expiring subscriptions"""
-        self.logger.info("Sending expiration reminders")
-        
-        try:
-            # Get bot instance for API calls
-            bot = self.application.bot
-            
-            # Get users with subscriptions expiring soon
-            expiring_soon = Database.get_expiring_subscriptions(config.REMINDER_DAYS)
-            
-            if not expiring_soon:
-                self.logger.info("No expiring subscriptions found")
-                return
-            
-            self.logger.info(f"Found {len(expiring_soon)} expiring subscriptions")
-            
-            # Send reminders to each user
-            for subscription in expiring_soon:
-                user_id = subscription['user_id']
-                days_left = calculate_days_left(subscription['end_date'])
-                
-                # Send expiration reminder
-                await send_expiration_reminder(bot, user_id, days_left)
-                
-                self.logger.info(f"Sent expiration reminder to user {user_id} ({days_left} days left)")
-            
-            # Get users with already expired subscriptions who haven't been notified
-            expired = Database.get_recently_expired_subscriptions()
-            
-            if not expired:
-                self.logger.info("No recent expired subscriptions found")
-                return
-            
             self.logger.info(f"Found {len(expired)} expired subscriptions")
             
             # Send expired notifications to each user
@@ -546,44 +411,9 @@ class ManagerBot:
         for handler in self.ticket_handler.get_handlers():
             self.application.add_handler(handler)
 
-    # --- Background Tasks --- (This comment was likely part of process_admin_tickets or similar)
-    async def process_admin_tickets(self, context: ContextTypes.DEFAULT_TYPE):
-        """Process support tickets that need admin attention"""
-        self.logger.info("Processing admin tickets")
-        
-        try:
-            # Get tickets that need admin attention
-            # This is a placeholder. Replace with actual database query if 'DatabaseQueries' is the intended class.
-            # pending_tickets = DatabaseQueries.get_pending_admin_tickets() 
-            pending_tickets = [] # Placeholder until actual query is confirmed
-            
-            if not pending_tickets:
-                # self.logger.info("No pending admin tickets.") # Optional: logging when no tickets
-                return
-            
-            self.logger.info(f"Found {len(pending_tickets)} tickets needing admin attention")
-            
-            # This is a placeholder for actual admin ticket processing
-            # In a real implementation, you would send these tickets to the admin
-            # and provide a way for the admin to respond
-            
-            # For now, we'll just log the tickets
-            for ticket in pending_tickets:
-                self.logger.info(f"Ticket #{ticket.get('ticket_id', 'N/A')} from user {ticket.get('user_id', 'N/A')} needs attention")
-        
-        except Exception as e:
-            self.logger.error(f"Error processing admin tickets: {e}", exc_info=True)
+
     
-    async def handle_admin_response(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle responses from admins to support tickets"""
-        # This is a placeholder for handling admin responses to tickets
-        # In a real implementation, this would parse the admin's message
-        # and send it to the user who created the ticket
-        user_input = update.message.text
-        admin_user = update.effective_user
-        self.logger.info(f"Admin {admin_user.id} responded: {user_input}")
-        # Example: await update.message.reply_text("پاسخ شما ثبت شد.")
-        pass
+
 
     async def send_new_ticket_notification(self, notif_message: str):
         """
