@@ -140,16 +140,6 @@ if not USDT_TRC20_CONTRACT_ADDRESS:
     USDT_TRC20_CONTRACT_ADDRESS = "USDT_CONTRACT_NOT_SET_IN_ENV" 
     logger.error("CRITICAL: USDT_TRC20_CONTRACT_ADDRESS not set in .env. USDT payment processing will fail. Using placeholder: '%s'", USDT_TRC20_CONTRACT_ADDRESS)
 
-CRYPTO_PAYMENT_CONFIRMATIONS_STR = os.getenv("CRYPTO_PAYMENT_CONFIRMATIONS", "20") 
-try:
-    CRYPTO_PAYMENT_CONFIRMATIONS = int(CRYPTO_PAYMENT_CONFIRMATIONS_STR)
-except ValueError:
-    logger.warning(
-        f"Invalid value for CRYPTO_PAYMENT_CONFIRMATIONS in .env: '{CRYPTO_PAYMENT_CONFIRMATIONS_STR}'. "
-        f"Using default value: 20."
-    )
-    CRYPTO_PAYMENT_CONFIRMATIONS = 20
-
 CRYPTO_PAYMENT_TIMEOUT_MINUTES_STR = os.getenv("CRYPTO_PAYMENT_TIMEOUT_MINUTES", "30")
 try:
     CRYPTO_PAYMENT_TIMEOUT_MINUTES = int(CRYPTO_PAYMENT_TIMEOUT_MINUTES_STR)
@@ -188,8 +178,8 @@ elif not CRYPTO_GATEWAY_URL:
 
 # Time settings
 TEHRAN_TIMEZONE = "Asia/Tehran"
-EXPIRATION_REMINDER_DAYS = 5  # Number of days before subscription expires to send a reminder
-REMINDER_HOUR = 13  # Hour to send daily reminders (in 24-hour format)
+
+
 
 # --- Database Settings ---
 # Get the directory where this config.py file is located
@@ -224,25 +214,16 @@ except OSError as e:
 
 # For SQLAlchemy or other ORMs, you might need a URL (adjust if not using SQLite)
 # Ensure forward slashes for the SQLite URL, especially on Windows.
-DATABASE_URL = f"sqlite:///{DATABASE_PATH.replace(os.sep, '/')}"
+
 
 # For compatibility, DATABASE_NAME should be the full path to the database file.
 DATABASE_NAME = DATABASE_PATH
 
-# Education levels for registration
-EDUCATION_LEVELS = [
-    "دیپلم",
-    "کاردانی",
-    "کارشناسی",
-    "کارشناسی ارشد",
-    "دکتری"
-]
 
-# Channel member validation frequency (in seconds)
-VALIDATION_INTERVAL = 60  # Check every minute
 
-# Membership reminder settings
-REMINDER_DAYS = 5  # Send reminders when 5 days are left
+
+
+
 
 import json
 # logging import and logger definition moved earlier
@@ -311,9 +292,7 @@ if ADMIN_CHAT_ID is None and not MAIN_BOT_ERROR_CONTACT_IDS:
 # The case 'ADMIN_CHAT_ID is None and MAIN_BOT_ERROR_CONTACT_IDS' should not happen with the current logic.
 # If MAIN_BOT_ERROR_CONTACT_IDS is populated, ADMIN_CHAT_ID will be its first element.
 
-# For compatibility, define MANAGER_BOT_ADMIN_USERS (for manager bot admins)
-MANAGER_BOT_ADMIN_USERS = MANAGER_BOT_ADMINS_DICT
 
-# For compatibility, define ADMIN_USERS (for main bot support staff list)
-ADMIN_USERS = MAIN_BOT_SUPPORT_STAFF_LIST
+
+
 # --- End of Consolidated Admin Configuration Processing ---
