@@ -265,7 +265,6 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
     is_active_subscription = False
 
     # Check if user is admin
-    hide_main_menu_button = context.user_data.pop('hide_main_menu_button', False)
 
     if is_admin(user_id, config.ADMIN_USER_IDS):
         # Admins have unlimited access; treat as active
