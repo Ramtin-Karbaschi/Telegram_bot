@@ -74,7 +74,7 @@ async def error_handler(update: object, context: "telegram.ext.CallbackContext")
         except Exception as e:
             logger.error(f"Failed to send error message to user: {e}")
 
-from telegram import Update, Bot, BotCommand, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, BotCommand, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ConversationHandler, filters, ContextTypes, TypeHandler, # Added TypeHandler
@@ -230,21 +230,19 @@ from handlers.subscription import (
 from handlers.support import (
     support_menu_handler, support_ticket_list_handler,
     new_ticket_handler, ticket_conversation, view_ticket_handler,
-    close_ticket_handler, reopen_ticket_handler
+
 )
 from utils.keyboards import (
     get_main_menu_keyboard, get_back_button
 )
 from utils.helpers import (
-    get_current_time, format_datetime, calculate_days_left,
-    generate_channel_link, send_expiration_reminder,
-    send_expired_notification, send_invalid_membership_notification
+    get_current_time, calculate_days_left,
+    send_expired_notification
 )
 from utils.constants import (
     CALLBACK_VIEW_SUBSCRIPTION_STATUS_FROM_REG,
     WELCOME_MESSAGE, HELP_MESSAGE, RULES_MESSAGE,
     TEXT_MAIN_MENU_EDIT_PROFILE, # Added constant for edit profile button text
-    TEXT_MAIN_MENU_JOIN_OR_REGISTER, # Added constant for the new join/register button
     TEXT_MAIN_MENU_BUY_SUBSCRIPTION, # Added constant for buy subscription button
     # Assuming these constants exist or will be added for other menu items for consistency
     TEXT_MAIN_MENU_REGISTRATION,
@@ -387,15 +385,11 @@ class MainBot:
         self.application.add_handler(CallbackQueryHandler(
             view_ticket_handler, pattern="^view_ticket_"
         ))
-        self.application.add_handler(CallbackQueryHandler(
-            close_ticket_handler, pattern="^close_ticket_"
-        ))
+
         self.application.add_handler(CallbackQueryHandler(
             handle_back_to_main, pattern=r"^back_to_main_menu_from_plans$"
         ))
-        self.application.add_handler(CallbackQueryHandler(
-            reopen_ticket_handler, pattern=r"^reopen_ticket_"
-        ))
+
 
         self.application.add_handler(TypeHandler(Update, log_all_updates), group=100) # High group number means lower priority
         self.logger.info("CRITICAL_LOG: Generic TypeHandler (log_all_updates) has been set up in group 100.")
@@ -434,13 +428,11 @@ class MainBot:
         await self.application.bot.set_my_commands(commands)
         self.logger.info("Bot commands have been set.")
         await self.application.start()
-        await self.application.updater.start_polling()
         self.logger.info("Main bot started")
     
     async def stop(self):
         """Stop the bot"""
         self.logger.info("Stopping main bot")
-        await self.application.updater.stop()
         await self.application.stop()
         await self.application.shutdown()
         self.logger.info("Main bot stopped")
