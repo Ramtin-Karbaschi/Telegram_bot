@@ -115,15 +115,6 @@ class Database:
             return self.cursor.rowcount > 0
         return False
 
-    def update_crypto_payment_status(self, payment_id, new_status):
-        """Updates the status of a crypto payment (e.g., to 'expired', 'failed', 'error')."""
-        query = "UPDATE crypto_payments SET status = ?, updated_at = ? WHERE payment_id = ?"
-        params = (new_status, datetime.now(), payment_id)
-        if self.execute(query, params):
-            self.commit()
-            return self.cursor.rowcount > 0
-        return False
-
     def get_crypto_payment_by_payment_id(self, payment_id):
         """Retrieves a crypto payment by its unique payment_id."""
         query = "SELECT * FROM crypto_payments WHERE payment_id = ?"
