@@ -3,19 +3,18 @@ Core handlers for the Daraei Academy Telegram bot
 """
 
 from datetime import datetime
-from urllib.parse import parse_qs # For robustly parsing query strings if needed, though manual split is used here.
+
 
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ConversationHandler
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from telegram.constants import ParseMode
-from telegram import CallbackQuery
 
 from database.queries import DatabaseQueries # Assuming direct import is fine
 from services.zarinpal_service import ZarinpalPaymentService
 from utils.keyboards import get_main_menu_keyboard, get_main_reply_keyboard
 from utils.constants.all_constants import (
-    ZARINPAL_GOTO_GATEWAY_MESSAGE_USER,
+
     ZARINPAL_PAYMENT_NOT_FOUND_MESSAGE_USER,
     ZARINPAL_PAYMENT_ALREADY_VERIFIED_MESSAGE_USER,
     ZARINPAL_PAYMENT_FAILED_MESSAGE_TRY_AGAIN_USER,
@@ -127,19 +126,15 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_db_data = DatabaseQueries.get_user_details(user_id)
         
         is_registered = bool(user_db_data and user_db_data['full_name'] and user_db_data['phone'])
-        has_active_sub = False
-        if is_registered and user_db_data:
-             active_sub_details = DatabaseQueries.get_user_active_subscription(user_id)
-             has_active_sub = active_sub_details is not None
 
         await update.message.reply_text(
             WELCOME_MESSAGE,
-            reply_markup=get_main_reply_keyboard(user_id=user_id, is_registered=is_registered, has_active_subscription=has_active_sub) # This will set the persistent reply keyboard
+            reply_markup=get_main_reply_keyboard(user_id=user_id, is_registered=is_registered) # This will set the persistent reply keyboard
         )
         # To also show an inline keyboard under the welcome message (optional, if desired)
         # await update.message.reply_text(
         #     "گزینه های اصلی:", # Or some other relevant text
-        #     reply_markup=get_main_menu_keyboard(user_id=user_id, is_registered=is_registered, has_active_subscription=has_active_sub)
+        #     reply_markup=get_main_menu_keyboard(user_id=user_id, is_registered=is_registered)
         # )
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -148,7 +143,6 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     DatabaseQueries.update_user_activity(user_id)
     user_db_data = DatabaseQueries.get_user_details(user_id)
     is_registered = bool(user_db_data and user_db_data['full_name'] and user_db_data['phone'])
-    has_active_subscription = DatabaseQueries.get_user_active_subscription(user_id) is not None
     back_button_help = InlineKeyboardButton(TEXT_BACK_BUTTON, callback_data=CALLBACK_BACK_TO_MAIN_MENU)
     back_keyboard_markup_help = InlineKeyboardMarkup([[back_button_help]])
 
@@ -177,7 +171,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         "منوی اصلی:",
-        reply_markup=get_main_menu_keyboard(user_id=user_id, is_registered=is_registered, has_active_subscription=DatabaseQueries.get_user_active_subscription(user_id) is not None)
+        reply_markup=get_main_menu_keyboard(user_id=user_id, is_registered=is_registered)
     )
 
 async def rules_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -186,7 +180,6 @@ async def rules_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     DatabaseQueries.update_user_activity(user_id)
     user_db_data = DatabaseQueries.get_user_details(user_id)
     is_registered = bool(user_db_data and user_db_data['full_name'] and user_db_data['phone'])
-    has_active_subscription = DatabaseQueries.get_user_active_subscription(user_id) is not None
     back_button_rules = InlineKeyboardButton(TEXT_BACK_BUTTON, callback_data=CALLBACK_BACK_TO_MAIN_MENU)
     back_keyboard_markup_rules = InlineKeyboardMarkup([[back_button_rules]])
 
@@ -233,7 +226,7 @@ async def show_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     await query.message.edit_text(
         "منوی اصلی:",
-        reply_markup=get_main_menu_keyboard(user_id=user_id, is_registered=is_registered, has_active_subscription=DatabaseQueries.get_user_active_subscription(user_id) is not None)
+        reply_markup=get_main_menu_keyboard(user_id=user_id, is_registered=is_registered)
     )
 
 async def handle_back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -256,5 +249,5 @@ async def unknown_message_handler(update: Update, context: ContextTypes.DEFAULT_
     
     await update.message.reply_text(
         "متوجه نشدم! لطفاً از دکمه‌های منو استفاده کنید یا دستور /help را برای راهنمایی وارد کنید.",
-        reply_markup=get_main_menu_keyboard(user_id=user_id, is_registered=is_registered, has_active_subscription=DatabaseQueries.get_user_active_subscription(user_id) is not None)
+        reply_markup=get_main_menu_keyboard(user_id=user_id, is_registered=is_registered)
     )
