@@ -25,13 +25,13 @@ from config import RIAL_GATEWAY_URL, CRYPTO_GATEWAY_URL # Assuming these are sti
 from utils.keyboards import (
     get_subscription_plans_keyboard, get_payment_methods_keyboard,
     get_back_to_plans_button, get_back_to_payment_methods_button,
-    get_main_menu_keyboard, get_main_menu_inline_keyboard
+    get_main_menu_keyboard
 )
-from utils import ui_texts as persian_ui_texts_module
+
 from utils.constants import (
     SUBSCRIPTION_PLANS_MESSAGE, PAYMENT_METHOD_MESSAGE,
-    RIAL_PAYMENT_MESSAGE, CRYPTO_PAYMENT_UNIQUE_AMOUNT_MESSAGE, # Changed from CRYPTO_PAYMENT_MESSAGE
-    PAYMENT_VERIFICATION_MESSAGE, PAYMENT_SUCCESS_MESSAGE,
+    CRYPTO_PAYMENT_UNIQUE_AMOUNT_MESSAGE, # Changed from CRYPTO_PAYMENT_MESSAGE
+    PAYMENT_SUCCESS_MESSAGE,
     PAYMENT_ERROR_MESSAGE # Changed from PAYMENT_FAILED_MESSAGE
 )
 from utils.constants.all_constants import (
@@ -58,8 +58,6 @@ async def back_to_main_menu_from_payment_handler(update: Update, context: Contex
     user_id = update.effective_user.id
     Database.update_user_activity(user_id)
     context.user_data.clear()
-    # Pass a flag via context to remove the 'Back to Main Menu' button
-    context.user_data['hide_main_menu_button'] = True
     return await view_active_subscription(update, context)
 
 async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -374,7 +372,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             timeout_minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES
         )
 
-        current_plan_id = context.user_data.get('selected_plan_details', {}).get('id')
+
 
         keyboard_buttons = [
             [InlineKeyboardButton("📷 نمایش QR کد", callback_data=f"show_qr_code_{crypto_payment_request_db_id}")],
@@ -477,338 +475,6 @@ async def show_qr_code_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     # This handler does not change the conversation state, so it returns None implicitly
     return
 
-async def copy_wallet_address_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    # Data format: copy_wallet_addr_THE_WALLET_ADDRESS
-    try:
-        wallet_address = query.data.split('copy_wallet_addr_')[1]
-        await query.answer(text=f"{wallet_address}", show_alert=True) # Show address in a popup to copy
-    except IndexError:
-        await query.answer(text="خطا در پردازش درخواست کپی آدرس.", show_alert=True)
-    return # Stay in the current state
-
-async def copy_usdt_amount_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    # Data format: copy_usdt_amount_THE_USDT_AMOUNT
-    try:
-        usdt_amount = query.data.split('copy_usdt_amount_')[1]
-        await query.answer(text=f"{usdt_amount} USDT", show_alert=True) # Show amount in a popup to copy
-    except IndexError:
-        await query.answer(text="خطا در پردازش درخواست کپی مبلغ.", show_alert=True)
-    return # Stay in the current state
-
-async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer("در حال بررسی پرداخت تتر شما، لطفاً چند لحظه صبر کنید...")
-    user_id = query.from_user.id
-    telegram_id = query.from_user.id # Assuming user_id from DB is same as telegram_id
-
-    crypto_payment_id = context.user_data.get('crypto_payment_id')
-    usdt_amount_requested = context.user_data.get('usdt_amount_requested')
-    selected_plan = context.user_data.get('selected_plan_details')
-
-    if not crypto_payment_id or not usdt_amount_requested or not selected_plan:
-        await query.edit_message_text(
-            "متاسفانه اطلاعات مورد نیاز برای بررسی پرداخت یافت نشد. لطفاً مجدداً فرآیند پرداخت را طی کنید.",
-            reply_markup=get_main_menu_keyboard(user_id)
-        )
-        UserAction.log_user_action(
-            telegram_id=user_id,
-            user_db_id=None, # db_payment['user_id'] if db_payment else None,
-            action_type='crypto_payment_verify_error',
-            details={
-                'crypto_payment_db_id': None, # db_payment['id'] if db_payment else None,
-                'payment_id_uuid': context.user_data.get('crypto_payment_id'),
-                'error': 'missing_context_data'
-            }
-        )
-        return ConversationHandler.END
-
-    db_payment = Database.get_crypto_payment_by_id(crypto_payment_id)
-
-    if not db_payment:
-        await query.edit_message_text(
-            "متاسفانه درخواست پرداخت شما یافت نشد. ممکن است منقضی شده باشد یا خطایی رخ داده باشد.",
-            reply_markup=get_main_menu_keyboard(user_id)
-        )
-        UserAction.log_user_action(
-            telegram_id=user_id,
-            user_db_id=None, # db_payment['user_id'] if db_payment else None,
-            action_type='crypto_payment_verify_error',
-            details={
-                'crypto_payment_db_id': None, # db_payment['id'] if db_payment else None,
-                'payment_id_uuid': context.user_data.get('crypto_payment_id'),
-                'error': 'db_payment_not_found'
-            }
-        )
-        return ConversationHandler.END
-
-    if datetime.now() > datetime.fromisoformat(db_payment['expires_at']):
-        Database.update_crypto_payment_status(crypto_payment_id, 'expired', None)
-        await query.edit_message_text(
-            "متاسفانه مهلت پرداخت شما برای این درخواست به پایان رسیده است. لطفاً یک درخواست پرداخت جدید ایجاد کنید.",
-            reply_markup=get_payment_methods_keyboard(selected_plan['id'], selected_plan['name'], selected_plan['price'], selected_plan.get('price_usdt'))
-        )
-        UserAction.log_user_action(
-            telegram_id=user_id,
-            user_db_id=db_payment['user_id'], # db_payment might be None if expired before first check
-            action_type='crypto_payment_expired',
-            details={
-                'crypto_payment_db_id': db_payment['id'], # db_payment might be None if expired before first check
-                'payment_id_uuid': context.user_data.get('crypto_payment_id')
-            }
-        )
-        return VERIFY_PAYMENT
-
-    try:
-        # Ensure usdt_amount_requested from context matches the one in DB for safety
-        if abs(float(db_payment['usdt_amount_requested']) - float(usdt_amount_requested)) > 1e-9: # Compare floats carefully
-             logger.warning(f"Mismatch in USDT amount for crypto_payment_id {crypto_payment_id}. Context: {usdt_amount_requested}, DB: {db_payment['usdt_amount_requested']}. Using DB value as source of truth.")
-        
-        service_usdt_amount = float(db_payment['usdt_amount_requested'])
-
-        status, transaction_id, error_message = await CryptoPaymentService.find_usdt_payment(
-            payment_id=str(crypto_payment_id),
-            receiver_address=CRYPTO_WALLET_ADDRESS,
-            expected_amount=service_usdt_amount,
-        )
-        
-        UserAction.log_user_action(
-            telegram_id=user_id,
-            user_db_id=db_payment['user_id'],
-            action_type='crypto_payment_service_check_result',
-            details={
-                'crypto_payment_db_id': db_payment['id'],
-                'payment_id_uuid': crypto_payment_id,
-                'service_status': status,
-                'transaction_id': transaction_id,
-                'error_message': error_message
-            }
-        )
-
-        if status == CryptoPaymentService.CONFIRMED:
-            Database.update_crypto_payment_status(crypto_payment_id, 'confirmed', transaction_id, datetime.now())
-            UserAction.log_user_action(
-                telegram_id=user_id,
-                user_db_id=db_payment['user_id'],
-                action_type='crypto_payment_confirmed_by_service',
-                details={
-                    'crypto_payment_db_id': db_payment['id'],
-                    'payment_id_uuid': crypto_payment_id,
-                    'transaction_id': transaction_id,
-                    'amount_usdt': service_usdt_amount
-                }
-            )
-            
-            activation_success, activation_message = await activate_or_extend_subscription(
-                user_id=user_id,
-                telegram_id=telegram_id,
-                plan_id=selected_plan['id'],
-                plan_name=selected_plan['name'],
-                payment_amount=service_usdt_amount,
-                payment_method="crypto",
-                transaction_id=transaction_id,
-                context=context,
-                payment_table_id=crypto_payment_id
-            )
-
-            if activation_success:
-                await query.edit_message_text(
-                    PAYMENT_SUCCESS_MESSAGE + f"\n\n{activation_message}",
-                    reply_markup=InlineKeyboardMarkup([
-                        [get_subscription_status_button(user_id)],
-                        [get_main_menu_button()]
-                    ])
-                )
-                context.user_data.pop('crypto_payment_id', None)
-                context.user_data.pop('usdt_amount_requested', None)
-                UserAction.log_user_action(
-                    telegram_id=user_id,
-                    user_db_id=db_payment['user_id'],
-                    action_type='subscription_activation_succeeded_crypto',
-                    details={
-                        'crypto_payment_db_id': db_payment['id'],
-                        'payment_id_uuid': crypto_payment_id,
-                        'plan_id': selected_plan['id'],
-                        'activation_message': activation_message
-                    }
-                )
-                return ConversationHandler.END
-            else:
-                logger.error(f"Subscription activation failed for user {user_id} (crypto_payment_id: {crypto_payment_id}, TXID: {transaction_id}). Message: {activation_message}")
-                UserAction.log_user_action(
-                    telegram_id=user_id,
-                    user_db_id=db_payment['user_id'],
-                    action_type='subscription_activation_failed_crypto',
-                    details={
-                        'crypto_payment_db_id': db_payment['id'],
-                        'payment_id_uuid': crypto_payment_id,
-                        'plan_id': selected_plan['id'],
-                        'error_reason': activation_message
-                    }
-                )
-                await query.edit_message_text(
-                    f"پرداخت شما با موفقیت تأیید شد (TXID: {transaction_id}) اما در فعالسازی اشتراک خطایی رخ داد: {activation_message}. لطفاً فوراً با پشتیبانی تماس بگیرید و شماره پیگیری {crypto_payment_id} را اعلام کنید.",
-                    reply_markup=get_main_menu_keyboard(user_id)
-                )
-                return ConversationHandler.END
-
-        elif status == CryptoPaymentService.PENDING_CONFIRMATION:
-            UserAction.log_user_action(
-                telegram_id=user_id,
-                user_db_id=db_payment['user_id'],
-                action_type='crypto_payment_pending_confirmation',
-                details={
-                    'crypto_payment_db_id': db_payment['id'],
-                    'payment_id_uuid': crypto_payment_id,
-                    'transaction_id': transaction_id
-                }
-            )
-            await query.edit_message_text(
-                "تراکنش شما در شبکه بلاکچین یافت شد اما هنوز به تعداد تأییدهای لازم نرسیده است. لطفاً چند دقیقه دیگر مجدداً بررسی کنید.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("دوباره بررسی کن", callback_data="payment_verify_crypto")],
-                    [get_back_to_payment_methods_button()]
-                ])
-            )
-            return VERIFY_PAYMENT
-
-        elif status == CryptoPaymentService.UNDERPAID:
-            Database.update_crypto_payment_status(crypto_payment_id, 'underpaid', transaction_id, datetime.now())
-            UserAction.log_user_action(
-                telegram_id=user_id,
-                user_db_id=db_payment['user_id'],
-                action_type='crypto_payment_underpaid',
-                details={
-                    'crypto_payment_db_id': db_payment['id'],
-                    'payment_id_uuid': crypto_payment_id,
-                    'expected_usdt': service_usdt_amount,
-                    'transaction_id': transaction_id,
-                    'error_message': error_message # error_message from service likely contains received amount
-                }
-            )
-            await query.edit_message_text(
-                f"مبلغ واریزی شما کمتر از مقدار مورد انتظار است. لطفاً با پشتیبانی تماس بگیرید. شماره پیگیری: {crypto_payment_id}\nجزئیات خطا: {error_message}",
-                reply_markup=get_main_menu_keyboard(user_id)
-            )
-            return ConversationHandler.END
-
-        elif status == CryptoPaymentService.OVERPAID:
-            # This case might still lead to subscription activation depending on policy
-            # For now, we log it and inform user, then proceed like a confirmed payment
-            Database.update_crypto_payment_status(crypto_payment_id, 'overpaid', transaction_id, datetime.now())
-            UserAction.log_user_action(
-                telegram_id=user_id,
-                user_db_id=db_payment['user_id'],
-                action_type='crypto_payment_overpaid',
-                details={
-                    'crypto_payment_db_id': db_payment['id'],
-                    'payment_id_uuid': crypto_payment_id,
-                    'expected_usdt': service_usdt_amount,
-                    'transaction_id': transaction_id,
-                    'error_message': error_message # error_message from service likely contains received amount
-                }
-            )
-            # Proceed to activate subscription even on overpayment, as the minimum was met.
-            # The message from activate_or_extend_subscription will be shown.
-            activation_success, activation_message = await activate_or_extend_subscription(
-                user_id=user_id,
-                telegram_id=telegram_id,
-                plan_id=selected_plan['id'],
-                plan_name=selected_plan['name'],
-                payment_amount=service_usdt_amount, # Or actual received amount if available and policy dictates
-                payment_method="crypto",
-                transaction_id=transaction_id,
-                context=context,
-                payment_table_id=crypto_payment_id
-            )
-            if activation_success:
-                await query.edit_message_text(
-                    f"پرداخت شما با موفقیت تأیید شد (مبلغ بیشتر از حد انتظار دریافت شد). TXID: {transaction_id}\n\n{activation_message}",
-                    reply_markup=InlineKeyboardMarkup([
-                        [get_subscription_status_button(user_id)],
-                        [get_main_menu_button()]
-                    ])
-                )
-                context.user_data.pop('crypto_payment_id', None)
-                context.user_data.pop('usdt_amount_requested', None)
-                UserAction.log_user_action(
-                    telegram_id=user_id,
-                    user_db_id=db_payment['user_id'],
-                    action_type='subscription_activation_succeeded_crypto_overpaid',
-                    details={
-                        'crypto_payment_db_id': db_payment['id'],
-                        'payment_id_uuid': crypto_payment_id,
-                        'plan_id': selected_plan['id'],
-                        'activation_message': activation_message
-                    }
-                )
-                return ConversationHandler.END
-            else:
-                logger.error(f"Subscription activation failed after OVERPAYMENT for user {user_id} (crypto_payment_id: {crypto_payment_id}, TXID: {transaction_id}). Message: {activation_message}")
-                UserAction.log_user_action(
-                    telegram_id=user_id,
-                    user_db_id=db_payment['user_id'],
-                    action_type='subscription_activation_failed_crypto_overpaid',
-                    details={
-                        'crypto_payment_db_id': db_payment['id'],
-                        'payment_id_uuid': crypto_payment_id,
-                        'plan_id': selected_plan['id'],
-                        'error_reason': activation_message
-                    }
-                )
-                await query.edit_message_text(
-                    f"پرداخت شما با مبلغ بیشتر از حد انتظار تأیید شد (TXID: {transaction_id}) اما در فعالسازی اشتراک خطایی رخ داد: {activation_message}. لطفاً فوراً با پشتیبانی تماس بگیرید و شماره پیگیری {crypto_payment_id} را اعلام کنید.",
-                    reply_markup=get_main_menu_keyboard(user_id)
-                )
-                return ConversationHandler.END
-        
-        elif status == CryptoPaymentService.NOT_FOUND:
-            UserAction.log_user_action(
-                telegram_id=user_id,
-                user_db_id=db_payment['user_id'],
-                action_type='crypto_payment_not_found_by_service',
-                details={
-                    'crypto_payment_db_id': db_payment['id'],
-                    'payment_id_uuid': crypto_payment_id
-                }
-            )
-            await query.edit_message_text(
-                "متاسفانه تراکنشی با مشخصات پرداخت شما یافت نشد. لطفاً از صحت اطلاعات و انجام تراکنش اطمینان حاصل کنید و مجدداً تلاش نمایید. اگر از انجام تراکنش مطمئن هستید، ممکن است هنوز در شبکه ثبت نشده باشد، کمی صبر کرده و دوباره امتحان کنید.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("دوباره بررسی کن", callback_data="payment_verify_crypto")],
-                    [get_back_to_payment_methods_button()]
-                ])
-            )
-            return VERIFY_PAYMENT
-        
-        else: # ERROR or other statuses
-            Database.update_crypto_payment_status(crypto_payment_id, 'error', transaction_id, datetime.now()) # transaction_id might be None
-            UserAction.log_user_action(
-                telegram_id=user_id,
-                user_db_id=db_payment['user_id'],
-                action_type='crypto_payment_service_error',
-                details={
-                    'crypto_payment_db_id': db_payment['id'],
-                    'payment_id_uuid': crypto_payment_id,
-                    'service_status': status, # Log the actual status received
-                    'transaction_id': transaction_id,
-                    'error_message': error_message
-                }
-            )
-            await query.edit_message_text(
-                f"هنگام بررسی پرداخت شما خطایی رخ داد: {error_message}. لطفاً با پشتیبانی تماس بگیرید. شماره پیگیری: {crypto_payment_id}",
-                reply_markup=get_main_menu_keyboard(user_id)
-            )
-            return ConversationHandler.END
-
-    except Exception as e:
-        logger.exception(f"Exception in payment_verify_crypto_handler for user {user_id}, payment_id {crypto_payment_id}: {e}")
-        await query.edit_message_text(
-            "خطای پیش‌بینی نشده‌ای در هنگام بررسی پرداخت شما رخ داد. لطفاً با پشتیبانی تماس بگیرید.",
-            reply_markup=get_main_menu_keyboard(user_id)
-        )
-        return ConversationHandler.END
 
 async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Verify payment status and activate/extend subscription."""
@@ -961,7 +627,7 @@ async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TY
                 'payment_method': payment_method
             }
         )
-        activation_success, activation_message = await activate_or_extend_subscription(
+        activation_success, _ = await activate_or_extend_subscription(
             user_id=user_db_id if user_db_id else telegram_id,
             telegram_id=telegram_id,
             plan_id=plan_id,
@@ -1012,7 +678,7 @@ async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TY
 
             await query.message.edit_text(
                 full_success_message,
-                reply_markup=get_main_menu_keyboard(user_id=telegram_id, has_active_subscription=True),
+                reply_markup=get_main_menu_keyboard(user_id=telegram_id),
                 parse_mode=ParseMode.MARKDOWN
             )
         else:
@@ -1058,39 +724,6 @@ async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data.pop('payment_id', None)
         context.user_data.pop('transaction_id', None)
         return SELECT_PAYMENT_METHOD
-
-async def cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancels the payment conversation."""
-    user_id = update.effective_user.id
-    Database.update_user_activity(user_id)
-    # Clean up context data related to this payment flow
-    for key in ['selected_plan_details', 'payment_id', 'transaction_id', 'payment_method']:
-        context.user_data.pop(key, None)
-
-    # Check active subscription status for correct main menu
-    has_sub = Database.has_active_subscription(user_id)
-    is_admin_user = Database.is_admin(user_id) # Assuming is_admin check is available
-
-    await update.message.reply_text(
-        "عملیات پرداخت لغو شد.", 
-        reply_markup=get_main_menu_keyboard(user_id=user_id, is_admin=is_admin_user, has_active_subscription=has_sub)
-    )
-    return ConversationHandler.END
-
-async def back_to_plans_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بازگشت به انتخاب طرح و پاک‌سازی context پرداخت"""
-    query = update.callback_query
-    user_id = update.effective_user.id
-    Database.update_user_activity(user_id)
-    # پاک‌سازی context مربوط به انتخاب روش پرداخت و پرداخت
-    for key in ['selected_plan_details', 'payment_method', 'payment_info', 'payment_db_id']:
-        context.user_data.pop(key, None)
-    await query.answer()
-    await query.message.edit_text(
-        SUBSCRIPTION_PLANS_MESSAGE,
-        reply_markup=get_subscription_plans_keyboard()
-    )
-    return SELECT_PLAN
 
 async def show_qr_code_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the 'Show QR Code' button press for crypto payments."""
