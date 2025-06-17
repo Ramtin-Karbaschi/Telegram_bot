@@ -5,7 +5,6 @@ Constants for the Daraei Academy Telegram bot
 from .all_constants import *
 
 # Main Menu Button Text for users not yet fully registered
-TEXT_MAIN_MENU_JOIN_OR_REGISTER = "📝 ثبت نام"
 
 # Welcome message for new users
 WELCOME_MESSAGE = """
@@ -74,18 +73,6 @@ OCCUPATION_REQUEST = """
 💼 لطفاً شغل خود را وارد کنید.
 """
 
-REGISTRATION_COMPLETED = """
-✅ ثبت‌نام شما با موفقیت انجام شد!
-
-اکنون می‌توانید از طریق دکمه "👤 وضعیت اشتراک من" در منوی اصلی، اشتراک خود را مدیریت کنید.
-"""
-
-ALREADY_REGISTERED = """
-شما قبلاً در سیستم ثبت‌نام کرده‌اید. 
-
-برای مدیریت اشتراک خود، به منوی اصلی بازگردید و گزینه "👤 وضعیت اشتراک من" را انتخاب کنید.
-"""
-
 # Subscription status constants
 SUBSCRIPTION_STATUS_NONE = "شما در حال حاضر اشتراک فعالی ندارید."
 SUBSCRIPTION_STATUS_ACTIVE = """
@@ -101,46 +88,10 @@ SUBSCRIPTION_STATUS_EXPIRED = """
 تاریخ شروع: {start_date}
 تاریخ انقضا: {end_date}
 """
-SUBSCRIPTION_STATUS_PENDING = "pending"
 
 # Subscription messages
 SUBSCRIPTION_PLANS_MESSAGE = """
 📋 لطفاً نوع اشتراک مورد نظر خود را انتخاب کنید:
-"""
-
-RIAL_PAYMENT_MESSAGE = """
-💰 پرداخت ریالی
-
-مبلغ قابل پرداخت: {amount} تومان
-کد تراکنش: {transaction_id}
-
-لطفاً مبلغ فوق را به شماره کارت زیر واریز کنید:
-6037-9975-9513-2706
-به نام: علی دارایی
-
-پس از پرداخت، دکمه "پرداخت کردم" را بزنید.
-"""
-
-CRYPTO_PAYMENT_MESSAGE = """
-💰 پرداخت با تتر (USDT)
-
-مبلغ قابل پرداخت: {amount} USDT
-کد تراکنش: {transaction_id}
-
-لطفاً به آدرس کیف پول زیر انتقال دهید:
-TRX9HbNDf7JsFzRkHScbVLJt7SQUXupaX6
-
-شبکه: TRC20
-
-پس از انجام تراکنش، دکمه "پرداخت کردم" را بزنید.
-"""
-
-PAYMENT_VERIFICATION_MESSAGE = """
-⏳ در حال بررسی پرداخت شما...
-
-لطفاً منتظر تأیید پرداخت توسط ادمین باشید. این فرایند ممکن است تا 24 ساعت طول بکشد.
-
-پس از تأیید، به شما اطلاع داده خواهد شد و دسترسی شما به کانال فعال می‌شود.
 """
 
 PAYMENT_SUCCESS_MESSAGE = """
@@ -161,34 +112,6 @@ PAYMENT_FAILED_MESSAGE = """
 
 # Alias for backward compatibility (old name used in some handlers)
 PAYMENT_ERROR_MESSAGE = PAYMENT_FAILED_MESSAGE
-
-SUBSCRIPTION_STATUS_MESSAGE = """
-👤 وضعیت اشتراک شما:
-
-{status_text}
-
-{days_left_text}
-{expire_text}
-
-{subscription_plan}
-{subscription_start}
-{subscription_end}
-💰 مبلغ پرداختی: {payment_amount}
-
-برای تمدید اشتراک، می‌توانید از دکمه زیر استفاده کنید:
-"""
-
-SUBSCRIPTION_EXPIRED_MESSAGE = """
-⚠️ اشتراک شما منقضی شده است.
-
-برای تمدید اشتراک، لطفاً از دکمه زیر استفاده کنید:
-"""
-
-SUBSCRIPTION_EXPIRING_SOON_MESSAGE = """
-⚠️ اشتراک شما به زودی منقضی می‌شود!
-
-تنها {days_left} روز از اشتراک شما باقی مانده است. برای جلوگیری از قطع دسترسی، لطفاً اشتراک خود را تمدید کنید.
-"""
 
 # Profile Editing States for ConversationHandler
 SELECT_FIELD_TO_EDIT = "SELECT_FIELD_TO_EDIT"
@@ -211,7 +134,6 @@ TEXT_MAIN_MENU_RULES = "⚠ قوانین"
 TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🎫 خرید اشتراک"
 
 # Profile Editing Callback Data
-CALLBACK_MAIN_MENU_EDIT_PROFILE = "main_menu_edit_profile"  # For triggering edit from main menu
 CALLBACK_PROFILE_EDIT_FULLNAME = "edit_profile_fullname"
 CALLBACK_PROFILE_EDIT_BIRTHYEAR = "edit_profile_birthyear"
 CALLBACK_PROFILE_EDIT_EDUCATION = "edit_profile_education"
@@ -231,15 +153,12 @@ PROFILE_EDIT_FULL_NAME = "لطفاً نام و نام خانوادگی جدید 
 PROFILE_EDIT_BIRTH_YEAR = "لطفاً سال تولد جدید خود را به صورت عدد شمسی وارد کنید (مثال: 1370):"
 PROFILE_EDIT_EDUCATION = "لطفاً میزان تحصیلات جدید خود را از گزینه‌های زیر انتخاب کنید:"
 PROFILE_EDIT_OCCUPATION = "لطفاً شغل جدید خود را از گزینه‌های زیر انتخاب کنید:"
-PROFILE_EDIT_PHONE = "لطفاً شماره تلفن جدید خود را وارد کنید یا با دکمه زیر به اشتراک بگذارید:"
-PROFILE_EDIT_SUCCESS = "✅ اطلاعات شما با موفقیت به‌روزرسانی شد."
 PROFILE_EDIT_FIELD_SUCCESS = "✅ {field_name} شما با موفقیت به‌روزرسانی شد."
 PROFILE_EDIT_CANCELLED = "عملیات ویرایش اطلاعات لغو شد."
 PROFILE_EDIT_FIELD_CANCELLED = "ویرایش {field_name} لغو شد."
 PROFILE_INVALID_BIRTHYEAR = "سال تولد وارد شده معتبر نیست. لطفاً یک سال تولد شمسی معتبر وارد کنید (بین ۱۳۲۰ تا ۱۳۹۴)."
 PROFILE_ASK_PHONE_EDIT_WITH_CONTACT = "لطفاً شماره تلفن جدید خود را وارد کنید یا با دکمه زیر به اشتراک بگذارید:"
 REPLY_KEYBOARD_BACK_TO_EDIT_MENU_TEXT = "بازگشت به منوی ویرایش"
-INVALID_BIRTH_YEAR_FORMAT = "فرمت سال تولد نامعتبر است. لطفاً سال را به صورت یک عدد چهار رقمی وارد کنید (مثلاً 1370)."
 
 # Support ticket messages
 SUPPORT_WELCOME_MESSAGE = """
@@ -252,57 +171,10 @@ NEW_TICKET_SUBJECT_REQUEST = """
 📝 لطفاً موضوع تیکت خود را وارد کنید:
 """
 
-NEW_TICKET_MESSAGE_REQUEST = """
-📄 موضوع: {subject}
-
-لطفاً متن پیام خود را وارد کنید:
-"""
-
-TICKET_CREATED_MESSAGE = """
-✅ تیکت شما با موفقیت ایجاد شد!
-
-📝 شماره تیکت: #{ticket_id}
-📄 موضوع: {subject}
-
-پیام شما به زودی توسط کارشناسان ما بررسی خواهد شد.
-"""
-
-TICKET_MESSAGE_SENT = """
-✅ پیام شما ارسال شد!
-"""
-
 TICKET_CLOSED_MESSAGE = """
 🔴 تیکت #{ticket_id} بسته شد.
 """
 
 TICKET_REOPENED_MESSAGE = """
 🟢 تیکت #{ticket_id} مجدداً باز شد.
-"""
-
-NO_TICKETS_MESSAGE = """
-📭 شما هیچ تیکت فعالی ندارید.
-
-برای ایجاد تیکت جدید، از دکمه "🎫 تیکت جدید" استفاده کنید.
-"""
-
-ADMIN_NOTIFICATION_NEW_TICKET = """
-📢 تیکت جدید:
-
-👤 کاربر: {user_name} (ID: {user_id})
-📝 شماره تیکت: #{ticket_id}
-📄 موضوع: {subject}
-📅 تاریخ: {date}
-
-متن پیام:
-{message}
-"""
-
-ADMIN_NOTIFICATION_NEW_REPLY = """
-📢 پاسخ جدید به تیکت #{ticket_id}:
-
-👤 کاربر: {user_name} (ID: {user_id})
-📅 تاریخ: {date}
-
-متن پیام:
-{message}
 """
