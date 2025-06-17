@@ -25,7 +25,7 @@ from utils.constants import (
     REGISTRATION_WELCOME, PHONE_REQUEST, FULLNAME_REQUEST,
     BIRTHYEAR_REQUEST, EDUCATION_REQUEST, OCCUPATION_REQUEST,
     SUBSCRIPTION_PLANS_MESSAGE,
-    CITY_REQUEST, EMAIL_REQUEST
+    CITY_REQUEST,
 )
 import config
 
@@ -39,7 +39,7 @@ GET_BIRTHYEAR = 3
 GET_EDUCATION = 4
 GET_OCCUPATION = 5
 GET_CITY = 6
-GET_EMAIL = 7
+
 # SHOW_PLANS = 8 # This state is no longer directly part of registration flow
 
 async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -261,76 +261,6 @@ async def get_occupation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return GET_CITY
-
-async def get_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Get user's city of residence"""
-    user = update.effective_user
-    user_id = user.id
-    
-    # Check if back button was pressed
-    if update.message.text == "🔙 بازگشت":
-        # Go back to occupation request
-        await update.message.reply_text(
-            OCCUPATION_REQUEST,
-            reply_markup=get_occupation_keyboard()
-        )
-        return GET_OCCUPATION
-    
-    city = update.message.text.strip()
-    
-    # Basic validation (optional, e.g., length)
-    if not city or len(city) < 2:
-        await update.message.reply_text(
-            "نام شهر وارد شده معتبر نیست. لطفاً نام شهر محل سکونت خود را به درستی وارد کنید."
-        )
-        return GET_CITY
-
-    # Update city in database
-    Database.update_user_profile(user_id, city=city)
-    
-    # Move to email step
-    await update.message.reply_text(
-        EMAIL_REQUEST,
-        reply_markup=get_back_button() # You might want a 'skip' button here if email is optional
-    )
-    
-    return GET_EMAIL
-
-async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Get user's email address"""
-    user = update.effective_user
-    user_id = user.id
-    
-    # Check if back button was pressed
-    if update.message.text == "🔙 بازگشت":
-        # Go back to city request
-        await update.message.reply_text(
-            CITY_REQUEST,
-            reply_markup=get_back_button()
-        )
-        return GET_CITY
-    
-    email = update.message.text.strip()
-
-    # Optional: Basic email validation regex (simple one)
-    if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email):
-        # Allow skipping if user types something like 'skip' or if email is truly optional
-        # For now, we'll assume it's required if they don't press back
-        await update.message.reply_text(
-            "آدرس ایمیل وارد شده معتبر نیست. لطفاً یک آدرس ایمیل صحیح وارد کنید یا برای رد شدن، دکمه بازگشت را بزنید و سپس شهر را مجددا وارد کنید."
-        )
-        return GET_EMAIL
-
-    # Update email in database
-    Database.update_user_profile(user_id, email=email)
-    
-    # Move to subscription plans step
-    await update.message.reply_text(
-        SUBSCRIPTION_PLANS_MESSAGE,
-        reply_markup=get_subscription_plans_keyboard()
-    )
-    
-    return SHOW_PLANS
 
 async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel the registration process"""
