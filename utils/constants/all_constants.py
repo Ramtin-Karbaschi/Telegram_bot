@@ -51,7 +51,6 @@ RULES_MESSAGE = """
 
 # Main Menu Button Texts
 TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🎫 خرید اشتراک"
-MAIN_MENU_BUTTON_TEXT_GET_CHANNEL_LINK = "دریافت لینک کانال‌ها"
 
 # Profile Editing specific constants
 PROFILE_EDIT_MENU_PROMPT = "کدام بخش از اطلاعات خود را می‌خواهید ویرایش کنید؟"
@@ -98,10 +97,6 @@ CITY_REQUEST = """
 📍 لطفاً شهر محل سکونت خود را وارد کنید:
 """
 
-EMAIL_REQUEST = """
-📧 لطفاً آدرس ایمیل خود را وارد کنید (اختیاری، برای اطلاع‌رسانی‌های مهم):
-"""
-
 CALLBACK_PROFILE_EDIT_PHONE = "profile_edit_phone"
 CALLBACK_PROFILE_EDIT_CITY = "profile_edit_city"
 CALLBACK_PROFILE_EDIT_EMAIL = "profile_edit_email"
@@ -132,35 +127,6 @@ CRYPTO_PAYMENT_UNIQUE_AMOUNT_MESSAGE = """
 پس از واریز، روی دکمه «تراکنش را انجام دادم، بررسی شود» کلیک کنید.
 """
 
-RIAL_PAYMENT_INSTRUCTIONS = """
-💰 پرداخت ریالی
-
-مبلغ قابل پرداخت: {amount} تومان
-
-برای پرداخت روی لینک زیر کلیک کنید:
-{payment_url}
-
-پس از تکمیل پرداخت، به ربات بازگردید و روی دکمه "تأیید پرداخت" کلیک کنید.
-"""
-
-# This constant might still be used elsewhere or can be deprecated if CRYPTO_PAYMENT_UNIQUE_AMOUNT_MESSAGE covers all cases.
-CRYPTO_PAYMENT_INSTRUCTIONS = """
-💰 پرداخت با تتر (USDT)
-
-مبلغ قابل پرداخت: {amount} USDT
-
-لطفاً به آدرس کیف پول زیر انتقال دهید:
-{wallet_address}
-
-پس از انجام تراکنش، به ربات بازگردید و روی دکمه "تأیید پرداخت" کلیک کنید.
-"""
-
-PAYMENT_VERIFICATION_MESSAGE = """
-⏳ تأیید پرداخت
-
-لطفاً پس از تکمیل پرداخت، روی دکمه "تأیید پرداخت" کلیک کنید تا وضعیت پرداخت شما بررسی شود.
-"""
-
 PAYMENT_SUCCESS_MESSAGE = """
 ✅ پرداخت شما با موفقیت انجام شد!
 
@@ -172,8 +138,7 @@ PAYMENT_ERROR_MESSAGE = """
 """
 
 # More Specific Zarinpal Payment Messages (used in start_handler deep link flow)
-ZARINPAL_PAYMENT_REQUEST_FAILED_ADMIN_NOTIFICATION = "خطا در ایجاد درخواست پرداخت زرین‌پال برای کاربر {user_id}."
-ZARINPAL_GOTO_GATEWAY_MESSAGE_USER = "در حال اتصال به درگاه پرداخت زرین‌پال...\nلطفاً از لینک زیر برای پرداخت استفاده کنید:\n{payment_link}\n\nپس از پرداخت، به طور خودکار به ربات باز خواهید گشت."
+
 ZARINPAL_PAYMENT_NOT_FOUND_MESSAGE_USER = "اطلاعات پرداخت با این مشخصات یافت نشد. لطفاً با پشتیبانی تماس بگیرید."
 ZARINPAL_PAYMENT_ALREADY_VERIFIED_MESSAGE_USER = "این پرداخت قبلاً با موفقیت تأیید شده است و اشتراک شما فعال می‌باشد."
 ZARINPAL_PAYMENT_FAILED_MESSAGE_TRY_AGAIN_USER = "پرداخت شما ناموفق بود یا توسط شما لغو شد (وضعیت: {status}). لطفاً دوباره تلاش کنید یا روش پرداخت دیگری را انتخاب نمایید."
@@ -216,7 +181,6 @@ SUBSCRIPTION_STATUS_EXPIRED = """
 """
 
 # Admin panel callback patterns
-VIEW_USER_CALLBACK = "view_user_"
 
 # Zarinpal Status Codes (Numerical)
 ZARINPAL_REQUEST_SUCCESS_STATUS = 100  # Status code for a successful payment request (used by Zarinpal service)
@@ -238,24 +202,8 @@ CALLBACK_VIEW_SUBSCRIPTION_STATUS_FROM_REG = "view_sub_status_reg"
 SUPPORT_MENU, NEW_TICKET_SUBJECT, NEW_TICKET_MESSAGE, VIEW_TICKET = range(4) # For support ConversationHandler
 
 # Support ticket messages
-SUPPORT_WELCOME = """
-🧑‍💻 به بخش پشتیبانی آکادمی دارایی خوش آمدید.
-
-در این بخش می‌توانید تیکت‌های پشتیبانی خود را مشاهده و پیگیری کنید یا تیکت جدیدی ثبت نمایید.
-"""
-
 NEW_TICKET_SUBJECT_REQUEST = """
 📝 برای ثبت تیکت جدید، لطفاً موضوع تیکت خود را وارد کنید:
-"""
-
-NEW_TICKET_MESSAGE_REQUEST = """
-✅ موضوع تیکت ثبت شد. لطفاً مشکل یا سوال خود را با جزئیات توضیح دهید:
-"""
-
-TICKET_CREATED_SUCCESS = """
-✅ تیکت شما با شماره #{ticket_id} با موفقیت ثبت شد.
-
-پاسخ تیکت به زودی توسط کارشناسان بررسی خواهد شد. می‌توانید از طریق همین گفتگو، پیام‌های بعدی خود را ارسال کنید.
 """
 
 TICKET_CLOSED_MESSAGE = """
@@ -279,19 +227,49 @@ MEMBERSHIP_EXPIRED = """
 برای تمدید اشتراک، لطفاً به ربات @Daraei_Academy_bot مراجعه کنید و از گزینه "وضعیت اشتراک من" استفاده نمایید.
 """
 
-MEMBERSHIP_EXPIRING = """
-⚠️ کاربر گرامی،
+# Admin panel callback patterns
 
-اشتراک شما در آکادمی دارایی تا {days_left} روز دیگر معتبر است.
-برای جلوگیری از قطع دسترسی، لطفاً نسبت به تمدید اشتراک خود اقدام نمایید.
+# Zarinpal Status Codes (Numerical)
+ZARINPAL_REQUEST_SUCCESS_STATUS = 100  # Status code for a successful payment request (used by Zarinpal service)
+ZARINPAL_VERIFY_SUCCESS_STATUS = 100   # Status code for a successful payment verification
+ZARINPAL_ALREADY_VERIFIED_STATUS = 101 # Status code for an already verified payment
 
-برای تمدید، به ربات @Daraei_Academy_bot مراجعه کنید و از گزینه "وضعیت اشتراک من" استفاده نمایید.
+# Payment Callback Patterns
+VERIFY_ZARINPAL_PAYMENT_CALLBACK = "payment_verify_zarinpal"
+
+# General Callbacks and Texts
+CALLBACK_BACK_TO_MAIN_MENU = "main_menu_back"
+TEXT_GENERAL_BACK_TO_MAIN_MENU = "بازگشت به منو اصلی"
+TEXT_GENERAL_BACK = "بازگشت"  # General back button text
+TEXT_BACK_BUTTON = " بازگشت به منوی اصلی "
+
+CALLBACK_VIEW_SUBSCRIPTION_STATUS_FROM_REG = "view_sub_status_reg"
+
+# Support Conversation States
+SUPPORT_MENU, NEW_TICKET_SUBJECT, NEW_TICKET_MESSAGE, VIEW_TICKET = range(4) # For support ConversationHandler
+
+# Support ticket messages
+NEW_TICKET_SUBJECT_REQUEST = """
+📝 برای ثبت تیکت جدید، لطفاً موضوع تیکت خود را وارد کنید:
 """
 
-INVALID_MEMBERSHIP = """
+TICKET_CLOSED_MESSAGE = """
+🔴 تیکت بسته شد.
+
+در صورتی که مشکل شما حل نشده است، می‌توانید تیکت را مجدداً باز کنید.
+"""
+
+TICKET_REOPENED_MESSAGE = """
+🟢 تیکت مجدداً باز شد.
+
+می‌توانید به گفتگو ادامه دهید.
+"""
+
+# Manager bot messages
+MEMBERSHIP_EXPIRED = """
 ⚠️ کاربر گرامی،
 
-شما هیچ اشتراک فعالی در آکادمی دارایی ندارید. برای دسترسی به محتوای کانال، لطفاً نسبت به خرید اشتراک اقدام نمایید.
+متأسفانه اشتراک شما در آکادمی دارایی به پایان رسیده است و دسترسی شما به کانال غیرفعال شده است.
 
-برای عضویت، به ربات @Daraei_Academy_bot مراجعه کنید و از گزینه "عضویت" استفاده نمایید.
+برای تمدید اشتراک، لطفاً به ربات @Daraei_Academy_bot مراجعه کنید و از گزینه "وضعیت اشتراک من" استفاده نمایید.
 """
