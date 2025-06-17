@@ -6,7 +6,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 
 
-def get_main_reply_keyboard(user_id=None, is_admin=False, has_active_subscription=False, is_registered=False):
+def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
     """Get the main menu keyboard as a ReplyKeyboardMarkup for all options."""
     # Import constants inside the function to avoid circular imports if this file grows
     from utils import constants
@@ -32,18 +32,13 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, has_active_subscriptio
     return ReplyKeyboardMarkup(keyboard_buttons, resize_keyboard=True, one_time_keyboard=False)
 
 
-def get_main_menu_inline_keyboard():
-    """Get an inline keyboard for the main menu (for edit_text)."""
-    keyboard = [
-        [InlineKeyboardButton("🏠 منوی اصلی", callback_data="main_menu_inline")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+
 
 from utils import constants
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG) # Ensure this logger also picks up debugs if not configured globally
 
-def get_main_menu_keyboard(user_id=None, is_admin=False, has_active_subscription=False, is_registered=False):
+def get_main_menu_keyboard(user_id=None, is_admin=False, is_registered=False):
     """Get the main menu keyboard as an InlineKeyboardMarkup for all options, including buy subscription as callback."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     keyboard_buttons = []
@@ -69,11 +64,6 @@ def get_main_menu_keyboard(user_id=None, is_admin=False, has_active_subscription
 def get_back_button(text="↩ بازگشت"):
     """Get a single back button"""
     keyboard = [[KeyboardButton(text)]]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-def get_back_to_main_button():
-    """Get a button to return to main menu"""
-    keyboard = [[KeyboardButton("↩ بازگشت به منوی اصلی")]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_contact_button():
@@ -161,14 +151,6 @@ def get_back_to_plans_button():
 def get_back_to_payment_methods_button():
     """Get a button to go back to payment methods"""
     return InlineKeyboardButton("↩ بازگشت به روش‌های پرداخت", callback_data="back_to_payment_methods")
-
-def get_payment_verification_keyboard():
-    """Get keyboard for payment verification"""
-    keyboard = [
-        [InlineKeyboardButton("تأیید پرداخت", callback_data="payment_verify")],
-        [get_back_to_payment_methods_button()]
-    ]
-    return InlineKeyboardMarkup(keyboard)
 
 def get_support_menu_keyboard(tickets=None):
     """Get keyboard for support menu"""
@@ -260,24 +242,9 @@ def get_phone_edit_keyboard(back_callback=constants.CALLBACK_PROFILE_EDIT_BACK_T
     ])
     return reply_keyboard_markup, inline_keyboard_markup
 
-def get_cancel_keyboard(text="لغو ویرایش"):
-    """Get an inline keyboard with a cancel button for conversations."""
-    keyboard = [[InlineKeyboardButton(text, callback_data="cancel_edit_profile")]]
-    return InlineKeyboardMarkup(keyboard)
-
 def get_ticket_conversation_keyboard(ticket_id, is_open=True):
     """Get keyboard for ticket conversation view"""
     keyboard = []
-    
-    # Add close/reopen button based on status
-    if is_open:
-        keyboard.append([
-            InlineKeyboardButton("🔴 بستن تیکت", callback_data=f"close_ticket_{ticket_id}")
-        ])
-    else:
-        keyboard.append([
-            InlineKeyboardButton("🟢 بازگشایی تیکت", callback_data=f"reopen_ticket_{ticket_id}")
-        ])
     
     # Add back button
     keyboard.append([
