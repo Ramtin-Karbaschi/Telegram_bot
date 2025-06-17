@@ -8,8 +8,8 @@ from telegram.constants import ParseMode
 from database.queries import DatabaseQueries as Database
 from utils.keyboards import get_main_menu_keyboard, get_support_menu_keyboard, get_ticket_conversation_keyboard, get_back_button
 from utils.constants import (
-    SUPPORT_WELCOME_MESSAGE, NEW_TICKET_SUBJECT_REQUEST, NEW_TICKET_MESSAGE_REQUEST,
-    TICKET_CREATED_MESSAGE, TICKET_CLOSED_MESSAGE, TICKET_REOPENED_MESSAGE,
+    SUPPORT_WELCOME_MESSAGE, NEW_TICKET_SUBJECT_REQUEST,
+    TICKET_CLOSED_MESSAGE, TICKET_REOPENED_MESSAGE,
     SUPPORT_MENU, NEW_TICKET_SUBJECT, NEW_TICKET_MESSAGE, VIEW_TICKET # Added conversation states
 )
 import config
@@ -299,9 +299,9 @@ async def send_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Add message to ticket, for user messages, is_admin_message is False (default)
     success = Database.add_ticket_message(
         ticket_id=ticket_id,
-        sender_user_id=user_id,
-        message_text=message_text,
-        is_admin_message=False 
+        user_id=user_id,
+        message=message_text,
+        is_admin_message=False
     )
 
     if success:
@@ -317,87 +317,7 @@ async def send_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Stay in the same state or return to ticket view
         return VIEW_TICKET
 
-async def close_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Close an open ticket"""
-    query = update.callback_query
-    await query.answer()
-    
-    # Get ticket ID from callback data
-    ticket_id = query.data.replace("close_ticket_", "")
-    
-    # Get ticket from database
-    ticket = Database.get_ticket(ticket_id)
-    
-    if not ticket:
-        # Ticket not found
-        await query.message.edit_text(
-            "تیکت مورد نظر یافت نشد.",
-            reply_markup=get_main_menu_keyboard()
-        )
-        return ConversationHandler.END
-    
-    # Check if ticket is already closed
-    if ticket['status'] != 'open':
-        await query.message.edit_text(
-            "این تیکت قبلاً بسته شده است.",
-            reply_markup=get_main_menu_keyboard()
-        )
-        return ConversationHandler.END
-    
-    # Close the ticket
-    Database.update_ticket_status(ticket_id, 'closed')
-    
-    # Add system message
-    Database.add_ticket_message(
-        ticket_id=ticket_id,
-        user_id=query.from_user.id,
-        message=TICKET_CLOSED_MESSAGE,
-        is_user=False
-    )
-    
-    # View updated ticket
-    return await view_ticket(update, context, ticket_id)
 
-async def reopen_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Reopen a closed ticket"""
-    query = update.callback_query
-    await query.answer()
-    
-    # Get ticket ID from callback data
-    ticket_id = query.data.replace("reopen_ticket_", "")
-    
-    # Get ticket from database
-    ticket = Database.get_ticket(ticket_id)
-    
-    if not ticket:
-        # Ticket not found
-        await query.message.edit_text(
-            "تیکت مورد نظر یافت نشد.",
-            reply_markup=get_main_menu_keyboard()
-        )
-        return ConversationHandler.END
-    
-    # Check if ticket is already open
-    if ticket['status'] == 'open':
-        await query.message.edit_text(
-            "این تیکت قبلاً باز است.",
-            reply_markup=get_main_menu_keyboard()
-        )
-        return ConversationHandler.END
-    
-    # Reopen the ticket
-    Database.update_ticket_status(ticket_id, 'open')
-    
-    # Add system message
-    Database.add_ticket_message(
-        ticket_id=ticket_id,
-        user_id=query.from_user.id,
-        message=TICKET_REOPENED_MESSAGE,
-        is_user=False
-    )
-    
-    # View updated ticket
-    return await view_ticket(update, context, ticket_id)
 
 async def back_to_tickets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Go back to tickets list"""
@@ -482,15 +402,7 @@ async def view_ticket_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.debug(f"view_ticket_handler returning state: {result_state}")
     return result_state
 
-async def close_ticket_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for close ticket callbacks"""
-    # This is a wrapper around close_ticket for use with CallbackQueryHandler
-    return await close_ticket(update, context)
 
-async def reopen_ticket_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for reopen ticket callbacks"""
-    # This is a wrapper around reopen_ticket for use with CallbackQueryHandler
-    return await reopen_ticket(update, context)
 
 # Define the conversation handler for ticket system
 ticket_conversation = ConversationHandler(
@@ -514,8 +426,7 @@ ticket_conversation = ConversationHandler(
         ],
         VIEW_TICKET: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, send_ticket_message),
-            CallbackQueryHandler(close_ticket_handler, pattern="^close_ticket_"),
-            CallbackQueryHandler(reopen_ticket_handler, pattern="^reopen_ticket_"),
+
             CallbackQueryHandler(back_to_tickets, pattern="^back_to_tickets$") # Go back to ticket list (support menu)
         ]
     },
