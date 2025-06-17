@@ -588,7 +588,7 @@ class DatabaseQueries:
     def get_ticket_details(ticket_id):
         """Fetch details for a specific ticket, including its messages."""
         db = Database()
-        ticket_data = {}
+        ticket_data = None
         if db.connect():
             try:
                 # Fetch ticket main info
@@ -600,40 +600,38 @@ class DatabaseQueries:
                     WHERE t.id = ?;
                 """, (ticket_id,))
                 main_info_row = db.fetchone()
-                if not main_info_row:
-                    db.close()
-                    return None # Ticket not found
                 
-                column_names = [desc[0] for desc in db.cursor.description]
-                ticket_data = dict(zip(column_names, main_info_row))
+                if main_info_row:
+                    ticket_data = {}
+                    column_names = [desc[0] for desc in db.cursor.description]
+                    ticket_data = dict(zip(column_names, main_info_row))
 
-                # Fetch ticket messages
-                db.execute("""
-                    SELECT tm.id as message_id, tm.user_id, tm.message, tm.timestamp, tm.is_admin
-                    FROM ticket_messages tm
-                    WHERE tm.ticket_id = ?
-                    ORDER BY tm.timestamp ASC;
-                """, (ticket_id,))
-                
-                messages_rows = db.fetchall()
-                messages = []
-                if messages_rows:
-                    msg_column_names = [desc[0] for desc in db.cursor.description]
-                    for msg_row in messages_rows:
-                        messages.append(dict(zip(msg_column_names, msg_row)))
-                ticket_data['messages'] = messages
+                    # Fetch ticket messages
+                    db.execute("""
+                        SELECT tm.id as message_id, tm.user_id, tm.message, tm.timestamp, tm.is_admin
+                        FROM ticket_messages tm
+                        WHERE tm.ticket_id = ?
+                        ORDER BY tm.timestamp ASC;
+                    """, (ticket_id,))
+                    
+                    messages_rows = db.fetchall()
+                    messages = []
+                    if messages_rows:
+                        msg_column_names = [desc[0] for desc in db.cursor.description]
+                        for msg_row in messages_rows:
+                            messages.append(dict(zip(msg_column_names, msg_row)))
+                    ticket_data['messages'] = messages
 
             except sqlite3.Error as e:
                 print(f"SQLite error in get_ticket_details for ticket_id {ticket_id}: {e}")
-                # Log error
-                return None # Indicate failure
+                ticket_data = None # Indicate failure
             finally:
                 db.close()
         return ticket_data
 
     @staticmethod
-    def add_ticket_message(ticket_id, sender_user_id, message_text, is_admin_message=False):
-        """Adds a message to a ticket and updates ticket's status and updated_at."""
+    def add_ticket_message(ticket_id, user_id, message, is_admin_message=False, update_status=True):
+        """Adds a message to a ticket and optionally updates ticket's status and updated_at."""
         db = Database()
         success = False
         if db.connect():
@@ -642,24 +640,21 @@ class DatabaseQueries:
                 db.execute("""
                     INSERT INTO ticket_messages (ticket_id, user_id, message, timestamp, is_admin)
                     VALUES (?, ?, ?, ?, ?);
-                """, (ticket_id, sender_user_id, message_text, now, 1 if is_admin_message else 0))
+                """, (ticket_id, user_id, message, now, 1 if is_admin_message else 0))
                 
-                # Update ticket's last update time and status
-                new_status = 'pending_user_reply' if is_admin_message else 'pending_admin_reply'
-                # In schema, tickets table does not have updated_at, let's assume it should for good practice
-                # If tickets table has 'updated_at':
-                # db.execute("UPDATE tickets SET status = ?, updated_at = ? WHERE id = ?;", 
-                #            (new_status, now, ticket_id))
-                # If not, just update status:
-                db.execute("UPDATE tickets SET status = ? WHERE id = ?;", (new_status, ticket_id))
+                if update_status:
+                    new_status = 'pending_user_reply' if is_admin_message else 'pending_admin_reply'
+                    db.execute("UPDATE tickets SET status = ? WHERE id = ?;", (new_status, ticket_id))
 
                 db.commit()
                 success = True
             except sqlite3.Error as e:
                 print(f"SQLite error in add_ticket_message for ticket_id {ticket_id}: {e}")
-                db.rollback() # Rollback on error
+                if db.conn:
+                    db.conn.rollback()  # Use the connection object for rollback
             finally:
                 db.close()
+        return success
         return success
 
     @staticmethod
@@ -677,7 +672,8 @@ class DatabaseQueries:
                 success = True
             except sqlite3.Error as e:
                 print(f"SQLite error in update_ticket_status for ticket_id {ticket_id}: {e}")
-                db.rollback()
+                if db.conn:
+                    db.conn.rollback()
             finally:
                 db.close()
         return success
@@ -701,43 +697,6 @@ class DatabaseQueries:
             db.close()
             return result
         return []
-    
-    @staticmethod
-    def get_expiring_subscriptions(days=3):
-        """Get subscriptions expiring in the next X days"""
-        db = Database()
-        if db.connect():
-            now = datetime.now()
-            future = (now + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-            now = now.strftime("%Y-%m-%d %H:%M:%S")
-            
-            db.execute(
-                """SELECT u.user_id, u.full_name, u.username, u.phone, s.start_date, s.end_date, p.name as plan_name
-                FROM subscriptions s
-                JOIN users u ON s.user_id = u.user_id
-                JOIN plans p ON s.plan_id = p.id
-                WHERE s.status = 'active' AND s.end_date > ? AND s.end_date < ?
-                ORDER BY s.end_date ASC""",
-                (now, future)
-            )
-            result = db.fetchall()
-            db.close()
-            return result
-        return []
-    
-    @staticmethod
-    def update_subscription_status(subscription_id, status):
-        """Update subscription status"""
-        db = Database()
-        if db.connect():
-            db.execute(
-                "UPDATE subscriptions SET status = ? WHERE id = ?",
-                (status, subscription_id)
-            )
-            db.commit()
-            db.close()
-            return True
-        return False
     
     # Payment-related queries
     @staticmethod
@@ -803,16 +762,7 @@ class DatabaseQueries:
         return False
     
     # Plan-related queries
-    @staticmethod
-    def get_all_plans():
-        """Get all subscription plans"""
-        db = Database()
-        if db.connect():
-            db.execute("SELECT * FROM plans ORDER BY price ASC")
-            result = db.fetchall()
-            db.close()
-            return result
-        return []
+
     
     @staticmethod
     def get_plan(plan_id):
@@ -904,30 +854,7 @@ class DatabaseQueries:
             return result
         return []
     
-    @staticmethod
-    def add_ticket_message(ticket_id, user_id, message, is_admin=False):
-        """Add a message to a ticket"""
-        db = Database()
-        if db.connect():
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            db.execute(
-                """INSERT INTO ticket_messages 
-                (ticket_id, user_id, message, timestamp, is_admin) 
-                VALUES (?, ?, ?, ?, ?)""",
-                (ticket_id, user_id, message, now, 1 if is_admin else 0)
-            )
-            
-            # Update ticket status if it was closed and user responds
-            if not is_admin:
-                db.execute(
-                    "UPDATE tickets SET status = 'open' WHERE id = ? AND status = 'closed'",
-                    (ticket_id,)
-                )
-            
-            db.commit()
-            db.close()
-            return True
-        return False
+
     
     @staticmethod
     def update_ticket_status(ticket_id, status):
@@ -960,26 +887,7 @@ class DatabaseQueries:
             return result
         return []
         
-    @staticmethod
-    def get_pending_admin_tickets():
-        """Get all tickets pending admin response"""
-        db = Database()
-        if db.connect():
-            # Get tickets where the last message is from a user (not admin)
-            db.execute(
-                """SELECT t.*, u.full_name, u.username, u.phone
-                FROM tickets t
-                JOIN users u ON t.user_id = u.user_id
-                WHERE t.status = 'open' AND
-                    (SELECT is_admin FROM ticket_messages 
-                     WHERE ticket_id = t.id 
-                     ORDER BY timestamp DESC LIMIT 1) = 0
-                ORDER BY t.created_at ASC"""
-            )
-            result = db.fetchall()
-            db.close()
-            return result
-        return []
+
 
     @staticmethod
     def get_users_with_non_active_subscription_records():
@@ -1016,32 +924,9 @@ class DatabaseQueries:
                 db.close()
         return users
     
-    @staticmethod
-    def get_pending_tickets(self):
-        try:
-            query = """
-            SELECT ticket_id, user_id, subject, message, created_at, status 
-            FROM tickets 
-            WHERE status = 'open' OR status = 'pending'
-            ORDER BY created_at DESC
-            """
-            result = self.execute_query(query)
-            return result if result else []
-        except Exception as e:
-            return []
 
-    @staticmethod    
-    def get_ticket_by_id(self, ticket_id):
-        try:
-            query = """
-            SELECT ticket_id, user_id, subject, message, created_at, status 
-            FROM tickets 
-            WHERE ticket_id = ?
-            """
-            result = self.execute_query(query, (ticket_id,))
-            return result[0] if result else None
-        except Exception as e:
-            return None
+
+
         
     @staticmethod
     def close_ticket(self, ticket_id, admin_id):
@@ -1055,18 +940,7 @@ class DatabaseQueries:
         except Exception as e:
             return False
 
-    @staticmethod
-    def get_user_by_id(self, user_id):
-        try:
-            query = """
-            SELECT user_id, telegram_id, phone, first_name, last_name, username, registration_date
-            FROM users 
-            WHERE user_id = ?
-            """
-            result = self.execute_query(query, (user_id,))
-            return result[0] if result else None
-        except Exception as e:
-            return None
+
 
     @staticmethod
     def get_user_by_telegram_id(telegram_id):
@@ -1078,21 +952,3 @@ class DatabaseQueries:
             db.close()
             return result
         return None
-
-    @staticmethod
-    def get_user_subscriptions(user_id):
-        """Get all subscriptions for a user"""
-        db = Database()
-        if db.connect():
-            db.execute(
-                """SELECT s.*, p.name as plan_name 
-                   FROM subscriptions s 
-                   LEFT JOIN plans p ON s.plan_id = p.id 
-                   WHERE s.user_id = ? 
-                   ORDER BY s.created_at DESC""",
-                (user_id,)
-            )
-            result = db.fetchall()
-            db.close()
-            return result
-        return []
