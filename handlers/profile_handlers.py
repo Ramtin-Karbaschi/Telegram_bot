@@ -266,16 +266,6 @@ async def handle_phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
                                              error_message="شماره تلفن وارد شده معتبر نیست. لطفاً شماره صحیح را وارد کنید یا با دکمه اشتراک بگذارید.",
                                              success_field_name_override="شماره تلفن")
 
-async def back_to_profile_edit_menu_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
-    await update.message.reply_text("بازگشت به منوی ویرایش...", reply_markup=ReplyKeyboardRemove())
-    await update.message.reply_text(
-        constants.PROFILE_EDIT_MENU_PROMPT,
-        reply_markup=keyboards.get_profile_edit_menu_keyboard()
-    )
-    context.user_data.pop('editing_field_key', None)
-    context.user_data.pop('editing_field_readable_name', None)
-    return constants.SELECT_FIELD_TO_EDIT
-
 async def cancel_current_field_edit_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     query = update.callback_query
     await query.answer()
@@ -312,17 +302,6 @@ async def end_profile_edit_globally(update: Update, context: ContextTypes.DEFAUL
         reply_markup=reply_markup_to_send
     )
     context.user_data.clear()
-    return ConversationHandler.END
-
-async def back_to_main_menu_from_edit_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    logger.debug(f"PROFILE_HANDLER: Entering FALLBACK back_to_main_menu_from_edit_profile. User: {update.effective_user.id}. Callback data: {update.callback_query.data if update.callback_query else 'No callback query'}")
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(
-        text=constants.MAIN_MENU_PROMPT.format(first_name=update.effective_user.first_name),
-        reply_markup=keyboards.get_main_menu_keyboard()
-    )
-    context.user_data.clear() # Clear any pending edit data
     return ConversationHandler.END
 
 async def catch_all_select_field_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
