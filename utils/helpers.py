@@ -6,7 +6,7 @@ import datetime
 import random
 import string
 import pytz
-from telegram import Bot, Update
+from telegram import Update
 from telegram.ext import ContextTypes
 from functools import wraps
 import config
@@ -17,70 +17,12 @@ def get_current_time():
     tehran_tz = pytz.timezone(config.TEHRAN_TIMEZONE)
     return datetime.datetime.now(tehran_tz)
 
-def format_datetime(dt_str, format_str="%Y-%m-%d %H:%M:%S"):
-    """Format a datetime string for display"""
-    dt = datetime.datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
-    # Convert to Persian date if needed (requires jdatetime library)
-    # Here we just return a formatted date
-    return dt.strftime("%Y/%m/%d %H:%M")
-
 def calculate_days_left(end_date_str):
     """Calculate days left until subscription expires"""
     end_date = datetime.datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S")
     now = datetime.datetime.now()
     delta = end_date - now
     return max(0, delta.days)
-
-def generate_random_string(length=10):
-    """Generate a random string for unique identifiers"""
-    chars = string.ascii_letters + string.digits
-    return ''.join(random.choice(chars) for _ in range(length))
-
-async def generate_channel_link(bot, user_id):
-    """Generate a unique channel invitation link for a user"""
-    try:
-        # Create a unique invitation link
-        invite_link = await bot.create_chat_invite_link(
-            chat_id=config.CHANNEL_ID,
-            member_limit=1,  # One-time use
-            expire_date=int((datetime.datetime.now() + datetime.timedelta(hours=24)).timestamp())
-        )
-        
-        # Lazy import to avoid circular dependency
-        from database.queries import DatabaseQueries as Database
-        
-        # Store the link in database
-        if invite_link and invite_link.invite_link:
-            Database.create_invite_link(user_id, invite_link.invite_link)
-            return invite_link.invite_link
-            
-    except Exception as e:
-        print(f"Error generating channel link: {e}")
-        
-    return None
-
-async def send_expiration_reminder(bot, user_id, days_left):
-    """Send a reminder about subscription expiration"""
-    try:
-        from utils.constants import MEMBERSHIP_EXPIRING
-        
-        message = MEMBERSHIP_EXPIRING.format(days_left=days_left)
-        
-        await bot.send_message(
-            chat_id=user_id,
-            text=message
-        )
-        
-        # Lazy import to avoid circular dependency
-        from database.queries import DatabaseQueries as Database
-        
-        # Record notification in database
-        Database.add_notification(user_id, f"expiration_{days_left}")
-        
-        return True
-    except Exception as e:
-        print(f"Error sending expiration reminder: {e}")
-        return False
 
 async def send_expired_notification(bot, user_id):
     """Send notification about expired subscription"""
@@ -191,24 +133,3 @@ def generate_qr_code(data: str) -> io.BytesIO:
     img.save(img_byte_arr, format='PNG')
     img_byte_arr.seek(0)  # Rewind the buffer to the beginning
     return img_byte_arr
-
-
-async def send_invalid_membership_notification(bot, user_id):
-    """Send notification about invalid membership"""
-    try:
-        from utils.constants import INVALID_MEMBERSHIP
-        
-        await bot.send_message(
-            chat_id=user_id,
-            text=INVALID_MEMBERSHIP
-        )
-        
-        from database.queries import DatabaseQueries as Database
-        
-        # Record notification in database
-        Database.add_notification(user_id, "invalid")
-        
-        return True
-    except Exception as e:
-        print(f"Error sending invalid membership notification: {e}")
-        return False
