@@ -33,6 +33,7 @@ class AdminTicketHandler:
             message_text = "📋 *لیست تیکت‌های باز:*\n\n"
             
             for ticket in tickets[:10]:  # Show max 10 tickets at once
+                ticket = dict(ticket)  # تبدیل Row به دیکشنری
                 ticket_id = ticket.get('ticket_id') or ticket.get('id')
                 user_id_ticket = ticket.get('user_id')
                 subject = ticket.get('subject', 'بدون موضوع')
@@ -224,6 +225,7 @@ class AdminTicketHandler:
             message_text = "📋 *لیست تیکت‌های باز:*\n\n"
             
             for ticket in tickets[:10]:  # Show max 10 tickets at once
+                ticket = dict(ticket)  # تبدیل Row به دیکشنری
                 ticket_id = ticket.get('ticket_id') or ticket.get('id')
                 user_id_ticket = ticket.get('user_id')
                 subject = ticket.get('subject', 'بدون موضوع')
@@ -260,6 +262,10 @@ class AdminTicketHandler:
             )
             
         except Exception as e:
+            import telegram
+            if isinstance(e, telegram.error.BadRequest) and "Message is not modified" in str(e):
+                logger.warning(f"Suppressed Telegram BadRequest: {e}")
+                return
             logger.error(f"Error showing tickets inline: {e}")
             await query.edit_message_text("❌ خطا در نمایش تیکت‌ها.")
     
