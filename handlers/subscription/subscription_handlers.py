@@ -281,8 +281,11 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
             ])
         pass  # Admins without an explicit subscription still retain unlimited access
         keyboard_buttons.append([
-            InlineKeyboardButton("اصلاح و تکمیل اطلاعات", callback_data=CALLBACK_START_PROFILE_EDIT)
-        ])
+             InlineKeyboardButton("اصلاح و تکمیل اطلاعات", callback_data=CALLBACK_START_PROFILE_EDIT)
+         ])
+
+        # Build the final message for admin users
+        final_message = f"اطلاعات حساب کاربری شما:\n\n{profile_message}\n\nوضعیت اشتراک:\n{subscription_status_text}"
 
     else:
         # Logic for regular users

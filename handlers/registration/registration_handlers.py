@@ -43,13 +43,23 @@ GET_CITY = 6
 # SHOW_PLANS = 8 # This state is no longer directly part of registration flow
 
 async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start the registration process"""
+    """Start the registration process. Supports both /register command and inline button callback."""
+
+    # Determine whether this was triggered via a callback query or a normal command/message.
+    is_callback = bool(update.callback_query)
+    if is_callback:
+        # Answer the callback to remove the "loading" state on the client.
+        await update.callback_query.answer()
+        effective_message = update.callback_query.message
+    else:
+        effective_message = update.message
+
     user = update.effective_user
     user_id = user.id
     
     # Check if user is already registered (with complete profile)
     if Database.is_registered(user_id):
-        await update.message.reply_text(
+        await effective_message.reply_text(
             "شما قبلاً ثبت‌نام کرده‌اید! می‌توانید از منوی اصلی برای مدیریت اشتراک خود استفاده کنید.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(TEXT_GENERAL_BACK_TO_MAIN_MENU, callback_data=CALLBACK_BACK_TO_MAIN_MENU)]
@@ -58,13 +68,13 @@ async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
     
     # Start registration process
-    await update.message.reply_text(
+    await effective_message.reply_text(
         REGISTRATION_WELCOME,
         reply_markup=get_back_button()
     )
     
     # Move to phone number step
-    await update.message.reply_text(
+    await effective_message.reply_text(
         PHONE_REQUEST,
         reply_markup=get_contact_button()
     )
@@ -275,6 +285,7 @@ registration_conversation = ConversationHandler(
     entry_points=[
         CommandHandler("register", start_registration),
         MessageHandler(filters.Regex("^📝 ثبت نام$"), start_registration),
+        CallbackQueryHandler(start_registration, pattern="^start_registration_flow$")
     ],
     states={
         GET_PHONE: [

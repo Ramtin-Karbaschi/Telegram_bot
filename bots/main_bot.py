@@ -264,6 +264,14 @@ class MainBot:
         persistence = PicklePersistence(filepath="database/data/bot_persistence.pkl")
         
         self.application = Application.builder().token(config.MAIN_BOT_TOKEN).persistence(persistence).build()
+        # Explicitly set allowed_updates to ensure the bot subscribes to the desired update types and to
+        # avoid AttributeError inside the telegram.ext internals (some components expect this attribute).
+        self.application.allowed_updates = [
+            "message",
+            "callback_query",
+            "chat_member",
+            "my_chat_member"
+        ]
         
         # Initialize database
         self.db = DBConnection(config.DATABASE_NAME)
@@ -312,11 +320,13 @@ class MainBot:
         # Support conversation handler
         self.application.add_handler(ticket_conversation)
         
+        # Registration conversation handler (handles /register command, related messages, and inline callbacks)
+        self.application.add_handler(registration_conversation)
+
         # Command handlers
         self.application.add_handler(CommandHandler("start", start_handler))
         self.application.add_handler(CommandHandler("help", help_handler))
         self.application.add_handler(CommandHandler("rules", rules_handler))
-        self.application.add_handler(CommandHandler("register", registration_message_handler))
         self.application.add_handler(CommandHandler("status", view_active_subscription))
         self.application.add_handler(CommandHandler("support", support_message_handler))
         
@@ -428,6 +438,12 @@ class MainBot:
         await self.application.bot.set_my_commands(commands)
         self.logger.info("Bot commands have been set.")
         await self.application.start()
+        # Explicitly start polling via the Updater to ensure the bot receives updates.
+        if self.application.updater:
+            await self.application.updater.start_polling(allowed_updates=self.application.allowed_updates)
+            self.logger.info("Main bot polling started")
+        else:
+            self.logger.warning("Updater is not initialized for the main bot; no polling will occur.")
         self.logger.info("Main bot started")
     
     async def stop(self):
