@@ -27,6 +27,7 @@ from utils.constants import (
     SUBSCRIPTION_PLANS_MESSAGE,
     CITY_REQUEST,
 )
+from utils.helpers import is_valid_full_name
 import config
 
 logger = logging.getLogger(__name__)
@@ -140,6 +141,18 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return GET_FULLNAME
 
 async def get_fullname(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    full_name = update.message.text
+    if not is_valid_full_name(full_name):
+        await update.message.reply_text(
+            "نام و نام خانوادگی وارد شده معتبر نیست.\n"
+            "- لطفاً فقط از حروف فارسی و فاصله استفاده کنید.\n"
+            "- نام باید حداقل ۳ کاراکتر داشته باشد.\n"
+            "- استفاده از اعداد و کاراکترهای خاص (مانند نقطه، ویرگول و ...) مجاز نیست.\n\n"
+            "لطفاً نام کامل خود را دوباره وارد کنید:"
+        )
+        return GET_FULLNAME
+
+    context.user_data['full_name'] = full_name
     """Get user's full name and complete initial registration."""
     user = update.effective_user
     user_id = user.id
@@ -164,7 +177,7 @@ async def get_fullname(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Notify user of successful initial registration
     await update.message.reply_text(
-        "ثبت نام اولیه شما با موفقیت انجام شد. برای تکمیل اطلاعات خود و استفاده از امکانات ربات، لطفاً از منوی «وضعیت اشتراک من» اقدام کنید.",
+        "✅ ثبت نام اولیه شما با موفقیت انجام شد. \n برای تکمیل اطلاعات خود و استفاده از امکانات ربات، لطفاً از منوی «پروفایل کاربری» اقدام کنید.",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton(TEXT_GENERAL_BACK_TO_MAIN_MENU, callback_data=CALLBACK_BACK_TO_MAIN_MENU)]
         ])
@@ -224,7 +237,7 @@ async def get_education(update: Update, context: ContextTypes.DEFAULT_TYPE):
     education = update.message.text.strip()
     
     # Basic validation
-    valid_educations = ["دیپلم", "کاردانی", "کارشناسی", "کارشناسی ارشد", "دکتری", "سایر"]
+    valid_educations = ["دیپلم", "کاردانی", "کارشناسی", "کارشناسی ارشد", "دکتری", "زیر دیپلم"]
     if education not in valid_educations:
         await update.message.reply_text(
             "لطفاً یکی از گزینه‌های موجود را انتخاب کنید."
@@ -254,10 +267,10 @@ async def get_occupation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     occupation = update.message.text.strip()
     
     # Basic validation
-    valid_occupations = ["بازار سرمایه", "فارکس", "کریپتو", "سایر"]
+    valid_occupations = ["ارز، طلا، سکه", "فارکس", "کریپتو", "بورس"]
     if occupation not in valid_occupations:
         await update.message.reply_text(
-            "لطفاً یکی از گزینه‌های موجود را انتخاب کنید."
+            "لطفاً حیطه‌های فعالیت خود را از گزینه‌های زیر انتخاب کنید:\n\n"
         )
         return GET_OCCUPATION
     
