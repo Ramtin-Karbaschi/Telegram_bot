@@ -7,6 +7,7 @@ import jdatetime
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ParseMode # Added for message formatting
+from datetime import datetime, timedelta
 from telegram.ext import ContextTypes, ConversationHandler
 import config # Added for TELEGRAM_CHANNELS_INFO
 from database.queries import DatabaseQueries as Database
@@ -18,6 +19,7 @@ from utils.constants import (
 )
 from utils.helpers import calculate_days_left, is_admin
 import logging
+import json
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -33,15 +35,32 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Failed to delete message {message_id} from chat {chat_id}: {e}")
 
-async def send_channel_links_and_confirmation(telegram_id: int, context: ContextTypes.DEFAULT_TYPE):
+async def send_channel_links_and_confirmation(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_name: str):
     """Sends a confirmation message with channel links and schedules it for deletion."""
-    message_text = "🎉 اشتراک شما فعال است!\n\nمی‌توانید از طریق لینک‌های زیر به کانال‌ها دسترسی داشته باشید:"
+    message_text = f"✅ اشتراک پلن '{plan_name}' برای شما با موفقیت فعال شد.\n\n🎉 اکنون می‌توانید از طریق لینک‌های زیر به کانال‌ها و گروه‌های ویژه دسترسی داشته باشید:"
     
     keyboard = []
     if hasattr(config, 'TELEGRAM_CHANNELS_INFO') and config.TELEGRAM_CHANNELS_INFO:
-        for channel in config.TELEGRAM_CHANNELS_INFO:
+        # config.TELEGRAM_CHANNELS_INFO may already be a list (parsed in config.py) or a raw JSON string
+        try:
+            if isinstance(config.TELEGRAM_CHANNELS_INFO, str):
+                channels_info = json.loads(config.TELEGRAM_CHANNELS_INFO)
+            else:
+                channels_info = config.TELEGRAM_CHANNELS_INFO
+        except json.JSONDecodeError as e:
+            logger.error(f"Could not parse TELEGRAM_CHANNELS_INFO JSON: {e}")
+            channels_info = []
+
+        first_row = []
+        for channel in channels_info:
             if isinstance(channel, dict) and 'title' in channel and 'link' in channel:
-                keyboard.append([InlineKeyboardButton(channel['title'], url=channel['link'])])
+                first_row.append(InlineKeyboardButton(channel['title'], url=channel['link']))
+        
+        # Only add rows if there are actual buttons to add
+        if first_row:
+            keyboard.append(first_row)
+            # Add the back to main menu button in a new row, only if there are channels
+            keyboard.append([InlineKeyboardButton("بازگشت به پروفایل کاربری", callback_data="back_to_main_menu")])
     
     if not keyboard:
         logger.warning(f"TELEGRAM_CHANNELS_INFO is not configured correctly for user {telegram_id}.")
@@ -75,71 +94,88 @@ async def send_channel_links_and_confirmation(telegram_id: int, context: Context
 
 async def activate_or_extend_subscription(
     user_id: int,
-    telegram_id: int, # telegram_id might be the same as user_id from DB users table
+    telegram_id: int,
     plan_id: int,
     plan_name: str,
     payment_amount: float,
     payment_method: str,
-    transaction_id: str, # Blockchain TXID or Bank Transaction ID
+    transaction_id: str,
     context: ContextTypes.DEFAULT_TYPE,
-    payment_table_id: int # This is the ID from either 'payments' or 'crypto_payments' table
+    payment_table_id: int
 ) -> tuple[bool, str]:
-    """Activates a new subscription or extends an existing one for the user."""
-    logger.info(f"Attempting to activate/extend subscription for user_id: {user_id}, plan_id: {plan_id}, payment_method: {payment_method}, payment_table_id: {payment_table_id}")
+    """Activates a new subscription or extends an existing one, and updates user summary."""
+    logger.info(f"Attempting to activate/extend subscription for user_id: {user_id}, plan_id: {plan_id}")
 
     try:
         plan_details = Database.get_plan_by_id(plan_id)
-        logger.info(f"Retrieved plan details: {plan_details}")
-        
-        # Convert sqlite3.Row to dict for safe .get access
-        if plan_details and not isinstance(plan_details, dict):
-            try:
-                plan_details = dict(plan_details)
-            except Exception:
-                # Fallback: create dict manually from row keys
-                plan_details = {key: plan_details[idx] for idx, key in enumerate(plan_details.keys())}
-
         if not plan_details:
             logger.error(f"Plan with ID {plan_id} not found for user_id: {user_id}.")
             return False, "اطلاعات طرح اشتراک یافت نشد."
 
-        plan_duration_days = plan_details.get('days') if isinstance(plan_details, dict) else None
-        logger.info(f"Plan duration days: {plan_duration_days}")
-        
+        plan_duration_days = dict(plan_details).get('days')
         if plan_duration_days is None:
-            logger.error(f"Plan duration (days) not found for plan_id: {plan_id}, user_id: {user_id}.")
+            logger.error(f"Plan duration not found for plan_id: {plan_id}, user_id: {user_id}.")
             return False, "مدت زمان طرح اشتراک مشخص نشده است."
 
-        # Log the parameters being passed to add_subscription
-        logger.info(f"Calling Database.add_subscription with params: user_id={user_id}, plan_id={plan_id}, payment_id={payment_table_id}, plan_duration_days={plan_duration_days}, amount_paid={payment_amount}, payment_method={payment_method}")
-        
-        # The payment_id argument in add_subscription refers to the ID in the 'payments' or 'crypto_payments' table.
+        # Add the subscription to the 'subscriptions' table first
         subscription_id = Database.add_subscription(
             user_id=user_id,
             plan_id=plan_id,
-            payment_id=payment_table_id, # Crucial: This is the ID from the respective payment table
+            payment_id=payment_table_id,
             plan_duration_days=plan_duration_days,
             amount_paid=payment_amount,
             payment_method=payment_method,
-            # status is 'active' by default in add_subscription
         )
+
+        if not subscription_id:
+            logger.error(f"Failed to add subscription to DB for user_id: {user_id}, plan_id: {plan_id}.")
+            return False, "خطا در ثبت اولیه اشتراک در پایگاه داده."
+
+        # --- New Logic: Update user's subscription summary ---
+        logger.info(f"Updating user subscription summary for user_id: {user_id}")
         
-        logger.info(f"Database.add_subscription returned: {subscription_id}")
+        # 1. Get current summary
+        user_summary = Database.get_user_subscription_summary(user_id)
+        current_total_days = user_summary['total_subscription_days'] if user_summary and user_summary['total_subscription_days'] is not None else 0
+        current_expiration_str = user_summary['subscription_expiration_date'] if user_summary else None
 
-        if subscription_id:
-            logger.info(f"Successfully activated/extended subscription_id: {subscription_id} for user_id: {user_id} with plan '{plan_name}'. Payment ID: {payment_table_id} ({payment_method}).")
-            
-            # Send confirmation and channel links
-            await send_channel_links_and_confirmation(telegram_id=telegram_id, context=context)
+        # 2. Calculate new total days
+        new_total_days = current_total_days + plan_duration_days
 
-            # Verify the subscription was actually created
-            verification_subscription = Database.get_user_active_subscription(user_id)
-            logger.info(f"Verification - active subscription after creation: {verification_subscription}")
-            
-            return True, f"اشتراک شما برای طرح '{plan_name}' با موفقیت فعال/تمدید شد."
-        else:
-            logger.error(f"Failed to add/extend subscription in DB for user_id: {user_id}, plan_id: {plan_id}, payment_table_id: {payment_table_id}.")
-            return False, "خطا در فعال‌سازی یا تمدید اشتراک در پایگاه داده."
+        # 3. Calculate new expiration date
+        now = datetime.now()
+        start_date = now
+        
+        if current_expiration_str:
+            try:
+                current_expiration_date = datetime.fromisoformat(current_expiration_str)
+                # If the current subscription is still active, extend it. Otherwise, start from now.
+                if current_expiration_date > now:
+                    start_date = current_expiration_date
+            except (ValueError, TypeError):
+                logger.warning(f"Could not parse current_expiration_date '{current_expiration_str}' for user {user_id}. Starting new subscription from now.")
+
+        new_expiration_date = start_date + timedelta(days=plan_duration_days)
+        new_expiration_date_str = new_expiration_date.isoformat()
+
+        # 4. Update the users table
+        update_success = Database.update_user_subscription_summary(
+            user_id=user_id,
+            total_days=new_total_days,
+            expiration_date=new_expiration_date_str
+        )
+
+        if not update_success:
+            # Critical error: subscription was added but user summary failed.
+            logger.critical(f"CRITICAL: Failed to update user subscription summary for user_id: {user_id} after adding subscription_id: {subscription_id}. Manual check required.")
+
+        logger.info(f"Successfully activated/extended subscription_id: {subscription_id} for user_id: {user_id}.")
+        
+        # Call the confirmation function with the plan name
+        await send_channel_links_and_confirmation(telegram_id=telegram_id, context=context, plan_name=plan_name)
+        
+        # Return only boolean, as the message is now sent by the function above
+        return True, ""
 
     except Exception as e:
         logger.exception(f"Exception in activate_or_extend_subscription for user_id: {user_id}, plan_id: {plan_id}: {e}")
@@ -162,7 +198,7 @@ async def start_subscription_status(update: Update, context: ContextTypes.DEFAUL
     if not subscription:
         # No active subscription
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("خرید اشتراک", callback_data="start_subscription_flow")], # Changed text and callback
+            [InlineKeyboardButton("خرید محصولات", callback_data="start_subscription_flow")], # Changed text and callback
             [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="back_to_main_menu")] # Consistent callback
         ])
         
@@ -256,7 +292,7 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
         f"👤 نام و نام خانوادگی: {full_name}",
         f"🎂 سن: {age_str}",
         f"🎓 تحصیلات: {education}",
-        f"💼 شغل: {occupation}",
+        f"💼 حیطه فعالیت: {occupation}",
         f"📱 شماره همراه: {phone}"
     ]
     profile_message = "\n".join(profile_info_parts)
@@ -306,12 +342,13 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
                     days = remaining.days
                     hours, remainder = divmod(remaining.seconds, 3600)
                     minutes, _ = divmod(remainder, 60)
-                    subscription_status_text = f"پلن فعال: {plan_name}\n" \
-                                               f"اعتبار باقی‌مانده: {days} روز و {hours} ساعت و {minutes} دقیقه"
+                    subscription_status_text = f"فعال ✅\n" \
+                                               f"اعتبار باقی‌مانده:\n{days} روز و {hours} ساعت و {minutes} دقیقه"
                 else:
                     subscription_status_text = "اشتراک شما به پایان رسیده است."
             except (ValueError, TypeError):
-                subscription_status_text = f"پلن فعال: {plan_name} (تاریخ پایان نامعتبر)"
+                subscription_status_text = f"فعال ✅\n" \
+                                           f"تاریخ پایان نامعتبر"
 
             if plan_details:
                 plan_name_for_msg = plan_details.get('name') if isinstance(plan_details, dict) else "نامشخص"
@@ -349,7 +386,7 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
         else:  # No active subscription (None or expired)
             # Provide button for buying/renewing subscription
             keyboard_buttons.append(
-                [InlineKeyboardButton("خرید/تمدید اشتراک", callback_data="start_subscription_flow")]
+                [InlineKeyboardButton("خرید محصولات", callback_data="start_subscription_flow")]
             )
         
         # Common buttons for all regular users
