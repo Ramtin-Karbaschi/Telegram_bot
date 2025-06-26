@@ -61,7 +61,7 @@ def test_database_operations():
     birth_year = 1370
     age = 34 # This will be recalculated based on current Shamsi year if logic is in place
     education = "کارشناسی"
-    occupation = "بازار سرمایه"
+    occupation = "ارز، طلا، سکه"
     
     if Database.update_user_profile(
         test_user_id,
@@ -88,7 +88,7 @@ def test_database_operations():
         print(f"  - سال تولد: {user_details['birth_year']}")
         print(f"  - سن: {user_details['age']}")
         print(f"  - تحصیلات: {user_details['education']}")
-        print(f"  - شغل: {user_details['occupation']}")
+        print(f"  - حیطه فعالیت: {user_details['occupation']}")
         print(f"  - تاریخ ثبت‌نام: {user_details['registration_date']}")
     else:
         print(f"❌ خطا در دریافت اطلاعات کاربر {test_user_id}")
