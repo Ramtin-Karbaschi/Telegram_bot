@@ -15,6 +15,7 @@ import logging
 import html
 import json
 import traceback
+from utils.constants import all_constants as constants
 
 # Basic logging configuration
 logging.basicConfig(
@@ -93,6 +94,8 @@ from services.zarinpal_service import ZarinpalPaymentService
 from database.queries import DatabaseQueries
 from handlers.subscription.subscription_handlers import activate_or_extend_subscription
 from utils.constants.all_constants import (
+    CALLBACK_BACK_TO_MAIN_MENU,
+    TEXT_MAIN_MENU_STATUS,
     ZARINPAL_PAYMENT_VERIFIED_SUCCESS_AND_SUB_ACTIVATED_MESSAGE_USER,
     ZARINPAL_PAYMENT_VERIFIED_SUCCESS_SUB_ACTIVATION_FAILED_MESSAGE_USER,
     ZARINPAL_PAYMENT_VERIFIED_SUCCESS_PLAN_NOT_FOUND_MESSAGE_USER
@@ -180,6 +183,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 try:
                                     channels = json.loads(channels_info_str)
                                     keyboard = [[InlineKeyboardButton(f"ورود به {channel['title']}", url=channel['link'])] for channel in channels]
+                                    keyboard.append([InlineKeyboardButton(constants.TEXT_BACK_TO_MAIN_MENU, callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU)])
                                     
                                     reply_markup = InlineKeyboardMarkup(keyboard)
                                     text = "🎉 عالی! اشتراک شما با موفقیت فعال شد. اکنون می‌توانید از طریق لینک‌های زیر به کانال و گروه دسترسی داشته باشید:\n\n⚠️ این لینک‌ها پس از ۵ دقیقه منقضی می‌شوند."
@@ -206,7 +210,14 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             error_message_zarinpal = verification_result.get('error_message', 'خطای نامشخص')
             logger.error(f"Zarinpal verification failed for payment {payment_db_id}. Status: {error_code}, Message: {error_message_zarinpal}")
             DatabaseQueries.update_payment_status(payment_db_id, 'failed', error_message=f"zarinpal_verify_err_{error_code}")
-            await update.message.reply_text(f"❌ متاسفانه در تایید پرداخت شما مشکلی پیش آمد. (کد خطا: {error_code})\nلطفاً با پشتیبانی تماس بگیرید.")
+            
+            # Handle different error cases
+            if error_code == -51:
+                # Error code -51 means payment was not completed by user
+                await update.message.reply_text("❌ متاسفانه پرداخت شما تکمیل نشده است. لطفاً مراحل پرداخت خود را تکمیل کنید.")
+            else:
+                # General error message for other error codes
+                await update.message.reply_text(f"❌ متاسفانه در تایید پرداخت شما مشکلی پیش آمد. (کد خطا: {error_code})\nلطفاً با پشتیبانی تماس بگیرید.")
     else:
         # Default start handler behavior
         await core_start_handler(update, context)
@@ -327,7 +338,7 @@ class MainBot:
         self.application.add_handler(CommandHandler("start", start_handler))
         self.application.add_handler(CommandHandler("help", help_handler))
         self.application.add_handler(CommandHandler("rules", rules_handler))
-        self.application.add_handler(CommandHandler("status", view_active_subscription))
+
         self.application.add_handler(CommandHandler("support", support_message_handler))
         
         # Text message handlers for menu items
@@ -345,6 +356,9 @@ class MainBot:
         ))
         self.application.add_handler(MessageHandler(
             filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_BUY_SUBSCRIPTION}$"), start_subscription_flow # Handler for Buy Subscription button
+        ))
+        self.application.add_handler(MessageHandler(
+            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_STATUS}$"), subscription_status_handler
         ))
         
         # Callback query handlers for subscription and support
@@ -378,6 +392,8 @@ class MainBot:
 
         # Status command handler
         self.application.add_handler(CommandHandler("status", subscription_status_handler))
+        self.application.add_handler(CallbackQueryHandler(core_start_handler, pattern=f"^{CALLBACK_BACK_TO_MAIN_MENU}$"))
+        self.application.add_handler(CallbackQueryHandler(subscription_status_handler, pattern="^show_status$"))
         self.logger.info("CRITICAL_LOG: CommandHandler for status has been set up.")
 
         # Handler for the main support menu (e.g., after /support or clicking the support button that leads to the support options)
