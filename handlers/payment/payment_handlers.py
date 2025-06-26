@@ -6,10 +6,12 @@ from services.crypto_payment_service import CryptoPaymentService
 from services.zarinpal_service import ZarinpalPaymentService # Added for Zarinpal
 from config import CRYPTO_WALLET_ADDRESS, CRYPTO_PAYMENT_TIMEOUT_MINUTES, RIAL_GATEWAY_URL, CRYPTO_GATEWAY_URL, PAYMENT_CONVERSATION_TIMEOUT # Added CRYPTO_WALLET_ADDRESS, CRYPTO_PAYMENT_TIMEOUT_MINUTES
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ParseMode # Added for message formatting
+from telegram.error import BadRequest  # Handle message not modified
 import config # Added for TELEGRAM_CHANNELS_INFO
 import logging
+from ..subscription.subscription_handlers import activate_or_extend_subscription
 from telegram.ext import (
     ContextTypes, ConversationHandler, CommandHandler, 
     MessageHandler, filters, CallbackQueryHandler
@@ -60,6 +62,16 @@ async def back_to_main_menu_from_payment_handler(update: Update, context: Contex
     context.user_data.clear()
     return await view_active_subscription(update, context)
 
+async def safe_edit_message_text(message, **kwargs):
+    """Edit message text safely, ignoring 'Message is not modified' errors."""
+    try:
+        await message.edit_text(**kwargs)
+    except BadRequest as e:
+        if 'Message is not modified' in str(e):
+            pass  # Silently ignore
+        else:
+            raise
+
 async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry point for the subscription flow. Displays subscription plans."""
     query = update.callback_query
@@ -68,7 +80,8 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
     # If called via CallbackQuery
     if query:
         await query.answer()
-        await query.message.edit_text(
+        await safe_edit_message_text(
+            query.message,
             text=SUBSCRIPTION_PLANS_MESSAGE,
             reply_markup=get_subscription_plans_keyboard(user_id),
             parse_mode=ParseMode.HTML
@@ -109,6 +122,74 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     selected_plan = Database.get_plan_by_id(numeric_plan_id)
     logger.info(f"[select_plan_handler] Selected plan: {selected_plan}")
+
+    # Handle free plans immediately
+    # sqlite3.Row objects are accessed by index or key, not with .get()
+    # Treat plans with a price of 0 or NULL as free plans
+    if selected_plan and float(selected_plan['price'] or 0) == 0:
+        logger.info(f"[select_plan_handler] Detected free plan: {selected_plan['name']}. Processing... ")
+        plan_id = selected_plan['id']
+
+        # 1. Check if user has already used this free plan
+        if Database.has_user_used_free_plan(user_id, plan_id):
+            logger.warning(f"User {user_id} has already used free plan {plan_id}.")
+            keyboard = [[InlineKeyboardButton("بازگشت به پروفایل کاربری", callback_data='back_to_main_menu')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                text="شما قبلاً از این طرح رایگان استفاده کرده‌اید و امکان دریافت مجدد آن وجود ندارد.",
+                reply_markup=reply_markup
+            )
+            return ConversationHandler.END
+
+        # 2. Check for plan capacity
+        # The 'capacity' column must exist in the 'plans' table for this to work.
+        capacity = selected_plan['capacity'] if 'capacity' in selected_plan.keys() and selected_plan['capacity'] is not None else None
+        if capacity is not None:
+            logger.info(f"Checking total capacity for plan {plan_id}. Capacity: {capacity}")
+            subscription_count = Database.count_total_subscriptions_for_plan(plan_id)
+            logger.info(f"Total subscriptions ever created for plan {plan_id}: {subscription_count}")
+
+            if subscription_count >= capacity:
+                logger.warning(f"Free plan {plan_id} has reached its capacity. Deactivating plan.")
+                # Deactivate the plan for future users
+                Database.deactivate_plan(plan_id)
+                keyboard = [[InlineKeyboardButton("بازگشت به پروفایل کاربری", callback_data='back_to_main_menu')]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    text="ظرفیت این طرح رایگان تکمیل شده است و دیگر در دسترس نیست.",
+                    reply_markup=reply_markup
+                )
+                return ConversationHandler.END
+
+        # 3. If all checks pass, activate the subscription
+        logger.info(f"Activating free subscription for user {user_id} and plan {plan_id}.")
+        telegram_id = query.from_user.id
+        transaction_id = f"FREE_PLAN_{user_id}_{plan_id}"
+        payment_id = None  # No payment record for free plans
+        amount = 0
+        payment_method = 'free'
+        plan_name = selected_plan['name']
+
+        success, error_message = await activate_or_extend_subscription(
+            user_id=user_id,
+            telegram_id=telegram_id,
+            plan_id=plan_id,
+            plan_name=plan_name,
+            payment_amount=amount,
+            payment_method=payment_method,
+            transaction_id=transaction_id,
+            context=context,
+            payment_table_id=payment_id
+        )
+
+        if success:
+            await query.edit_message_text("✅ اشتراک رایگان شما با موفقیت فعال شد!")
+        else:
+            await query.edit_message_text(
+                f"مشکلی در فعال‌سازی اشتراک رایگان شما پیش آمد. {error_message if error_message else 'لطفاً با پشتیبانی تماس بگیرید.'}"
+            )
+        
+        return ConversationHandler.END
     if not selected_plan or not selected_plan['is_active']:
         logger.warning(f"[select_plan_handler] Plan not found or inactive: {numeric_plan_id}")
         await query.message.edit_text(
@@ -191,7 +272,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         plan_price_irr = selected_plan['price']
 
         # Create a detailed description for the payment record in the database
-        db_description = f"خرید اشتراک {plan_name} (Plan ID: {plan_id}) توسط کاربر ID: {user_db_id}"
+        db_description = f"خرید محصولات {plan_name} (Plan ID: {plan_id}) توسط کاربر ID: {user_db_id}"
 
         payment_db_id = Database.add_payment(
             user_id=user_db_id,
@@ -210,7 +291,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             return ConversationHandler.END
 
         # Prepare for Zarinpal request
-        description = f"خرید اشتراک {plan_name} برای کاربر {telegram_id}"
+        description = f"خرید محصولات {plan_name} برای کاربر {telegram_id}"
         # Zarinpal amount should be integer
         amount_for_zarinpal = int(plan_price_irr) 
 
@@ -241,8 +322,8 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             callback_deeplink = f"https://t.me/{bot_username}?start=zarinpal_verify_{authority}"
 
             message_text = (
-                f"برای تکمیل خرید اشتراک «{plan_name}» به مبلغ {amount_for_zarinpal:,} ریال، لطفاً از طریق لینک زیر پرداخت خود را انجام دهید.\n\n"
-                f"⚠️ **مهم:** پس از تکمیل پرداخت در سایت زرین‌پال، **روی دکمه زیر کلیک کنید** تا اشتراک شما فعال شود."
+                f"برای تکمیل خرید محصولات «{plan_name}» به مبلغ {amount_for_zarinpal:,} ریال، لطفاً از طریق لینک زیر پرداخت خود را انجام دهید.\n\n"
+                f"⚠️ <b>مهم:</b> پس از تکمیل پرداخت در سایت زرین‌پال، <b>روی دکمه زیر کلیک کنید</b> تا اشتراک شما فعال شود."
             )
             await query.message.edit_text(
                 text=message_text,
@@ -934,7 +1015,7 @@ async def cancel_subscription_flow(update: Update, context: ContextTypes.DEFAULT
     for key in ['selected_plan_details', 'live_usdt_price', 'payment_method', 'payment_info', 'payment_db_id', 'zarinpal_authority']:
         context.user_data.pop(key, None)
 
-    cancel_message = "فرایند خرید اشتراک لغو شد. برای شروع مجدد، از منوی اصلی اقدام کنید."
+    cancel_message = "فرایند خرید محصولات لغو شد. برای شروع مجدد، از منوی اصلی اقدام کنید."
     
     query = update.callback_query
     if query:
@@ -951,23 +1032,23 @@ async def cancel_subscription_flow(update: Update, context: ContextTypes.DEFAULT
 payment_conversation = ConversationHandler(
     entry_points=[
         CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'),
-        MessageHandler(filters.Regex(r"^(🎫 خرید اشتراک)$"), start_subscription_flow),
+        MessageHandler(filters.Regex(r"^(🎫 خرید محصولات)$"), start_subscription_flow),
     ],
     states={
         SELECT_PLAN: [
             CallbackQueryHandler(select_plan_handler, pattern='^plan_'),
-            MessageHandler(filters.Regex(r"^(🎫 خرید اشتراک)$"), start_subscription_flow),
+            MessageHandler(filters.Regex(r"^(🎫 خرید محصولات)$"), start_subscription_flow),
         ],
         SELECT_PAYMENT_METHOD: [
             CallbackQueryHandler(select_payment_method, pattern='^payment_(rial|crypto)$'),
             CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
-            MessageHandler(filters.Regex(r"^(🎫 خرید اشتراک)$"), start_subscription_flow),
+            MessageHandler(filters.Regex(r"^(🎫 خرید محصولات)$"), start_subscription_flow),
         ],
         VERIFY_PAYMENT: [
             CallbackQueryHandler(verify_payment_status, pattern='^payment_verify$'),
             CallbackQueryHandler(payment_verify_zarinpal_handler, pattern=f'^{VERIFY_ZARINPAL_PAYMENT_CALLBACK}$'),
             CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$'),
-            MessageHandler(filters.Regex(r"^(🎫 خرید اشتراک)$"), start_subscription_flow),
+            MessageHandler(filters.Regex(r"^(🎫 خرید محصولات)$"), start_subscription_flow),
         ],
     },
     fallbacks=[
