@@ -16,6 +16,7 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
     row1 = []
     if is_registered:
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION))
+        row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_STATUS))
     else:
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION))
     keyboard_buttons.append(row1)
@@ -45,7 +46,8 @@ def get_main_menu_keyboard(user_id=None, is_admin=False, is_registered=False):
 
     if is_registered:
         keyboard_buttons.append([
-            InlineKeyboardButton("🎫 خرید اشتراک", callback_data="start_subscription_flow")
+            InlineKeyboardButton("👤 پروفایل کاربری", callback_data="show_status"),
+            InlineKeyboardButton("🎫 خرید محصولات", callback_data="start_subscription_flow")
         ])
     else:
         keyboard_buttons.append([InlineKeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION, callback_data="start_registration_flow")])
@@ -82,7 +84,7 @@ def get_education_keyboard():
         [KeyboardButton("کارشناسی")],
         [KeyboardButton("کارشناسی ارشد")],
         [KeyboardButton("دکتری")],
-        [KeyboardButton("سایر")],
+        [KeyboardButton("زیر دیپلم")],
         [KeyboardButton("↩ بازگشت")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -90,10 +92,10 @@ def get_education_keyboard():
 def get_occupation_keyboard():
     """Get keyboard with occupation options"""
     keyboard = [
-        [KeyboardButton("بازار سرمایه")],
+        [KeyboardButton("ارز، طلا، سکه")],
         [KeyboardButton("فارکس")],
         [KeyboardButton("کریپتو")],
-        [KeyboardButton("سایر")],
+        [KeyboardButton("بورس")],
         [KeyboardButton("↩ بازگشت")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -109,19 +111,37 @@ def get_subscription_plans_keyboard(telegram_id=None): # Added telegram_id as op
     keyboard = []
     # Lazy import to avoid circular dependency
     from database.queries import DatabaseQueries as _DB
-    active_plans = _DB.get_active_plans()
+    all_active_plans = _DB.get_active_plans()
+    active_plans = []
+    for plan in all_active_plans:
+        # sqlite3.Row objects are accessed by index or key, not with .get()
+        capacity = plan['capacity'] if 'capacity' in plan.keys() else None
+        if capacity is not None:
+            # Check current subscription count for this plan
+            count_query = "SELECT COUNT(*) FROM subscriptions WHERE plan_id = ? AND status = 'active'"
+            # Use plan['id'] to access the id
+            count_result = _DB.execute_query(count_query, (plan['id'],), fetch_one=True)
+            subscription_count = count_result[0] if count_result else 0
+
+            if subscription_count >= capacity:
+                continue  # Skip this plan as it has reached its capacity
+        active_plans.append(plan)
 
     if not active_plans:
         keyboard.append([InlineKeyboardButton("در حال حاضر طرح فعالی وجود ندارد.", callback_data='no_plans_available')])
     else:
+        # Group plans into rows of 3 for better layout
         plan_buttons_row = []
         for plan in active_plans:
             plan_id = plan['id']
-            button_text = plan['name'] # Use plan's name directly for the button
+            button_text = plan['name']  # Use plan's name directly for the button
             plan_buttons_row.append(InlineKeyboardButton(button_text, callback_data=f"plan_{plan_id}"))
+            if len(plan_buttons_row) == 3:
+                keyboard.append(plan_buttons_row)
+                plan_buttons_row = []
         
-        if plan_buttons_row: # If there are any plan buttons
-            keyboard.append(plan_buttons_row) # Add them as a single row
+        if plan_buttons_row:  # Add the last row if it's not empty and has buttons
+            keyboard.append(plan_buttons_row)
     
     # Ensure TEXT_GENERAL_BACK is defined and imported correctly
     try:
@@ -176,17 +196,29 @@ def get_support_menu_keyboard(tickets=None):
     
     return InlineKeyboardMarkup(keyboard)
 
-def get_profile_edit_menu_keyboard():
+def get_profile_edit_menu_keyboard(user_id):
     """Get keyboard for profile editing field selection."""
-    logger.debug(f"KEYBOARDS: Generating profile edit menu. FULLNAME_CALLBACK: '{constants.CALLBACK_PROFILE_EDIT_FULLNAME}', BIRTHYEAR_CALLBACK: '{constants.CALLBACK_PROFILE_EDIT_BIRTHYEAR}'")
+    from database.queries import DatabaseQueries as _DB
+    user_details = _DB.get_user_details(user_id)
+
+    def get_button_text(field_name, default_text):
+        field_value = None
+        if user_details and field_name in user_details.keys():
+            field_value = user_details[field_name]
+        
+        if field_value:
+            return f"✅ {default_text}"
+        return default_text
+
+    # The field names ('full_name', 'birth_year', etc.) are based on the callback constants.
     keyboard = [
-        [InlineKeyboardButton("نام و نام خانوادگی", callback_data=constants.CALLBACK_PROFILE_EDIT_FULLNAME)],
-        [InlineKeyboardButton("سال تولد", callback_data=constants.CALLBACK_PROFILE_EDIT_BIRTHYEAR)],
-        [InlineKeyboardButton("میزان تحصیلات", callback_data=constants.CALLBACK_PROFILE_EDIT_EDUCATION)],
-        [InlineKeyboardButton("شغل", callback_data=constants.CALLBACK_PROFILE_EDIT_OCCUPATION)],
-        [InlineKeyboardButton("شماره همراه", callback_data=constants.CALLBACK_PROFILE_EDIT_PHONE)],
-        [InlineKeyboardButton("شهر محل سکونت", callback_data=constants.CALLBACK_PROFILE_EDIT_CITY)],
-        [InlineKeyboardButton("ایمیل", callback_data=constants.CALLBACK_PROFILE_EDIT_EMAIL)],
+        [InlineKeyboardButton(get_button_text('full_name', "نام و نام خانوادگی"), callback_data=constants.CALLBACK_PROFILE_EDIT_FULLNAME)],
+        [InlineKeyboardButton(get_button_text('birth_year', "سال تولد"), callback_data=constants.CALLBACK_PROFILE_EDIT_BIRTHYEAR)],
+        [InlineKeyboardButton(get_button_text('education', "میزان تحصیلات"), callback_data=constants.CALLBACK_PROFILE_EDIT_EDUCATION)],
+        [InlineKeyboardButton(get_button_text('occupation', "حیطه فعالیت"), callback_data=constants.CALLBACK_PROFILE_EDIT_OCCUPATION)],
+        [InlineKeyboardButton(get_button_text('phone', "شماره همراه"), callback_data=constants.CALLBACK_PROFILE_EDIT_PHONE)],
+        [InlineKeyboardButton(get_button_text('city', "شهر محل سکونت"), callback_data=constants.CALLBACK_PROFILE_EDIT_CITY)],
+        [InlineKeyboardButton(get_button_text('email', "ایمیل"), callback_data=constants.CALLBACK_PROFILE_EDIT_EMAIL)],
         [InlineKeyboardButton("↩ بازگشت به منوی اصلی", callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU_FROM_EDIT)]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -194,33 +226,39 @@ def get_profile_edit_menu_keyboard():
 def get_education_inline_keyboard(back_callback=constants.CALLBACK_PROFILE_EDIT_BACK_TO_MENU):
     """Get inline keyboard with education level options."""
     keyboard = [
+        [InlineKeyboardButton("زیر دیپلم", callback_data="education_زیر دیپلم")],
         [InlineKeyboardButton("دیپلم", callback_data="education_دیپلم")],
         [InlineKeyboardButton("کاردانی", callback_data="education_کاردانی")],
         [InlineKeyboardButton("کارشناسی", callback_data="education_کارشناسی")],
         [InlineKeyboardButton("کارشناسی ارشد", callback_data="education_کارشناسی ارشد")],
         [InlineKeyboardButton("دکتری", callback_data="education_دکتری")],
-        [InlineKeyboardButton("سایر", callback_data="education_سایر")],
-        [InlineKeyboardButton("↩ بازگشت به منوی ویرایش", callback_data=back_callback)]
+        [InlineKeyboardButton("↩ لغو و بازگشت به منوی ویرایش", callback_data=back_callback)]
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_occupation_inline_keyboard(back_callback=constants.CALLBACK_PROFILE_EDIT_BACK_TO_MENU):
-    """Get inline keyboard with occupation options."""
-    keyboard = [
-        [InlineKeyboardButton("بازار سرمایه", callback_data="occupation_بازار سرمایه")],
-        [InlineKeyboardButton("فارکس", callback_data="occupation_فارکس")],
-        [InlineKeyboardButton("کریپتو", callback_data="occupation_کریپتو")],
-        [InlineKeyboardButton("سایر", callback_data="occupation_سایر")],
-        [InlineKeyboardButton("↩ بازگشت به منوی ویرایش", callback_data=back_callback)]
-    ]
+def get_occupation_inline_keyboard(selected_occupations=None, back_callback=constants.CALLBACK_PROFILE_EDIT_BACK_TO_MENU):
+    """Get inline keyboard with occupation options for multi-selection."""
+    if selected_occupations is None:
+        selected_occupations = []
+
+    occupations = ["ارز، طلا، سکه", "فارکس", "کریپتو", "بورس"]
+    keyboard = []
+
+    for occ in occupations:
+        text = f"{occ} {'✅' if occ in selected_occupations else ''}"
+        keyboard.append([InlineKeyboardButton(text, callback_data=f"occupation_{occ}")])
+
+    keyboard.append([InlineKeyboardButton("✅ تایید و بازگشت", callback_data=constants.CALLBACK_PROFILE_EDIT_OCCUPATION_CONFIRM)])
+    keyboard.append([InlineKeyboardButton("↩ لغو و بازگشت به منوی ویرایش", callback_data=back_callback)])
+    
     return InlineKeyboardMarkup(keyboard)
 
 def get_edit_field_action_keyboard(cancel_callback=constants.CALLBACK_PROFILE_EDIT_CANCEL, back_to_menu_callback=constants.CALLBACK_PROFILE_EDIT_BACK_TO_MENU):
     """Get an inline keyboard with cancel and back to edit menu buttons."""
     keyboard = [
         [
-            InlineKeyboardButton("لغو ویرایش این مورد", callback_data=cancel_callback),
-            InlineKeyboardButton("↩ بازگشت به منوی ویرایش", callback_data=back_to_menu_callback)
+            # InlineKeyboardButton("لغو ویرایش این مورد", callback_data=cancel_callback),
+            InlineKeyboardButton("↩ لغو و بازگشت به منوی ویرایش", callback_data=back_to_menu_callback)
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -228,17 +266,19 @@ def get_edit_field_action_keyboard(cancel_callback=constants.CALLBACK_PROFILE_ED
 def get_phone_edit_keyboard(back_callback=constants.CALLBACK_PROFILE_EDIT_BACK_TO_MENU):
     """Get keyboard for phone editing, including contact sharing and back button."""
     # ReplyKeyboard for contact sharing
+    # Create keyboard with contact sharing button
     reply_keyboard_markup = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton("📱 اشتراک گذاری شماره تماس", request_contact=True)],
-            [KeyboardButton("↩ بازگشت به منوی ویرایش")] # This text will be caught by a MessageHandler
+            [KeyboardButton("📱 اشتراک گذاری شماره تماس", request_contact=True)]
+            # [KeyboardButton("↩ لغو و بازگشت به منوی ویرایش")]
         ],
         resize_keyboard=True,
         one_time_keyboard=True
     )
+    logger.debug(f"Phone edit keyboard created with back_callback: {back_callback}")
     # InlineKeyboard for fallback if user types or wants to go back without using ReplyKeyboard
     inline_keyboard_markup = InlineKeyboardMarkup([
-         [InlineKeyboardButton("↩ بازگشت به منوی ویرایش", callback_data=back_callback)]
+         [InlineKeyboardButton("↩ لغو و بازگشت به منوی ویرایش", callback_data=back_callback)]
     ])
     return reply_keyboard_markup, inline_keyboard_markup
 
