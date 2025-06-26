@@ -6,7 +6,7 @@
 import datetime
 
 MIN_PERSIAN_BIRTH_YEAR = 1320
-MAX_PERSIAN_BIRTH_YEAR = 1394 # Adjust as needed, e.g., current_shamsi_year - 18
+MAX_PERSIAN_BIRTH_YEAR = 1386 # Adjust as needed, e.g., current_shamsi_year - 18
 
 def is_valid_persian_birth_year(year_str: str) -> bool:
     """Checks if the given string is a valid Persian birth year."""
