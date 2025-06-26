@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS plans (
     days INTEGER NOT NULL,     -- Duration in days
     features TEXT, -- JSON string for list of features
     is_active INTEGER DEFAULT 1, -- 0 for inactive, 1 for active
-    display_order INTEGER DEFAULT 0 -- For ordering plans in lists
+    display_order INTEGER DEFAULT 0, -- For ordering plans in lists
+    capacity INTEGER DEFAULT NULL -- Maximum number of subscribers, NULL for unlimited
 )
 '''
 
