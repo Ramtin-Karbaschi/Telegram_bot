@@ -2,6 +2,17 @@
 Helper functions for the Daraei Academy Telegram bot
 """
 
+import re
+
+def is_valid_full_name(name: str) -> bool:
+    """Validate that the full name contains only Persian letters and spaces, and is at least 3 characters long."""
+    # This regex allows only Persian letters and spaces.
+    if len(name) < 3:
+        return False
+    if re.fullmatch(r'^[\u0600-\u06FF\s]+$', name) and not name.isspace():
+        return True
+    return False
+
 import datetime
 import random
 import string
@@ -107,6 +118,15 @@ def admin_only_decorator(func):
             return
         return await func(self, update, context, *args, **kwargs)
     return wrapper
+
+def is_user_registered(user_id: int) -> bool:
+    """Return True if the given user_id exists in the database."""
+    try:
+        from database.queries import DatabaseQueries
+        return DatabaseQueries.user_exists(user_id)
+    except Exception as e:
+        print(f"Error checking user registration: {e}")
+        return False
 
 # --- End of Admin User Helper Functions ---
 
