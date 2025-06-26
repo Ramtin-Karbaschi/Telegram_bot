@@ -1,4 +1,6 @@
 import logging
+import config
+from utils.helpers import is_user_in_admin_list, is_user_registered, is_valid_full_name
 import re
 from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import (
@@ -62,7 +64,7 @@ async def start_profile_edit_conversation(update: Update, context: ContextTypes.
     logger.debug("PROFILE_HANDLER: Sending profile edit menu from start_profile_edit_conversation...")
     await message_sender(
         constants.PROFILE_EDIT_MENU_PROMPT,
-        reply_markup=keyboards.get_profile_edit_menu_keyboard()
+        reply_markup=keyboards.get_profile_edit_menu_keyboard(user_id=update.effective_user.id)
     )
     logger.debug(f"PROFILE_HANDLER: Returning state: {constants.SELECT_FIELD_TO_EDIT} from start_profile_edit_conversation.")
     return constants.SELECT_FIELD_TO_EDIT
@@ -111,7 +113,21 @@ async def ask_edit_education(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def ask_edit_occupation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     logger.debug(f"PROFILE_HANDLER: Entering ask_edit_occupation. User: {update.effective_user.id}")
-    return await _ask_for_field_edit(update, context, constants.EDIT_OCCUPATION, constants.PROFILE_EDIT_OCCUPATION, constants.EDIT_OCCUPATION, keyboards.get_occupation_inline_keyboard)
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    user_profile_row = DatabaseQueries.get_user_details(user_id)
+    user_profile = dict(user_profile_row) if user_profile_row else {}
+    occupation_str = user_profile.get('occupation')
+    current_occupations = occupation_str.split(',') if occupation_str else []
+    context.user_data['selected_occupations'] = current_occupations
+
+    await query.edit_message_text(
+        text=constants.PROFILE_EDIT_OCCUPATION,
+        reply_markup=keyboards.get_occupation_inline_keyboard(selected_occupations=current_occupations)
+    )
+    return constants.SELECT_OCCUPATION
 
 async def ask_edit_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     logger.debug(f"PROFILE_HANDLER: Entering ask_edit_city. User: {update.effective_user.id}")
@@ -182,14 +198,27 @@ async def _handle_text_or_contact_input(update: Update, context: ContextTypes.DE
 
     await message.reply_text(
         constants.PROFILE_EDIT_MENU_PROMPT,
-        reply_markup=keyboards.get_profile_edit_menu_keyboard()
+        reply_markup=keyboards.get_profile_edit_menu_keyboard(user_id=user_id)
     )
     context.user_data.pop('editing_field_key', None)
     context.user_data.pop('editing_field_readable_name', None)
     return constants.SELECT_FIELD_TO_EDIT
 
 async def handle_fullname_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
-    return await _handle_text_or_contact_input(update, context, success_field_name_override="نام و نام خانوادگی")
+    """Handles user input for the full name, validates it, and updates the profile."""
+    return await _handle_text_or_contact_input(
+        update,
+        context,
+        is_valid_value_func=is_valid_full_name,
+        error_message=(
+            "نام و نام خانوادگی وارد شده معتبر نیست.\n"
+            "- لطفاً فقط از حروف فارسی و فاصله استفاده کنید.\n"
+            "- نام باید حداقل ۳ کاراکتر داشته باشد.\n"
+            "- استفاده از اعداد و کاراکترهای خاص (مانند نقطه، ویرگول و ...) مجاز نیست.\n\n"
+            "لطفاً نام کامل خود را دوباره وارد کنید:"
+        ),
+        success_field_name_override="نام و نام خانوادگی"
+    )
 
 async def handle_city_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     return await _handle_text_or_contact_input(update, context, success_field_name_override="شهر محل سکونت")
@@ -199,7 +228,7 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     email = update.message.text
     if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email):
         await update.message.reply_text(
-            "فرمت ایمیل وارد شده صحیح نیست. لطفاً یک ایمیل معتبر وارد کنید یا برای لغو /cancel را بزنید.",
+            "فرمت ایمیل وارد شده صحیح نیست.\nلطفاً یک ایمیل معتبر وارد کنید.",
             reply_markup=keyboards.get_edit_field_action_keyboard()
         )
         return constants.EDIT_EMAIL # Stay in the same state
@@ -221,7 +250,7 @@ async def _handle_callback_query_input(update: Update, context: ContextTypes.DEF
     except IndexError:
         logger.error(f"Could not parse value from callback_data: {query.data} with prefix {data_prefix}")
         await query.edit_message_text("خطا در پردازش انتخاب شما. لطفاً دوباره تلاش کنید.")
-        await query.message.reply_text(constants.PROFILE_EDIT_MENU_PROMPT, reply_markup=keyboards.get_profile_edit_menu_keyboard())
+        await query.message.reply_text(constants.PROFILE_EDIT_MENU_PROMPT, reply_markup=keyboards.get_profile_edit_menu_keyboard(user_id=user_id))
         context.user_data.clear()
         return constants.SELECT_FIELD_TO_EDIT
 
@@ -231,7 +260,7 @@ async def _handle_callback_query_input(update: Update, context: ContextTypes.DEF
     if not field_key:
         logger.error("editing_field_key not found for callback query input.")
         await query.edit_message_text("یک خطای داخلی رخ داده است. لطفاً مجدداً تلاش کنید.")
-        await query.message.reply_text(constants.PROFILE_EDIT_MENU_PROMPT, reply_markup=keyboards.get_profile_edit_menu_keyboard())
+        await query.message.reply_text(constants.PROFILE_EDIT_MENU_PROMPT, reply_markup=keyboards.get_profile_edit_menu_keyboard(user_id=user_id))
         context.user_data.clear()
         return constants.SELECT_FIELD_TO_EDIT
         
@@ -242,7 +271,7 @@ async def _handle_callback_query_input(update: Update, context: ContextTypes.DEF
 
     await query.message.reply_text(
         constants.PROFILE_EDIT_MENU_PROMPT,
-        reply_markup=keyboards.get_profile_edit_menu_keyboard()
+        reply_markup=keyboards.get_profile_edit_menu_keyboard(user_id=user_id)
     )
     context.user_data.pop('editing_field_key', None)
     context.user_data.pop('editing_field_readable_name', None)
@@ -251,8 +280,45 @@ async def _handle_callback_query_input(update: Update, context: ContextTypes.DEF
 async def handle_education_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     return await _handle_callback_query_input(update, context, "education_", success_field_name_override="میزان تحصیلات")
 
-async def handle_occupation_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
-    return await _handle_callback_query_input(update, context, "occupation_", success_field_name_override="شغل")
+async def handle_occupation_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    """Handles user clicking on an occupation to select/deselect it."""
+    query = update.callback_query
+    await query.answer()
+    occupation = query.data.split('occupation_', 1)[1]
+
+    selected_occupations = context.user_data.get('selected_occupations', [])
+    if occupation in selected_occupations:
+        selected_occupations.remove(occupation)
+    else:
+        selected_occupations.append(occupation)
+    
+    context.user_data['selected_occupations'] = selected_occupations
+
+    await query.edit_message_text(
+        text=constants.PROFILE_EDIT_OCCUPATION,
+        reply_markup=keyboards.get_occupation_inline_keyboard(selected_occupations=selected_occupations)
+    )
+    return constants.SELECT_OCCUPATION
+
+async def confirm_occupation_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    """Saves the selected occupations to the database."""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    selected_occupations = context.user_data.get('selected_occupations', [])
+    new_value = ','.join(selected_occupations)
+
+    if await _update_profile_field(user_id, constants.EDIT_OCCUPATION, new_value, context):
+        await query.edit_message_text(constants.PROFILE_EDIT_FIELD_SUCCESS.format(field_name="حیطه فعالیت"))
+    else:
+        await query.edit_message_text("خطایی در به‌روزرسانی حیطه فعالیت رخ داد.")
+
+    await query.message.reply_text(
+        constants.PROFILE_EDIT_MENU_PROMPT,
+        reply_markup=keyboards.get_profile_edit_menu_keyboard(user_id=user_id)
+    )
+    context.user_data.pop('selected_occupations', None)
+    return constants.SELECT_FIELD_TO_EDIT
 
 async def handle_phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     def is_valid_phone(value):
@@ -276,7 +342,7 @@ async def cancel_current_field_edit_cb(update: Update, context: ContextTypes.DEF
     )
     await query.message.reply_text( 
         constants.PROFILE_EDIT_MENU_PROMPT,
-        reply_markup=keyboards.get_profile_edit_menu_keyboard()
+        reply_markup=keyboards.get_profile_edit_menu_keyboard(user_id=user_id)
     )
     context.user_data.pop('editing_field_key', None)
     context.user_data.pop('editing_field_readable_name', None)
@@ -285,22 +351,25 @@ async def cancel_current_field_edit_cb(update: Update, context: ContextTypes.DEF
 async def end_profile_edit_globally(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logger.debug(f"PROFILE_HANDLER: Entering FALLBACK end_profile_edit_globally (cancel). User: {update.effective_user.id}. Callback data: {update.callback_query.data if update.callback_query else 'No callback query'}")
     message_to_send = constants.PROFILE_EDIT_CANCELLED
-    reply_markup_to_send = keyboards.get_main_menu_keyboard()
-    
+    user_id = update.effective_user.id
+    is_admin = is_user_in_admin_list(user_id, config.ALL_ADMINS_LIST)
+    is_registered = is_user_registered(user_id)
+    logger.debug(f"PROFILE_HANDLER: end_profile_edit_globally for user {user_id}, admin: {is_admin}, registered: {is_registered}")
+    reply_markup_to_send = keyboards.get_main_menu_keyboard(user_id=user_id, is_admin=is_admin, is_registered=is_registered)
     if update.callback_query:
         await update.callback_query.answer()
         try:
-            await update.callback_query.edit_message_text(message_to_send, reply_markup=None)
+            await update.callback_query.edit_message_text(message_to_send, reply_markup=reply_markup_to_send)
         except Exception as e:
             logger.info(f"Could not edit message on global cancel, sending new one: {e}")
-            await update.effective_message.reply_text(message_to_send, reply_markup=ReplyKeyboardRemove())
+            await update.effective_message.reply_text(message_to_send, reply_markup=reply_markup_to_send)
     else:
-        await update.effective_message.reply_text(message_to_send, reply_markup=ReplyKeyboardRemove())
+        await update.effective_message.reply_text(message_to_send, reply_markup=reply_markup_to_send)
 
-    await update.effective_message.reply_text(
-        "به منوی اصلی بازگشتید.",
-        reply_markup=reply_markup_to_send
-    )
+    # await update.effective_message.reply_text(
+    #     "به منوی اصلی بازگشتید.",
+    #     reply_markup=reply_markup_to_send
+    # )
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -318,10 +387,33 @@ async def catch_all_select_field_callback(update: Update, context: ContextTypes.
         )
     return constants.SELECT_FIELD_TO_EDIT # Keep the conversation in the same state
 
+async def update_user_fullname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Update the user's full name after validation."""
+    user_id = update.effective_user.id
+    new_fullname = update.message.text
+
+    if not is_valid_full_name(new_fullname):
+        await update.message.reply_text(
+            "نام و نام خانوادگی وارد شده معتبر نیست.\n"
+            "- لطفاً فقط از حروف فارسی و فاصله استفاده کنید.\n"
+            "- نام باید حداقل ۳ کاراکتر داشته باشد.\n"
+            "- استفاده از اعداد و کاراکترهای خاص (مانند نقطه، ویرگول و ...) مجاز نیست.\n\n"
+            "لطفاً نام کامل خود را دوباره وارد کنید:"
+        )
+        return constants.EDIT_FULL_NAME
+
+    db_query = DatabaseQueries()
+    db_query.update_user_field(user_id, 'full_name', new_fullname)
+    await update.message.reply_text(
+        f"نام و نام خانوادگی شما با موفقیت به '{new_fullname}' تغییر یافت.",
+        reply_markup=await keyboards.get_profile_edit_menu_keyboard(user_id)
+    )
+    return constants.SELECT_FIELD_TO_EDIT
+
 from utils.constants import (
-    SELECT_FIELD_TO_EDIT, EDIT_FULL_NAME, EDIT_BIRTH_YEAR, EDIT_EDUCATION, EDIT_OCCUPATION, EDIT_PHONE, EDIT_CITY, EDIT_EMAIL,
+    SELECT_FIELD_TO_EDIT, EDIT_FULL_NAME, EDIT_BIRTH_YEAR, EDIT_EDUCATION, EDIT_OCCUPATION, SELECT_OCCUPATION, EDIT_PHONE, EDIT_CITY, EDIT_EMAIL,
     CALLBACK_PROFILE_EDIT_FULLNAME, CALLBACK_PROFILE_EDIT_BIRTHYEAR, CALLBACK_PROFILE_EDIT_EDUCATION, 
-    CALLBACK_PROFILE_EDIT_OCCUPATION, CALLBACK_PROFILE_EDIT_PHONE, CALLBACK_PROFILE_EDIT_CITY, CALLBACK_PROFILE_EDIT_EMAIL,
+    CALLBACK_PROFILE_EDIT_OCCUPATION, CALLBACK_PROFILE_EDIT_OCCUPATION_CONFIRM, CALLBACK_PROFILE_EDIT_PHONE, CALLBACK_PROFILE_EDIT_CITY, CALLBACK_PROFILE_EDIT_EMAIL,
     CALLBACK_BACK_TO_MAIN_MENU_FROM_EDIT, CALLBACK_PROFILE_EDIT_CANCEL, CALLBACK_PROFILE_EDIT_BACK_TO_MENU,
     TEXT_MAIN_MENU_EDIT_PROFILE, CALLBACK_START_PROFILE_EDIT # Added for entry points
 )
@@ -363,9 +455,10 @@ def get_profile_edit_conv_handler() -> ConversationHandler:
                 CallbackQueryHandler(handle_education_input, pattern="^education_"),
                 CallbackQueryHandler(cancel_current_field_edit_cb, pattern=f"^{constants.CALLBACK_PROFILE_EDIT_CANCEL}$")
             ],
-            constants.EDIT_OCCUPATION: [
-                CallbackQueryHandler(handle_occupation_input, pattern="^occupation_"),
-                CallbackQueryHandler(cancel_current_field_edit_cb, pattern=f"^{constants.CALLBACK_PROFILE_EDIT_CANCEL}$")
+            constants.SELECT_OCCUPATION: [
+                CallbackQueryHandler(handle_occupation_selection, pattern="^occupation_"),
+                CallbackQueryHandler(confirm_occupation_selection, pattern=f"^{constants.CALLBACK_PROFILE_EDIT_OCCUPATION_CONFIRM}$"),
+                CallbackQueryHandler(cancel_current_field_edit_cb, pattern=f"^{constants.CALLBACK_PROFILE_EDIT_BACK_TO_MENU}$")
             ],
             constants.EDIT_PHONE: [
                 MessageHandler(filters.CONTACT | (filters.TEXT & ~filters.COMMAND & ~filters.Regex(f"^{constants.REPLY_KEYBOARD_BACK_TO_EDIT_MENU_TEXT}$")), handle_phone_input),
