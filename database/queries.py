@@ -376,6 +376,36 @@ class DatabaseQueries:
     
     # Subscription-related queries
     @staticmethod
+    def get_all_active_subscribers():
+        """Get all users with an active subscription."""
+        db = Database()
+        if db.connect():
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            db.execute(
+                "SELECT user_id FROM subscriptions WHERE status = 'active' AND end_date > ?",
+                (now,)
+            )
+            result = db.fetchall()
+            db.close()
+            return result
+        return []
+
+    @staticmethod
+    def get_users_with_non_active_subscription_records():
+        """Get users with non-active (expired, cancelled, etc.) subscription records."""
+        db = Database()
+        if db.connect():
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            db.execute(
+                "SELECT user_id, status FROM subscriptions WHERE status != 'active' OR end_date <= ?",
+                (now,)
+            )
+            result = db.fetchall()
+            db.close()
+            return result
+        return []
+
+    @staticmethod
     def _update_existing_subscription(subscription_id, plan_id, payment_id, new_end_date_str, amount_paid, payment_method, status='active'):
         """
         Helper function to update an existing subscription record.
@@ -523,7 +553,139 @@ class DatabaseQueries:
             return result
         return None
 
+    # ---- Free Plan Helper Methods ----
     @staticmethod
+    def has_user_used_free_plan(user_id: int, plan_id: int) -> bool:
+        """Return True if the user has already subscribed to the given plan (whether active or expired)."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute(
+                    "SELECT 1 FROM subscriptions WHERE user_id = ? AND plan_id = ? LIMIT 1",
+                    (user_id, plan_id),
+                )
+                return db.fetchone() is not None
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in has_user_used_free_plan: {e}")
+                return False
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def count_total_subscriptions_for_plan(plan_id: int) -> int:
+        """Return total number of subscription records for the specified plan."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT COUNT(*) AS cnt FROM subscriptions WHERE plan_id = ?", (plan_id,))
+                row = db.fetchone()
+                return (row['cnt'] if isinstance(row, sqlite3.Row) else row[0]) if row else 0
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in count_total_subscriptions_for_plan: {e}")
+                return 0
+            finally:
+                db.close()
+        return 0
+
+    @staticmethod
+    def deactivate_plan(plan_id: int) -> bool:
+        """Set is_active = 0 for the given plan. Returns True if a row was affected."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("UPDATE plans SET is_active = 0 WHERE id = ?", (plan_id,))
+                db.commit()
+                return db.cursor.rowcount > 0
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in deactivate_plan: {e}")
+                return False
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def get_plan_by_id(plan_id: int):
+        """Fetch a plan row by its ID."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT * FROM plans WHERE id = ?", (plan_id,))
+                return db.fetchone()
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in get_plan_by_id: {e}")
+                return None
+            finally:
+                db.close()
+        return None
+
+    # Backwards compatibility alias
+    @staticmethod
+    def get_plan(plan_id: int):
+        return DatabaseQueries.get_plan_by_id(plan_id)
+
+    @staticmethod
+    # ---- User Subscription Summary Helpers ----
+    @staticmethod
+    def _ensure_user_summary_columns():
+        """Ensures that `users` table has the summary columns. If not, add them with ALTER TABLE."""
+        db = Database()
+        if not db.connect():
+            return False
+        try:
+            db.execute("PRAGMA table_info(users)")
+            cols = [row['name'] for row in db.fetchall()]
+            needed = []
+            if 'total_subscription_days' not in cols:
+                needed.append("ALTER TABLE users ADD COLUMN total_subscription_days INTEGER DEFAULT 0")
+            if 'subscription_expiration_date' not in cols:
+                needed.append("ALTER TABLE users ADD COLUMN subscription_expiration_date TEXT")
+            for stmt in needed:
+                db.execute(stmt)
+            if needed:
+                db.commit()
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error ensuring user summary columns: {e}")
+        finally:
+            db.close()
+        return True
+
+    @staticmethod
+    def get_user_subscription_summary(user_id: int):
+        """Return total days and expiration date for a user from `users` table (may return None)."""
+        DatabaseQueries._ensure_user_summary_columns()
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT total_subscription_days, subscription_expiration_date FROM users WHERE user_id = ?", (user_id,))
+                return db.fetchone()
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in get_user_subscription_summary: {e}")
+                return None
+            finally:
+                db.close()
+        return None
+
+    @staticmethod
+    def update_user_subscription_summary(user_id: int, total_days: int, expiration_date: str) -> bool:
+        """Update summary columns for user."""
+        DatabaseQueries._ensure_user_summary_columns()
+        db = Database()
+        if db.connect():
+            try:
+                db.execute(
+                    "UPDATE users SET total_subscription_days = ?, subscription_expiration_date = ? WHERE user_id = ?",
+                    (total_days, expiration_date, user_id),
+                )
+                db.commit()
+                return db.cursor.rowcount > 0
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in update_user_subscription_summary: {e}")
+                return False
+            finally:
+                db.close()
+        return False
+
     def get_user_active_subscription(user_id):
         """Get user's active subscription.
            Returns the one with the latest end_date if multiple somehow exist.
@@ -870,6 +1032,54 @@ class DatabaseQueries:
             return True
         return False
     
+    @staticmethod
+    def has_user_used_free_plan(user_id, plan_id):
+        """Check if the user has ever had a subscription for a specific free plan."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute(
+                    "SELECT 1 FROM subscriptions WHERE user_id = ? AND plan_id = ?",
+                    (user_id, plan_id)
+                )
+                result = db.fetchone()
+                return result is not None
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def count_total_subscriptions_for_plan(plan_id):
+        """Count the total number of subscriptions ever created for a given plan."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute(
+                    "SELECT COUNT(id) FROM subscriptions WHERE plan_id = ?",
+                    (plan_id,)
+                )
+                count = db.fetchone()[0]
+                return count
+            finally:
+                db.close()
+        return 0
+
+    @staticmethod
+    def deactivate_plan(plan_id):
+        """Deactivates a plan by setting its is_active flag to False."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute(
+                    "UPDATE plans SET is_active = 0 WHERE id = ?",
+                    (plan_id,)
+                )
+                db.commit()
+                return True
+            finally:
+                db.close()
+        return False
+
     @staticmethod
     def get_open_tickets():
         """Get all open tickets"""
