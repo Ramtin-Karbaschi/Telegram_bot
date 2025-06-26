@@ -31,19 +31,21 @@ HELP_MESSAGE = """
 
 # Rules message
 RULES_MESSAGE = """
-📜 قوانین آکادمی دارایی:
+<b>📜 قوانین آکادمی دارایی:</b>
 
 1️⃣ احترام به سایر اعضا و رعایت ادب در گفتگوها الزامی است.
 
-2️⃣ اشتراک گذاری محتوای آموزشی کانال با افراد غیرعضو ممنوع است.
+2️⃣ اطلاعات شخصی شما، نزد آکادمی دارایی محفوظ خواهد بود و ذخیره آن صرفاً به منظور خدمت‌رسانی بهتر خواهد بود.
 
-3️⃣ استفاده از یک اکانت برای چند نفر مجاز نیست و در صورت تشخیص، عضویت لغو خواهد شد.
+3️⃣ اشتراک گذاری محتوای آموزشی کانال با دیگران ممنوع است.
 
-4️⃣ پرداخت حق عضویت به معنی پذیرش این قوانین است.
+4️⃣ استفاده از یک اکانت برای چند نفر مجاز نیست و در صورت تشخیص، عضویت لغو خواهد شد.
 
 5️⃣ آکادمی دارایی حق تغییر در محتوا و قیمت‌ها را برای خود محفوظ می‌دارد.
 
 6️⃣ مسئولیت تصمیمات مالی شما بر عهده خودتان است و آموزش‌های ارائه شده صرفاً جنبه آموزشی دارند.
+
+7️⃣ پرداخت حق عضویت به معنی پذیرش این قوانین است.
 """
 
 # Registration steps messages
@@ -70,7 +72,7 @@ EDUCATION_REQUEST = """
 """
 
 OCCUPATION_REQUEST = """
-💼 لطفاً شغل خود را وارد کنید.
+💼 لطفاً حیطه فعالیت خود را از گزینه‌های زیر انتخاب کنید.
 """
 
 # Subscription status constants
@@ -91,7 +93,7 @@ SUBSCRIPTION_STATUS_EXPIRED = """
 
 # Subscription messages
 SUBSCRIPTION_PLANS_MESSAGE = """
-📋 لطفاً نوع اشتراک مورد نظر خود را انتخاب کنید:
+📋 لطفاً محصول مورد نظر خود را انتخاب کنید:
 """
 
 PAYMENT_SUCCESS_MESSAGE = """
@@ -119,6 +121,7 @@ EDIT_FULL_NAME = "EDIT_FULL_NAME"
 EDIT_BIRTH_YEAR = "EDIT_BIRTH_YEAR"
 EDIT_EDUCATION = "EDIT_EDUCATION"
 EDIT_OCCUPATION = "EDIT_OCCUPATION"
+SELECT_OCCUPATION = "SELECT_OCCUPATION"
 EDIT_PHONE = "EDIT_PHONE"
 
 # Callback data to directly start profile editing (e.g., from another menu)
@@ -131,13 +134,14 @@ TEXT_MAIN_MENU_REGISTRATION = "📝 ثبت نام"
 TEXT_MAIN_MENU_EDIT_PROFILE = "👤 ویرایش پروفایل"
 TEXT_MAIN_MENU_SUPPORT = "🤝🏻 پشتیبانی"
 TEXT_MAIN_MENU_RULES = "⚠ قوانین"
-TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🎫 خرید اشتراک"
+TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🎫 خرید محصولات"
 
 # Profile Editing Callback Data
 CALLBACK_PROFILE_EDIT_FULLNAME = "edit_profile_fullname"
 CALLBACK_PROFILE_EDIT_BIRTHYEAR = "edit_profile_birthyear"
 CALLBACK_PROFILE_EDIT_EDUCATION = "edit_profile_education"
 CALLBACK_PROFILE_EDIT_OCCUPATION = "edit_profile_occupation"
+CALLBACK_PROFILE_EDIT_OCCUPATION_CONFIRM = "edit_profile_occupation_confirm"
 CALLBACK_PROFILE_EDIT_PHONE = "edit_profile_phone"
 CALLBACK_PROFILE_EDIT_BACK_TO_MENU = "edit_profile_back_to_menu"
 CALLBACK_PROFILE_EDIT_CANCEL = "edit_profile_cancel"
@@ -152,11 +156,11 @@ PROFILE_EDIT_MENU_PROMPT = "کدام بخش از اطلاعات خود را می
 PROFILE_EDIT_FULL_NAME = "لطفاً نام و نام خانوادگی جدید خود را وارد کنید:"
 PROFILE_EDIT_BIRTH_YEAR = "لطفاً سال تولد جدید خود را به صورت عدد شمسی وارد کنید (مثال: 1370):"
 PROFILE_EDIT_EDUCATION = "لطفاً میزان تحصیلات جدید خود را از گزینه‌های زیر انتخاب کنید:"
-PROFILE_EDIT_OCCUPATION = "لطفاً شغل جدید خود را از گزینه‌های زیر انتخاب کنید:"
+PROFILE_EDIT_OCCUPATION = "لطفاً حیطه فعالیت خود را از گزینه‌های زیر انتخاب کنید:"
 PROFILE_EDIT_FIELD_SUCCESS = "✅ {field_name} شما با موفقیت به‌روزرسانی شد."
 PROFILE_EDIT_CANCELLED = "عملیات ویرایش اطلاعات لغو شد."
 PROFILE_EDIT_FIELD_CANCELLED = "ویرایش {field_name} لغو شد."
-PROFILE_INVALID_BIRTHYEAR = "سال تولد وارد شده معتبر نیست. لطفاً یک سال تولد شمسی معتبر وارد کنید (بین ۱۳۲۰ تا ۱۳۹۴)."
+PROFILE_INVALID_BIRTHYEAR = "سال تولد وارد شده معتبر نیست. لطفاً یک سال تولد شمسی معتبر وارد کنید (بین ۱۳۲۰ تا ۱۳۸۶)."
 PROFILE_ASK_PHONE_EDIT_WITH_CONTACT = "لطفاً شماره تلفن جدید خود را وارد کنید یا با دکمه زیر به اشتراک بگذارید:"
 REPLY_KEYBOARD_BACK_TO_EDIT_MENU_TEXT = "بازگشت به منوی ویرایش"
 
