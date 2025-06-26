@@ -8,9 +8,11 @@ from database.queries import DatabaseQueries as Database # Added Database import
 import datetime
 from typing import Optional # Added for type hinting
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from typing import Optional, Tuple
+from telegram import ChatMember, ChatMemberUpdated
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters, ContextTypes, 
-    CallbackQueryHandler, ConversationHandler, TypeHandler # Added TypeHandler
+    CallbackQueryHandler, ConversationHandler, TypeHandler, ChatMemberHandler # Added ChatMemberHandler
 )
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, Forbidden
@@ -89,14 +91,23 @@ class ManagerBot:
         self.setup_tasks()
         # Setup command and message handlers
         self.setup_handlers()
+
+        # Add ChatMemberHandler to check new members
+        self.application.add_handler(ChatMemberHandler(self.handle_chat_member_update, ChatMemberHandler.CHAT_MEMBER))
         
         # Add error handler for ManagerBot
         self.application.add_error_handler(manager_bot_error_handler)
 
     def setup_tasks(self):
         """Setup background tasks"""
-        # Add any background tasks here if needed
-        pass
+        self.logger.info("Scheduling periodic membership validation job.")
+        job_queue = self.application.job_queue
+        job_queue.run_repeating(
+            self.validate_memberships,
+            interval=60,  # Run every 60 seconds
+            first=10,     # Start 10 seconds after the bot starts
+            name="validate_memberships_job"
+        )
 
     async def start(self):
         """Start the bot"""
@@ -123,6 +134,53 @@ class ManagerBot:
     async def log_all_updates(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Logs all incoming updates for debugging purposes."""
         self.logger.info(f"GENERIC_UPDATE_HANDLER: Received update of type {type(update)}: {update}")
+
+    def is_user_authorized(self, user_id: int) -> bool:
+        """Check if a user has an active subscription."""
+        # This is now synchronous as DB queries are synchronous
+        active_subscriptions = DatabaseQueries.get_all_active_subscribers()
+        # fetchall() returns a list of tuples, so we access by index.
+        active_user_ids = {sub[0] for sub in active_subscriptions}
+        return user_id in active_user_ids
+
+    async def handle_chat_member_update(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle chat member updates to kick unauthorized users."""
+        result = self.extract_status_change(update.chat_member)
+        if result is None:
+            return
+
+        was_member, is_member = result
+        user = update.chat_member.new_chat_member.user
+        chat = update.chat_member.chat
+
+        if not was_member and is_member:
+            self.logger.info(f"User {user.id} ({user.first_name}) joined chat {chat.id} ({chat.title}). Checking authorization...")
+            if not self.is_user_authorized(user.id):
+                self.logger.warning(f"User {user.id} is NOT authorized. Kicking from {chat.id}.")
+                try:
+                    await context.bot.ban_chat_member(chat_id=chat.id, user_id=user.id)
+                    await context.bot.unban_chat_member(chat_id=chat.id, user_id=user.id)
+                    self.logger.info(f"Successfully kicked unauthorized user {user.id} from {chat.id}")
+                except Exception as e:
+                    self.logger.error(f"Failed to kick user {user.id} from {chat.id}: {e}")
+            else:
+                self.logger.info(f"User {user.id} is authorized.")
+
+    @staticmethod
+    def extract_status_change(chat_member_update: ChatMemberUpdated) -> Optional[Tuple[bool, bool]]:
+        """Takes a ChatMemberUpdated instance and extracts whether the 'old' and 'new' members are part of the chat."""
+        status_change = chat_member_update.difference().get("status")
+        if status_change is None:
+            return None
+
+        old_is_member, new_is_member = status_change
+        
+        member_statuses = [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER]
+
+        was_member = old_is_member in member_statuses
+        is_member = new_is_member in member_statuses
+
+        return was_member, is_member
 
     async def stop(self):
         """Stop the bot"""
