@@ -138,8 +138,10 @@ class ManagerBot:
     def is_user_authorized(self, user_id: int) -> bool:
         """Check if a user has an active subscription."""
         # This is now synchronous as DB queries are synchronous
+        # Deny if user is explicitly banned
+        if DatabaseQueries.is_user_banned(user_id):
+            return False
         active_subscriptions = DatabaseQueries.get_all_active_subscribers()
-        # fetchall() returns a list of tuples, so we access by index.
         active_user_ids = {sub[0] for sub in active_subscriptions}
         return user_id in active_user_ids
 
