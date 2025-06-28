@@ -1111,18 +1111,26 @@ class DatabaseQueries:
                 # This query selects distinct user_ids to avoid processing the same user multiple times
                 # if they have multiple non-active records.
                 # It also ensures status is not NULL or empty.
+                # Fetch users whose subscription status is already non-active OR whose active subscription has expired.
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 query = """
-                    SELECT DISTINCT user_id, status 
-                    FROM subscriptions 
-                    WHERE status IS NOT NULL AND status != '' AND status != 'active';
+                    SELECT DISTINCT user_id,
+                           CASE
+                               WHEN status = 'active' AND end_date <= ? THEN 'expired'
+                               ELSE status
+                           END AS status
+                    FROM subscriptions
+                    WHERE (status IS NOT NULL AND status != '' AND status != 'active')
+                       OR (status = 'active' AND end_date <= ?);
                 """
+                params = (now, now)
                 # Note: If a user has NO record in the subscriptions table at all,
                 # they won't be caught by this query. This query targets users
                 # who HAD a subscription that is now in a non-active state.
                 # To catch users in the 'users' table but not in 'subscriptions',
                 # a more complex query (e.g., LEFT JOIN) would be needed.
                 
-                db.execute(query)
+                db.execute(query, params)
                 records = db.fetchall()
                 for row in records:
                     users.append({'user_id': row[0], 'status': row[1]})
