@@ -12,6 +12,7 @@ ENV/
 
 # Database
 database/data/*.db
+migrate.py
 
 # Logs
 logs/
@@ -27,3 +28,4 @@ bot_activity.log
 # OS generated files
 .DS_Store
 Thumbs.db
+bot_persistance.pkl
