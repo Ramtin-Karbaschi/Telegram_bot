@@ -145,11 +145,11 @@ PAYMENT_ERROR_MESSAGE = """
 
 ZARINPAL_PAYMENT_NOT_FOUND_MESSAGE_USER = "اطلاعات پرداخت با این مشخصات یافت نشد. لطفاً با پشتیبانی تماس بگیرید."
 ZARINPAL_PAYMENT_ALREADY_VERIFIED_MESSAGE_USER = "این پرداخت قبلاً با موفقیت تأیید شده است و اشتراک شما فعال می‌باشد."
-ZARINPAL_PAYMENT_FAILED_MESSAGE_TRY_AGAIN_USER = "پرداخت شما ناموفق بود یا توسط شما لغو شد (وضعیت: {status}). لطفاً دوباره تلاش کنید یا روش پرداخت دیگری را انتخاب نمایید."
-ZARINPAL_PAYMENT_VERIFIED_SUCCESS_AND_SUB_ACTIVATED_MESSAGE_USER = "پرداخت شما با موفقیت تأیید شد. اشتراک پلن '{plan_name}' برای شما فعال گردید. \n (کد رهگیری: {ref_id})"
-ZARINPAL_PAYMENT_VERIFIED_SUCCESS_SUB_ACTIVATION_FAILED_MESSAGE_USER = "پرداخت شما با موفقیت تأیید شد (کد رهگیری: {ref_id})، اما در فعال‌سازی اشتراک خطایی رخ داد. لطفاً فوراً با پشتیبانی تماس بگیرید."
-ZARINPAL_PAYMENT_VERIFIED_SUCCESS_PLAN_NOT_FOUND_MESSAGE_USER = "پرداخت شما با موفقیت تأیید شد (کد رهگیری: {ref_id})، اما اطلاعات پلن یافت نشد. لطفاً با پشتیبانی تماس بگیرید."
-ZARINPAL_PAYMENT_VERIFICATION_FAILED_MESSAGE_USER = "تأیید پرداخت با خطا مواجه شد (کد خطا: {error_code}). در صورت کسر وجه، مبلغ طی ۷۲ ساعت به حساب شما باز خواهد گشت. لطفاً با پشتیبانی تماس بگیرید."
+ZARINPAL_PAYMENT_FAILED_MESSAGE_TRY_AGAIN_USER = "پرداخت شما ناموفق بود یا توسط شما لغو شد. لطفاً دوباره تلاش کنید یا روش پرداخت دیگری را انتخاب نمایید.\n(وضعیت: {status})"
+ZARINPAL_PAYMENT_VERIFIED_SUCCESS_AND_SUB_ACTIVATED_MESSAGE_USER = "پرداخت شما با موفقیت تأیید شد. اشتراک پلن '{plan_name}' برای شما فعال گردید.\n(کد رهگیری: {ref_id})"
+ZARINPAL_PAYMENT_VERIFIED_SUCCESS_SUB_ACTIVATION_FAILED_MESSAGE_USER = "پرداخت شما با موفقیت تأیید شد، اما در فعال‌سازی اشتراک خطایی رخ داد. لطفاً فوراً با پشتیبانی تماس بگیرید.\n(کد رهگیری: {ref_id})"
+ZARINPAL_PAYMENT_VERIFIED_SUCCESS_PLAN_NOT_FOUND_MESSAGE_USER = "پرداخت شما با موفقیت تأیید شد، اما اطلاعات پلن یافت نشد. لطفاً با پشتیبانی تماس بگیرید.\n(کد رهگیری: {ref_id})"
+ZARINPAL_PAYMENT_VERIFICATION_FAILED_MESSAGE_USER = "تأیید پرداخت با خطا مواجه شد. در صورت کسر وجه، مبلغ طی ۷۲ ساعت به حساب شما باز خواهد گشت.\nدر صورت عدم بازگشت وجه بعد از مدت زمان مذکور، لطفاً با پشتیبانی تماس بگیرید.\n(کد خطا: {error_code})"
 ZARINPAL_PAYMENT_CANCELLED_MESSAGE_USER = "پرداخت توسط شما لغو شد."
 GENERAL_ERROR_MESSAGE_USER = "متاسفانه خطایی رخ داده است. لطفا دوباره تلاش کنید یا با پشتیبانی تماس بگیرید."
 
@@ -226,9 +226,9 @@ TICKET_REOPENED_MESSAGE = """
 MEMBERSHIP_EXPIRED = """
 ⚠️ کاربر گرامی،
 
-متأسفانه اشتراک شما در آکادمی دارایی به پایان رسیده است و دسترسی شما به کانال غیرفعال شده است.
+متأسفانه اشتراک شما در آکادمی دارایی به پایان رسیده است و دسترسی شما به خدمات ما غیرفعال شده است.
 
-برای تمدید اشتراک، لطفاً به ربات @Daraei_Academy_bot مراجعه کنید و از گزینه "وضعیت اشتراک من" استفاده نمایید.
+برای تمدید اشتراک، لطفاً به ربات @Daraei_Academy_bot مراجعه کنید و از گزینه "خرید محصولات" استفاده نمایید.
 """
 
 # Admin panel callback patterns
