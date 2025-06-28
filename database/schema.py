@@ -153,6 +153,14 @@ CREATE TABLE IF NOT EXISTS user_activity_logs (
 )
 '''
 
+BANNED_USERS_TABLE = '''
+CREATE TABLE IF NOT EXISTS banned_users (
+    user_id INTEGER PRIMARY KEY,
+    reason TEXT,
+    created_at TEXT NOT NULL
+)
+'''
+
 # List of all tables to create
 ALL_TABLES = [
     USERS_TABLE,
@@ -163,6 +171,7 @@ ALL_TABLES = [
     TICKET_MESSAGES_TABLE,
     INVITE_LINKS_TABLE,
     NOTIFICATIONS_TABLE,
+    BANNED_USERS_TABLE,
     CRYPTO_PAYMENTS_TABLE,
     USER_ACTIVITY_LOGS_TABLE
 ]
