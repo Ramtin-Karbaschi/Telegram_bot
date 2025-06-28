@@ -1113,10 +1113,13 @@ class DatabaseQueries:
                 # It also ensures status is not NULL or empty.
                 # Fetch users whose subscription status is already non-active OR whose active subscription has expired.
                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # First, mark any expired active subscriptions as 'inactive' so downstream logic stays simple
+                db.execute("UPDATE subscriptions SET status = 'inactive' WHERE status = 'active' AND end_date <= ?", (now,))
+                db.commit()
                 query = """
                     SELECT DISTINCT user_id,
                            CASE
-                               WHEN status = 'active' AND end_date <= ? THEN 'expired'
+                               WHEN status = 'active' AND end_date <= ? THEN 'inactive'
                                ELSE status
                            END AS status
                     FROM subscriptions
@@ -1141,13 +1144,90 @@ class DatabaseQueries:
             finally:
                 db.close()
         return users
-    
 
-
-
-        
     @staticmethod
-    def close_ticket(self, ticket_id, admin_id):
+    def mark_expired_active_subscriptions():
+        """Set status='inactive' for active subscriptions whose end_date has passed. Returns number of rows changed."""
+        db = Database()
+        rows_updated = 0
+        if db.connect():
+            try:
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                db.execute(
+                    "UPDATE subscriptions SET status = 'inactive' WHERE status = 'active' AND end_date <= ?",
+                    (now,)
+                )
+                if hasattr(db.cursor, 'rowcount'):
+                    rows_updated = db.cursor.rowcount
+                db.commit()
+            except sqlite3.Error as e:
+                print(f"SQLite error in mark_expired_active_subscriptions: {e}")
+                if db.conn:
+                    db.conn.rollback()
+            finally:
+                db.close()
+        return rows_updated
+
+    # ---------------- Banned users helpers ----------------
+    @staticmethod
+    def add_banned_user(user_id: int, reason: str = None):
+        """Insert user into banned_users table. Returns True if inserted."""
+        db = Database()
+        if db.connect():
+            try:
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                db.execute(
+                    "INSERT OR REPLACE INTO banned_users (user_id, reason, created_at) VALUES (?, ?, ?);",
+                    (user_id, reason, now)
+                )
+                db.commit()
+                return True
+            except sqlite3.Error as e:
+                print(f"SQLite error in add_banned_user: {e}")
+                if db.conn:
+                    db.conn.rollback()
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def remove_banned_user(user_id: int):
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("DELETE FROM banned_users WHERE user_id = ?", (user_id,))
+                db.commit()
+                return True
+            except sqlite3.Error as e:
+                print(f"SQLite error in remove_banned_user: {e}")
+                if db.conn:
+                    db.conn.rollback()
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def is_user_banned(user_id: int) -> bool:
+        db = Database()
+        if db.connect():
+            db.execute("SELECT 1 FROM banned_users WHERE user_id = ? LIMIT 1", (user_id,))
+            result = db.fetchone()
+            db.close()
+            return result is not None
+        return False
+
+    @staticmethod
+    def get_all_banned_users():
+        db = Database()
+        if db.connect():
+            db.execute("SELECT user_id FROM banned_users")
+            users = [row[0] for row in db.fetchall()]
+            db.close()
+            return users
+        return []
+
+    @staticmethod
+    def close_ticket(ticket_id, admin_id):
         try:
             query = """
             UPDATE tickets 
