@@ -235,7 +235,8 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
         # This should ideally not happen if the user is interacting with this part
         no_user_message = "اطلاعات کاربری شما یافت نشد. لطفاً مجدداً با دستور /start شروع کنید."
         if query:
-            await query.message.edit_text(no_user_message)
+            await query.message.delete()
+            await query.message.reply_text(no_user_message)
         else:
             await update.message.reply_text(no_user_message)
         return ConversationHandler.END
@@ -396,10 +397,25 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
 
     reply_markup = InlineKeyboardMarkup(keyboard_buttons)
 
+    # To ensure a consistent user experience, whether the action is triggered by a command or a callback query,
+    # we will send a new message in both cases. If it's a callback query, we first delete the original message.
     if query:
-        await query.message.edit_text(text=final_message, reply_markup=reply_markup, parse_mode='HTML')
+        await query.message.delete()
+        # Since we've deleted the original message, we need to send a new one.
+        # We use context.bot.send_message because query.message.reply_text might not be appropriate after deletion.
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=final_message,
+            reply_markup=InlineKeyboardMarkup(keyboard_buttons),
+            parse_mode=ParseMode.HTML
+        )
     else:
-        await update.message.reply_text(text=final_message, reply_markup=reply_markup, parse_mode='HTML')
+        # For a direct command, just reply as usual.
+        await update.message.reply_text(
+            text=final_message,
+            reply_markup=InlineKeyboardMarkup(keyboard_buttons),
+            parse_mode=ParseMode.HTML
+        )
 
     return SUBSCRIPTION_STATUS
 
