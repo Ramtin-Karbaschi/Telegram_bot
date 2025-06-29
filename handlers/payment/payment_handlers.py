@@ -54,7 +54,7 @@ PROCESS_PAYMENT = 2
 VERIFY_PAYMENT = 3
 
 async def back_to_main_menu_from_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بازگشت به منوی اصلی و پاک‌سازی context پرداخت"""
+    """بازگشت به منو اصلی و پاک‌سازی context پرداخت"""
     from handlers.subscription.subscription_handlers import view_active_subscription
     query = update.callback_query
     user_id = update.effective_user.id
@@ -323,6 +323,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
             message_text = (
                 f"برای تکمیل خرید محصولات «{plan_name}» به مبلغ {amount_for_zarinpal:,} ریال، لطفاً از طریق لینک زیر پرداخت خود را انجام دهید.\n\n"
+                f"⛔ لطفا پیش از ورود به درگاه پرداخت، فیلترشکن خود را قطع کنید.\n"
                 f"⚠️ <b>مهم:</b> پس از تکمیل پرداخت در سایت زرین‌پال، <b>روی دکمه زیر کلیک کنید</b> تا اشتراک شما فعال شود."
             )
             await query.message.edit_text(
@@ -1015,7 +1016,7 @@ async def cancel_subscription_flow(update: Update, context: ContextTypes.DEFAULT
     for key in ['selected_plan_details', 'live_usdt_price', 'payment_method', 'payment_info', 'payment_db_id', 'zarinpal_authority']:
         context.user_data.pop(key, None)
 
-    cancel_message = "فرایند خرید محصولات لغو شد. برای شروع مجدد، از منوی اصلی اقدام کنید."
+    cancel_message = "فرایند خرید محصولات لغو شد. برای شروع مجدد، از منو اصلی اقدام کنید."
     
     query = update.callback_query
     if query:
