@@ -444,7 +444,7 @@ class MainBot:
 
         # Define bot commands
         commands = [
-            BotCommand("start", "شروع و نمایش منوی اصلی"),
+            BotCommand("start", "شروع و نمایش منو اصلی"),
             BotCommand("register", "📝 ثبت نام"),
             BotCommand("status", "👤 وضعیت اشتراک من"),
             BotCommand("help", "💡 راهنما"),
