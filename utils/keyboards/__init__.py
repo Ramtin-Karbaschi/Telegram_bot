@@ -192,7 +192,7 @@ def get_support_menu_keyboard(tickets=None):
     keyboard.append([InlineKeyboardButton("🎫 تیکت جدید", callback_data="new_ticket")])
     
     # Add back button
-    keyboard.append([InlineKeyboardButton("↩ بازگشت به منوی اصلی", callback_data="back_to_main")])
+    keyboard.append([InlineKeyboardButton("↩ بازگشت به منو اصلی", callback_data="back_to_main")])
     
     return InlineKeyboardMarkup(keyboard)
 
@@ -219,7 +219,7 @@ def get_profile_edit_menu_keyboard(user_id):
         [InlineKeyboardButton(get_button_text('phone', "شماره همراه"), callback_data=constants.CALLBACK_PROFILE_EDIT_PHONE)],
         [InlineKeyboardButton(get_button_text('city', "شهر محل سکونت"), callback_data=constants.CALLBACK_PROFILE_EDIT_CITY)],
         [InlineKeyboardButton(get_button_text('email', "ایمیل"), callback_data=constants.CALLBACK_PROFILE_EDIT_EMAIL)],
-        [InlineKeyboardButton("↩ بازگشت به منوی اصلی", callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU_FROM_EDIT)]
+        [InlineKeyboardButton("↩ بازگشت به منو اصلی", callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU_FROM_EDIT)]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -232,7 +232,7 @@ def get_education_inline_keyboard(back_callback=constants.CALLBACK_PROFILE_EDIT_
         [InlineKeyboardButton("کارشناسی", callback_data="education_کارشناسی")],
         [InlineKeyboardButton("کارشناسی ارشد", callback_data="education_کارشناسی ارشد")],
         [InlineKeyboardButton("دکتری", callback_data="education_دکتری")],
-        [InlineKeyboardButton("↩ لغو و بازگشت به منوی ویرایش", callback_data=back_callback)]
+        [InlineKeyboardButton("↩ لغو و بازگشت به منو ویرایش", callback_data=back_callback)]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -249,7 +249,7 @@ def get_occupation_inline_keyboard(selected_occupations=None, back_callback=cons
         keyboard.append([InlineKeyboardButton(text, callback_data=f"occupation_{occ}")])
 
     keyboard.append([InlineKeyboardButton("✅ تایید و بازگشت", callback_data=constants.CALLBACK_PROFILE_EDIT_OCCUPATION_CONFIRM)])
-    keyboard.append([InlineKeyboardButton("↩ لغو و بازگشت به منوی ویرایش", callback_data=back_callback)])
+    keyboard.append([InlineKeyboardButton("↩ لغو و بازگشت به منو ویرایش", callback_data=back_callback)])
     
     return InlineKeyboardMarkup(keyboard)
 
@@ -258,7 +258,7 @@ def get_edit_field_action_keyboard(cancel_callback=constants.CALLBACK_PROFILE_ED
     keyboard = [
         [
             # InlineKeyboardButton("لغو ویرایش این مورد", callback_data=cancel_callback),
-            InlineKeyboardButton("↩ لغو و بازگشت به منوی ویرایش", callback_data=back_to_menu_callback)
+            InlineKeyboardButton("↩ لغو و بازگشت به منو ویرایش", callback_data=back_to_menu_callback)
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -270,7 +270,7 @@ def get_phone_edit_keyboard(back_callback=constants.CALLBACK_PROFILE_EDIT_BACK_T
     reply_keyboard_markup = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton("📱 اشتراک گذاری شماره تماس", request_contact=True)]
-            # [KeyboardButton("↩ لغو و بازگشت به منوی ویرایش")]
+            # [KeyboardButton("↩ لغو و بازگشت به منو ویرایش")]
         ],
         resize_keyboard=True,
         one_time_keyboard=True
@@ -278,7 +278,7 @@ def get_phone_edit_keyboard(back_callback=constants.CALLBACK_PROFILE_EDIT_BACK_T
     logger.debug(f"Phone edit keyboard created with back_callback: {back_callback}")
     # InlineKeyboard for fallback if user types or wants to go back without using ReplyKeyboard
     inline_keyboard_markup = InlineKeyboardMarkup([
-         [InlineKeyboardButton("↩ لغو و بازگشت به منوی ویرایش", callback_data=back_callback)]
+         [InlineKeyboardButton("↩ لغو و بازگشت به منو ویرایش", callback_data=back_callback)]
     ])
     return reply_keyboard_markup, inline_keyboard_markup
 
