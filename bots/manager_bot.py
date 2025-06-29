@@ -127,6 +127,24 @@ class ManagerBot:
         await self.validate_memberships(context=None) # Assuming validate_memberships can handle context=None
         
         self.logger.info("Starting Manager Bot polling...")
+        # Schedule daily reminder task at 10:00 AM Tehran time
+        async def schedule_daily_reminders():
+            while True:
+                now = datetime.datetime.now()
+                # Schedule for 10:00 AM
+                target_time = datetime.datetime.combine(now.date(), datetime.time(17, 35))
+                if now > target_time:
+                    target_time += datetime.timedelta(days=1)
+                
+                # Calculate sleep time
+                sleep_seconds = (target_time - now).total_seconds()
+                self.logger.info(f"Next reminder check scheduled in {sleep_seconds} seconds")
+                await asyncio.sleep(sleep_seconds)
+                
+                # Send reminders
+                await self.send_expiration_reminders()
+        
+        asyncio.create_task(schedule_daily_reminders())
         # Start polling for updates
         await self.application.updater.start_polling(allowed_updates=self.application.allowed_updates)
         self.logger.info("Manager Bot started")
@@ -459,6 +477,126 @@ class ManagerBot:
         except Exception as e:
             self.logger.error(f"Error sending expiration reminders: {e}")
     
+    async def send_expiration_reminders(self):
+        """
+        Send daily reminders to users whose subscriptions will expire in the next 5 days.
+        Each user will receive a reminder for each day from 5 days before expiration until the last day.
+        """
+        try:
+            # Get active subscriptions expiring within 5 days
+            expiring_subscriptions = DatabaseQueries.get_active_subscriptions_expiring_within()
+            
+            if not expiring_subscriptions:
+                self.logger.info("No subscriptions expiring in the next 5 days.")
+                return
+            
+            self.logger.info(f"Found {len(expiring_subscriptions)} subscriptions expiring in the next 5 days.")
+            
+            # Send reminder to each user
+            for subscription in expiring_subscriptions:
+                user_id = subscription['user_id']
+                days_left = subscription['days_left']
+                
+                # Check if we've already sent a reminder today for this specific days_left
+                today = datetime.now().strftime("%Y-%m-%d")
+                notification_type = f"expiration_reminder_{days_left}"
+                already_notified = DatabaseQueries.get_notifications(
+                    user_id=user_id,
+                    type=notification_type,
+                    date=today
+                )
+                
+                if already_notified:
+                    continue
+                
+                try:
+                    # Send reminder message
+                    await self.application.bot.send_message(
+                        chat_id=user_id,
+                        text=f"⚠️ یادآوری تمدید اشتراک\n"
+                           f"\n"
+                           f"{days_left} روز تا اتمام اشتراک شما باقی مانده است.\n"
+                           f"لطفا برای ادامه استفاده از خدمات ما، اشتراک خود را تمدید کنید.\n"
+                           f"\n"
+                           f"برای تمدید، روی دکمه زیر کلیک کنید:",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("تمدید اشتراک", callback_data="start_subscription_flow")]
+                        ])
+                    )
+                    
+                    # Record the notification with specific days_left in type
+                    DatabaseQueries.add_notification(
+                        user_id=user_id,
+                        notification_type=notification_type,
+                        message=f"Reminder sent for subscription expiring in {days_left} days"
+                    )
+                    
+                    self.logger.info(f"Sent expiration reminder to user {user_id} (days left: {days_left})")
+                    
+                except Exception as e:
+                    self.logger.error(f"Error sending expiration reminder to user {user_id}: {e}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error in send_expiration_reminders: {e}")
+        """
+        Send reminders to users whose subscriptions will expire in the next 5 days.
+        """
+        try:
+            # Get active subscriptions expiring within 5 days
+            expiring_subscriptions = DatabaseQueries.get_active_subscriptions_expiring_within(5)
+            
+            if not expiring_subscriptions:
+                self.logger.info("No subscriptions expiring in the next 5 days.")
+                return
+            
+            self.logger.info(f"Found {len(expiring_subscriptions)} subscriptions expiring in the next 5 days.")
+            
+            # Send reminder to each user
+            for subscription in expiring_subscriptions:
+                user_id = subscription['user_id']
+                days_left = subscription['days_left']
+                
+                # Check if we've already sent a reminder today
+                today = datetime.now().strftime("%Y-%m-%d")
+                already_notified = DatabaseQueries.get_notifications(
+                    user_id=user_id,
+                    type="expiration_reminder",
+                    date=today
+                )
+                
+                if already_notified:
+                    continue
+                
+                try:
+                    # Send reminder message
+                    await self.application.bot.send_message(
+                        chat_id=user_id,
+                        text=f"⚠️ یادآوری تمدید اشتراک\n"
+                           f"\n"
+                           f"{days_left} روز تا اتمام اشتراک شما باقی مانده است.\n"
+                           f"لطفا برای ادامه استفاده از خدمات ما، اشتراک خود را تمدید کنید.\n"
+                           f"\n"
+                           f"برای تمدید، روی دکمه زیر کلیک کنید:",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("تمدید اشتراک", callback_data="start_subscription_flow")]
+                        ])
+                    )
+                    
+                    # Record the notification
+                    DatabaseQueries.add_notification(
+                        user_id=user_id,
+                        notification_type="expiration_reminder",
+                        message=f"Reminder sent for subscription expiring in {days_left} days"
+                    )
+                    
+                    self.logger.info(f"Sent expiration reminder to user {user_id} (days left: {days_left})")
+                    
+                except Exception as e:
+                    self.logger.error(f"Error sending expiration reminder to user {user_id}: {e}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error in send_expiration_reminders: {e}")
+
     def setup_handlers(self):
         """Setup command, message, and callback query handlers."""
         # Command Handlers for admin actions
