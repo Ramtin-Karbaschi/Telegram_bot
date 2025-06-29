@@ -1304,7 +1304,7 @@ class DatabaseQueries:
             try:
                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 db.execute(
-                    "INSERT INTO notifications (user_id, type, message, created_at) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO notifications (user_id, type, content, sent_date) VALUES (?, ?, ?, ?)",
                     (user_id, notification_type, message or '', now)
                 )
                 db.commit()
@@ -1331,7 +1331,7 @@ class DatabaseQueries:
                     FROM notifications 
                     WHERE user_id = ? 
                     AND type = ? 
-                    AND date(created_at) = ?
+                    AND date(sent_date) = ?
                     LIMIT 1
                 """
                 db.execute(query, (user_id, notification_type, date))
