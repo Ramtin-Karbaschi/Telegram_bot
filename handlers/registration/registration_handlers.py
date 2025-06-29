@@ -61,7 +61,7 @@ async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Check if user is already registered (with complete profile)
     if Database.is_registered(user_id):
         await effective_message.reply_text(
-            "شما قبلاً ثبت‌نام کرده‌اید! می‌توانید از منوی اصلی برای مدیریت اشتراک خود استفاده کنید.",
+            "شما قبلاً ثبت‌نام کرده‌اید! می‌توانید از منو اصلی برای مدیریت اشتراک خود استفاده کنید.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(TEXT_GENERAL_BACK_TO_MAIN_MENU, callback_data=CALLBACK_BACK_TO_MAIN_MENU)]
             ])
@@ -177,7 +177,7 @@ async def get_fullname(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Notify user of successful initial registration
     await update.message.reply_text(
-        "✅ ثبت نام اولیه شما با موفقیت انجام شد. \n برای تکمیل اطلاعات خود و استفاده از امکانات ربات، لطفاً از منوی «پروفایل کاربری» اقدام کنید.",
+        "✅ ثبت نام اولیه شما با موفقیت انجام شد. \n برای تکمیل اطلاعات خود و استفاده از امکانات ربات، لطفاً از منو «پروفایل کاربری» اقدام کنید.",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton(TEXT_GENERAL_BACK_TO_MAIN_MENU, callback_data=CALLBACK_BACK_TO_MAIN_MENU)]
         ])
@@ -288,7 +288,7 @@ async def get_occupation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel the registration process"""
     await update.message.reply_text(
-        "ثبت‌نام لغو شد. می‌توانید از منوی اصلی گزینه مورد نظر خود را انتخاب کنید.",
+        "ثبت‌نام لغو شد. می‌توانید از منو اصلی گزینه مورد نظر خود را انتخاب کنید.",
         reply_markup=get_main_menu_keyboard()
     )
     return ConversationHandler.END
