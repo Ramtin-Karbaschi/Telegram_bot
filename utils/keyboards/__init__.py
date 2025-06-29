@@ -219,7 +219,7 @@ def get_profile_edit_menu_keyboard(user_id):
         [InlineKeyboardButton(get_button_text('phone', "شماره همراه"), callback_data=constants.CALLBACK_PROFILE_EDIT_PHONE)],
         [InlineKeyboardButton(get_button_text('city', "شهر محل سکونت"), callback_data=constants.CALLBACK_PROFILE_EDIT_CITY)],
         [InlineKeyboardButton(get_button_text('email', "ایمیل"), callback_data=constants.CALLBACK_PROFILE_EDIT_EMAIL)],
-        [InlineKeyboardButton("↩ بازگشت به منو اصلی", callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU_FROM_EDIT)]
+        [InlineKeyboardButton("↩ بازگشت به پروفایل", callback_data="show_status")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
