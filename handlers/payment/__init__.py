@@ -9,13 +9,14 @@ from handlers.payment.payment_handlers import (
     # The main conversation handler for payments
     payment_conversation,
 
-    # Conversation states (optional, but good for reference)
+    # Conversation states
     SELECT_PLAN,
+    ASK_DISCOUNT,
+    VALIDATE_DISCOUNT,
     SELECT_PAYMENT_METHOD,
-    PROCESS_PAYMENT,
     VERIFY_PAYMENT,
 
-    # New export
+    # Other handlers
     show_qr_code_handler,
     verify_payment_status,
 )
@@ -24,8 +25,9 @@ __all__ = [
     "start_subscription_flow",
     "payment_conversation",
     "SELECT_PLAN",
+    "ASK_DISCOUNT",
+    "VALIDATE_DISCOUNT",
     "SELECT_PAYMENT_METHOD",
-    "PROCESS_PAYMENT",
     "VERIFY_PAYMENT",
     "show_qr_code_handler",
     "verify_payment_status",

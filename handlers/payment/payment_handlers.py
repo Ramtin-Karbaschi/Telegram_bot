@@ -6,7 +6,7 @@ from services.crypto_payment_service import CryptoPaymentService
 from services.zarinpal_service import ZarinpalPaymentService # Added for Zarinpal
 from config import CRYPTO_WALLET_ADDRESS, CRYPTO_PAYMENT_TIMEOUT_MINUTES, RIAL_GATEWAY_URL, CRYPTO_GATEWAY_URL, PAYMENT_CONVERSATION_TIMEOUT # Added CRYPTO_WALLET_ADDRESS, CRYPTO_PAYMENT_TIMEOUT_MINUTES
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, LabeledPrice, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ParseMode # Added for message formatting
 from telegram.error import BadRequest  # Handle message not modified
 import config # Added for TELEGRAM_CHANNELS_INFO
@@ -27,7 +27,7 @@ from config import RIAL_GATEWAY_URL, CRYPTO_GATEWAY_URL # Assuming these are sti
 from utils.keyboards import (
     get_subscription_plans_keyboard, get_payment_methods_keyboard,
     get_back_to_plans_button, get_back_to_payment_methods_button,
-    get_main_menu_keyboard
+    get_main_menu_keyboard, get_ask_discount_keyboard, get_back_to_ask_discount_keyboard
 )
 
 from utils.constants import (
@@ -48,10 +48,7 @@ from utils.user_actions import UserAction
 from handlers.subscription.subscription_handlers import activate_or_extend_subscription
 
 # Conversation states
-SELECT_PLAN = 0
-SELECT_PAYMENT_METHOD = 1
-PROCESS_PAYMENT = 2
-VERIFY_PAYMENT = 3
+SELECT_PLAN, ASK_DISCOUNT, VALIDATE_DISCOUNT, SELECT_PAYMENT_METHOD, VERIFY_PAYMENT = range(5)
 
 async def back_to_main_menu_from_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بازگشت به منوی اصلی و پاک‌سازی context پرداخت"""
@@ -101,6 +98,50 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
     context.user_data.pop('selected_plan_details', None)
     context.user_data.pop('live_usdt_price', None)
     return SELECT_PLAN
+
+async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Displays the payment methods with the final price."""
+    query = update.callback_query
+    await query.answer()
+
+    selected_plan = context.user_data.get('selected_plan_details')
+    final_price = context.user_data.get('final_price', selected_plan.get('price'))
+
+    plan_price_irr_formatted = f"{final_price:,}"
+    live_usdt_price = None
+    if final_price:
+        usdt_rate = await get_usdt_to_irr_rate()
+        if usdt_rate:
+            live_usdt_price = convert_irr_to_usdt(final_price, usdt_rate)
+            context.user_data['live_usdt_price'] = live_usdt_price
+
+    plan_price_usdt_formatted = f"{live_usdt_price:.3f}" if live_usdt_price is not None else "N/A"
+    message_text = PAYMENT_METHOD_MESSAGE.format(
+        plan_name=selected_plan.get('name', 'N/A'),
+        plan_price=plan_price_irr_formatted,
+        plan_tether=plan_price_usdt_formatted
+    )
+
+    await query.message.edit_text(
+        text=message_text,
+        reply_markup=get_payment_methods_keyboard(),
+        parse_mode=ParseMode.HTML
+    )
+    return SELECT_PAYMENT_METHOD
+
+async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Asks the user if they have a discount code."""
+    query = update.callback_query
+    await query.answer()
+
+    selected_plan = context.user_data.get('selected_plan_details')
+    message_text = f"شما پلن '{selected_plan['name']}' را انتخاب کرده‌اید. آیا کد تخفیف دارید؟"
+
+    await query.message.edit_text(
+        text=message_text,
+        reply_markup=get_ask_discount_keyboard()
+    )
+    return ASK_DISCOUNT
 
 async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the user's plan selection and proceeds to payment method selection."""
@@ -199,33 +240,10 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return SELECT_PLAN
 
     context.user_data['selected_plan_details'] = dict(selected_plan)
-    plan_price_irr_formatted = f"{int(selected_plan['price']):,}" if selected_plan['price'] is not None else "N/A"
-    usdt_rate = await get_usdt_to_irr_rate()
-    if usdt_rate and selected_plan['price'] is not None:
-        converted_usdt_price = convert_irr_to_usdt(float(selected_plan['price']), usdt_rate)
-        plan_price_usdt_formatted = f"{converted_usdt_price}" if converted_usdt_price is not None else "N/A"
-        if converted_usdt_price is not None:
-            context.user_data['live_usdt_price'] = converted_usdt_price
-    else:
-        plan_price_usdt_formatted = "N/A"
-        logger.warning(f"[select_plan_handler] Could not calculate USDT price for plan {numeric_plan_id}. USDT rate: {usdt_rate}")
+    context.user_data['final_price'] = selected_plan['price'] # Initialize final_price
 
-    message_text = PAYMENT_METHOD_MESSAGE.format(
-        plan_name=selected_plan['name'],
-        plan_price=plan_price_irr_formatted,
-        plan_tether=plan_price_usdt_formatted
-    )
-    logger.info(f"[select_plan_handler] Sending payment methods keyboard for user {user_id}.")
-    keyboard = get_payment_methods_keyboard()
-    for row in keyboard.inline_keyboard:
-        for btn in row:
-            logger.info(f"[select_plan_handler] Button text: {btn.text}, callback_data: {btn.callback_data}")
-    await query.message.edit_text(
-        text=message_text,
-        reply_markup=keyboard
-    )
-    logger.info(f"[select_plan_handler] Returning SELECT_PAYMENT_METHOD for user {user_id}.")
-    return SELECT_PAYMENT_METHOD
+    logger.info(f"[select_plan_handler] Proceeding to ask for discount for user {user_id} and plan {selected_plan['id']}.")
+    return await ask_discount_handler(update, context)
     
 
 
@@ -258,6 +276,13 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.edit_text("خطا: اطلاعات طرح یافت نشد. لطفاً از ابتدا شروع کنید.", reply_markup=get_subscription_plans_keyboard(telegram_id))
         return SELECT_PLAN
 
+    # Retrieve the final price (potentially discounted) from user_data, otherwise get original price
+    price_irr = context.user_data.get('final_price', selected_plan.get('price'))
+    if price_irr is None:
+        logger.error(f"User {telegram_id}: Could not find price for selected plan in user_data.")
+        await query.message.edit_text("خطای سیستمی: قیمت پلن انتخابی یافت نشد. لطفاً مجدداً تلاش کنید.")
+        return SELECT_PLAN
+
     plan_id = selected_plan['id']
     # Fetch full plan with price_tether from DB
     db_plan = Database.get_plan(plan_id)
@@ -269,7 +294,9 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
     if payment_method == 'rial':
         transaction_id = str(uuid.uuid4())[:8].upper()
         context.user_data['transaction_id'] = transaction_id
-        plan_price_irr = selected_plan['price']
+        
+        # Use the potentially discounted price
+        plan_price_irr = price_irr
 
         # Create a detailed description for the payment record in the database
         db_description = f"خرید محصولات {plan_name} (Plan ID: {plan_id}) توسط کاربر ID: {user_db_id}"
@@ -721,6 +748,12 @@ async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         if activation_success:
+            # Increment discount usage if a discount was applied
+            if 'discount_id' in context.user_data:
+                discount_id = context.user_data.get('discount_id')
+                logger.info(f"[verify_payment_status] Incrementing usage for discount ID {discount_id}.")
+                Database.increment_discount_usage(discount_id)
+
             UserAction.log_user_action(
                 telegram_id=telegram_id,
                 user_db_id=user_db_id,
@@ -1029,6 +1062,68 @@ async def cancel_subscription_flow(update: Update, context: ContextTypes.DEFAULT
     return ConversationHandler.END
 
 
+async def prompt_for_discount_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Prompts the user to enter their discount code."""
+    query = update.callback_query
+    await query.answer()
+
+    await query.message.edit_text(
+        text="لطفاً کد تخفیف خود را وارد کنید:",
+        reply_markup=get_back_to_ask_discount_keyboard()
+    )
+    return VALIDATE_DISCOUNT
+
+async def validate_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Validates the discount code entered by the user."""
+    user_id = update.effective_user.id
+    discount_code = update.message.text.strip()
+
+    discount = Database.get_discount_by_code(discount_code)
+    selected_plan = context.user_data.get('selected_plan_details')
+    final_price = selected_plan.get('price')
+
+    error_message = None
+    if not discount:
+        error_message = "کد تخفیف وارد شده معتبر نیست."
+    elif not discount['is_active']:
+        error_message = "این کد تخفیف دیگر فعال نیست."
+    elif discount['start_date'] and datetime.strptime(discount['start_date'], '%Y-%m-%d') > datetime.now():
+        error_message = "زمان استفاده از این کد تخفیف هنوز شروع نشده است."
+    elif discount['end_date'] and datetime.strptime(discount['end_date'], '%Y-%m-%d') < datetime.now():
+        error_message = "زمان استفاده از این کد تخفیف به پایان رسیده است."
+    elif discount['max_uses'] is not None and discount['times_used'] >= discount['max_uses']:
+        error_message = "ظرفیت استفاده از این کد تخفیف به اتمام رسیده است."
+    else:
+        # Check if discount is applicable to the selected plan
+        applicable_plans = Database.get_plans_for_discount(discount['id'])
+        if not any(p['id'] == selected_plan['id'] for p in applicable_plans):
+            error_message = "این کد تخفیف برای پلن انتخابی شما معتبر نیست."
+
+    if error_message:
+        await update.message.reply_text(error_message + "\nلطفا کد دیگری وارد کنید یا بدون تخفیف ادامه دهید.")
+        return VALIDATE_DISCOUNT # Stay in the same state
+
+    # Apply discount
+    if discount['type'] == 'percentage':
+        final_price -= final_price * (discount['value'] / 100)
+    elif discount['type'] == 'fixed_amount':
+        final_price -= discount['value']
+    
+    final_price = int(max(0, final_price)) # Ensure price doesn't go below zero and is an integer
+    context.user_data['final_price'] = final_price
+    context.user_data['discount_id'] = discount['id']
+
+    await update.message.reply_text(f"تخفیف با موفقیت اعمال شد. قیمت جدید: {final_price:,} ریال")
+
+    # Directly send payment options instead of calling show_payment_methods with a fake object
+    keyboard = get_payment_methods_keyboard()
+    await update.message.reply_text(
+        'لطفاً روش پرداخت خود را انتخاب کنید:',
+        reply_markup=keyboard
+    )
+    return SELECT_PAYMENT_METHOD
+
+
 payment_conversation = ConversationHandler(
     entry_points=[
         CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'),
@@ -1037,7 +1132,15 @@ payment_conversation = ConversationHandler(
     states={
         SELECT_PLAN: [
             CallbackQueryHandler(select_plan_handler, pattern='^plan_'),
-            MessageHandler(filters.Regex(r"^(🎫 خرید محصولات)$"), start_subscription_flow),
+        ],
+        ASK_DISCOUNT: [
+            CallbackQueryHandler(prompt_for_discount_code, pattern='^have_discount_code$'),
+            CallbackQueryHandler(show_payment_methods, pattern='^skip_discount_code$'),
+            CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
+        ],
+        VALIDATE_DISCOUNT: [
+            CallbackQueryHandler(ask_discount_handler, pattern='^back_to_ask_discount$'),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, validate_discount_handler)
         ],
         SELECT_PAYMENT_METHOD: [
             CallbackQueryHandler(select_payment_method, pattern='^payment_(rial|crypto)$'),

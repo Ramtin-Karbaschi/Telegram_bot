@@ -1150,7 +1150,95 @@ class DatabaseQueries:
         except Exception as e:
             return False
 
+    # --- Discount Management ---
 
+    @staticmethod
+    def create_discount(code: str, type: str, value: float, start_date: str = None, end_date: str = None, max_uses: int = None, is_active: bool = True) -> int:
+        """Creates a new discount code and returns its ID."""
+        db = Database()
+        if db.connect():
+            try:
+                query = """
+                    INSERT INTO discounts (code, type, value, start_date, end_date, max_uses, is_active)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """
+                params = (code, type, value, start_date, end_date, max_uses, is_active)
+                if db.execute(query, params):
+                    discount_id = db.cursor.lastrowid
+                    db.commit()
+                    return discount_id
+            except sqlite3.Error as e:
+                print(f"SQLite error in create_discount: {e}")
+            finally:
+                db.close()
+        return None
+
+    @staticmethod
+    def get_discount_by_code(code: str):
+        """Retrieves a discount by its code."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "SELECT * FROM discounts WHERE code = ?"
+                if db.execute(query, (code,)):
+                    return db.fetchone()
+            except sqlite3.Error as e:
+                print(f"SQLite error in get_discount_by_code: {e}")
+            finally:
+                db.close()
+        return None
+
+    @staticmethod
+    def link_discount_to_plans(discount_id: int, plan_ids: list):
+        """Links a discount to one or more plans."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "INSERT INTO plan_discounts (discount_id, plan_id) VALUES (?, ?)"
+                params_list = [(discount_id, plan_id) for plan_id in plan_ids]
+                if db.executemany(query, params_list):
+                    db.commit()
+                    return True
+            except sqlite3.Error as e:
+                print(f"SQLite error in link_discount_to_plans: {e}")
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def get_plans_for_discount(discount_id: int) -> list:
+        """Returns a list of plan records associated with a discount."""
+        db = Database()
+        if db.connect():
+            try:
+                query = """
+                    SELECT p.id, p.name FROM plans p
+                    JOIN plan_discounts pd ON p.id = pd.plan_id
+                    WHERE pd.discount_id = ?
+                """
+                if db.execute(query, (discount_id,)):
+                    return db.fetchall()
+            except sqlite3.Error as e:
+                print(f"SQLite error in get_plans_for_discount: {e}")
+            finally:
+                db.close()
+        return []
+
+    @staticmethod
+    def increment_discount_usage(discount_id: int) -> bool:
+        """Increments the usage count of a discount."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "UPDATE discounts SET uses_count = uses_count + 1 WHERE id = ?"
+                if db.execute(query, (discount_id,)):
+                    db.commit()
+                    return True
+            except sqlite3.Error as e:
+                print(f"SQLite error in increment_discount_usage: {e}")
+            finally:
+                db.close()
+        return False
 
     @staticmethod
     def get_user_by_telegram_id(telegram_id):

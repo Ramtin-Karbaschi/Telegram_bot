@@ -243,6 +243,7 @@ from handlers.support import (
     new_ticket_handler, ticket_conversation, view_ticket_handler,
 
 )
+from handlers.admin.discount_handlers import get_create_discount_conv_handler
 from utils.keyboards import (
     get_main_menu_keyboard, get_back_button
 )
@@ -330,6 +331,10 @@ class MainBot:
         
         # Support conversation handler
         self.application.add_handler(ticket_conversation)
+        
+        # Discount creation handler
+        create_discount_conv_handler = get_create_discount_conv_handler()
+        self.application.add_handler(create_discount_conv_handler)
         
         # Registration conversation handler (handles /register command, related messages, and inline callbacks)
         self.application.add_handler(registration_conversation)

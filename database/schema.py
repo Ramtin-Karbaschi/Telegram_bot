@@ -153,6 +153,38 @@ CREATE TABLE IF NOT EXISTS user_activity_logs (
 )
 '''
 
+BANNED_USERS_TABLE = '''
+CREATE TABLE IF NOT EXISTS banned_users (
+    user_id INTEGER PRIMARY KEY,
+    reason TEXT,
+    banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+'''
+
+DISCOUNTS_TABLE = '''
+CREATE TABLE IF NOT EXISTS discounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL CHECK(type IN ('percentage', 'fixed_amount')),
+    value REAL NOT NULL,
+    start_date TIMESTAMP,
+    end_date TIMESTAMP,
+    max_uses INTEGER,
+    uses_count INTEGER DEFAULT 0,
+    is_active BOOLEAN DEFAULT 1
+);
+'''
+
+PLAN_DISCOUNTS_TABLE = '''
+CREATE TABLE IF NOT EXISTS plan_discounts (
+    plan_id INTEGER,
+    discount_id INTEGER,
+    PRIMARY KEY (plan_id, discount_id),
+    FOREIGN KEY (plan_id) REFERENCES plans(id),
+    FOREIGN KEY (discount_id) REFERENCES discounts(id)
+);
+'''
+
 # List of all tables to create
 ALL_TABLES = [
     USERS_TABLE,
@@ -164,5 +196,7 @@ ALL_TABLES = [
     INVITE_LINKS_TABLE,
     NOTIFICATIONS_TABLE,
     CRYPTO_PAYMENTS_TABLE,
-    USER_ACTIVITY_LOGS_TABLE
+    USER_ACTIVITY_LOGS_TABLE,
+    DISCOUNTS_TABLE,
+    PLAN_DISCOUNTS_TABLE
 ]

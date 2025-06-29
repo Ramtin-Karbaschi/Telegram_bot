@@ -292,3 +292,42 @@ def get_ticket_conversation_keyboard(ticket_id, is_open=True):
     ])
     
     return InlineKeyboardMarkup(keyboard)
+
+def discount_type_keyboard():
+    """Returns a keyboard to select the discount type."""
+    keyboard = [
+        [InlineKeyboardButton("درصدی", callback_data='percentage'), InlineKeyboardButton("مبلغ ثابت", callback_data='fixed_amount')]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def plans_for_discount_keyboard(plans):
+    """Returns a keyboard to select plans for a discount."""
+    keyboard = []
+    for plan in plans:
+        keyboard.append([InlineKeyboardButton(plan['name'], callback_data=f"select_plan_for_discount_{plan['id']}")])
+    keyboard.append([InlineKeyboardButton("اتمام انتخاب", callback_data='done_selecting_plans')])
+    return InlineKeyboardMarkup(keyboard)
+
+def confirm_discount_keyboard():
+    """Returns a keyboard to confirm or cancel discount creation."""
+    keyboard = [
+        [InlineKeyboardButton("تایید و ایجاد", callback_data='confirm_discount'), InlineKeyboardButton("لغو", callback_data='cancel_discount')]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_ask_discount_keyboard():
+    """Returns a keyboard to ask the user if they have a discount code."""
+    keyboard = [
+        [InlineKeyboardButton("کد تخفیف دارم", callback_data='have_discount_code')],
+        [InlineKeyboardButton("ادامه / رد کردن", callback_data='skip_discount_code')],
+        [InlineKeyboardButton("↩️ بازگشت به انتخاب پلن", callback_data='back_to_plans')]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_back_to_ask_discount_keyboard():
+    """Returns a keyboard with a back button to return to the discount question step."""
+    keyboard = [
+        [InlineKeyboardButton("↩️ بازگشت به مرحله قبل", callback_data='back_to_ask_discount')]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+

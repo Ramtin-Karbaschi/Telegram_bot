@@ -32,7 +32,7 @@ class Database:
         """Connect to the SQLite database"""
         try:
             print(f"Connecting to: {os.path.abspath(self.db_name)}")
-            self.conn = sqlite3.connect(self.db_name)
+            self.conn = sqlite3.connect(self.db_name, timeout=10)
             self.conn.row_factory = sqlite3.Row
             self.cursor = self.conn.cursor()
             print(f"Successfully connected to {os.path.abspath(self.db_name)}")
