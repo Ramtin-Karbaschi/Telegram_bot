@@ -171,7 +171,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_registered = bool(user_db_data and user_db_data['full_name'] and user_db_data['phone'])
     
     await update.message.reply_text(
-        "منوی اصلی:",
+        "منو اصلی:",
         reply_markup=get_main_menu_keyboard(user_id=user_id, is_registered=is_registered)
     )
 
@@ -226,7 +226,7 @@ async def show_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     is_registered = bool(user_db_data and user_db_data['full_name'] and user_db_data['phone'])
     
     await query.message.edit_text(
-        "منوی اصلی:",
+        "منو اصلی:",
         reply_markup=get_main_menu_keyboard(user_id=user_id, is_registered=is_registered)
     )
 
