@@ -271,7 +271,7 @@ async def send_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if not ticket_id:
         await update.message.reply_text(
-            "خطایی رخ داده است. لطفاً ابتدا یک تیکت را از منوی پشتیبانی انتخاب کنید.",
+            "خطایی رخ داده است. لطفاً ابتدا یک تیکت را از منو پشتیبانی انتخاب کنید.",
             reply_markup=get_support_menu_keyboard(Database.get_user_tickets(update.effective_user.id))
         )
         return SUPPORT_MENU
@@ -338,7 +338,7 @@ async def back_to_tickets(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_back_to_main_from_support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handles the 'back_to_main' callback from the support conversation."""
-    main_menu_text = "بازگشت به منوی اصلی. لطفاً از دکمه‌های زیر استفاده کنید:"
+    main_menu_text = "بازگشت به منو اصلی. لطفاً از دکمه‌های زیر استفاده کنید:"
     if update.callback_query:
         query = update.callback_query
         await query.answer()
