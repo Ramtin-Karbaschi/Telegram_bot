@@ -335,6 +335,7 @@ async def handle_phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def cancel_current_field_edit_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     query = update.callback_query
     await query.answer()
+    user_id = update.effective_user.id
     field_readable_name = context.user_data.get('editing_field_readable_name', "این مورد")
 
     await query.edit_message_text(
@@ -367,7 +368,7 @@ async def end_profile_edit_globally(update: Update, context: ContextTypes.DEFAUL
         await update.effective_message.reply_text(message_to_send, reply_markup=reply_markup_to_send)
 
     # await update.effective_message.reply_text(
-    #     "به منوی اصلی بازگشتید.",
+    #     "به منو اصلی بازگشتید.",
     #     reply_markup=reply_markup_to_send
     # )
     context.user_data.clear()
