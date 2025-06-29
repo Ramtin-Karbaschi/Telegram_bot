@@ -3,6 +3,7 @@ import config
 from utils.helpers import is_user_in_admin_list, is_user_registered, is_valid_full_name
 import re
 from telegram import Update, ReplyKeyboardRemove
+from telegram.error import BadRequest
 from telegram.ext import (
     ContextTypes,  # Added for type hinting
     ConversationHandler,
@@ -49,7 +50,11 @@ async def start_profile_edit_conversation(update: Update, context: ContextTypes.
     """Displays the profile editing menu."""
     if update.callback_query:
         logger.debug(f"PROFILE_HANDLER: Callback query data in start_profile_edit_conversation: {update.callback_query.data}")
-        await update.callback_query.answer()
+        try:
+            await update.callback_query.answer()
+        except BadRequest as e:
+            # This can happen if the query is too old (e.g., after a bot restart)
+            logger.warning(f"Could not answer callback query in start_profile_edit_conversation: {e}")
         message_sender = update.callback_query.edit_message_text
         # If coming from a callback, ensure any reply keyboard is removed
         # This might not be necessary if the previous message didn't have one or was text-only
