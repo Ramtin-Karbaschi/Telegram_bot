@@ -446,7 +446,7 @@ class MainBot:
         commands = [
             BotCommand("start", "شروع و نمایش منو اصلی"),
             BotCommand("register", "📝 ثبت نام"),
-            BotCommand("status", "👤 وضعیت اشتراک من"),
+            BotCommand("status", "👤 پروفایل کاربری"),
             BotCommand("help", "💡 راهنما"),
             BotCommand("support", "🤝🏻 پشتیبانی"),
             BotCommand("rules", "⚠ قوانین"),
