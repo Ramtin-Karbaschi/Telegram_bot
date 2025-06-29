@@ -5,7 +5,8 @@ Manager Telegram bot for Daraei Academy
 import logging
 import asyncio
 from database.queries import DatabaseQueries as Database # Added Database import
-import datetime
+from datetime import datetime, time
+import pytz # Import pytz for timezone handling
 from typing import Optional # Added for type hinting
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from typing import Optional, Tuple
@@ -122,29 +123,21 @@ class ManagerBot:
         
         await self.application.start()
         
-        # We call validate_memberships directly, not the command version, as it's an internal startup task.
-        self.logger.info("Running initial membership validation on startup.")
-        await self.validate_memberships(context=None) # Assuming validate_memberships can handle context=None
-        
+        job_queue = self.application.job_queue
+
+        # Schedule the daily reminder task to run at 10:00 AM Tehran time
+        tehran_tz = pytz.timezone('Asia/Tehran')
+        target_time = time(10, 0, 0, tzinfo=tehran_tz)
+        job_queue.run_daily(self.send_expiration_reminders, time=target_time, name='daily_expiration_reminders')
+        # Also trigger today if we've already passed the daily time
+        job_queue.run_once(self.send_expiration_reminders, when=5, name='initial_expiration_reminder')
+        self.logger.info(f"Scheduled daily expiration reminders for {target_time.strftime('%H:%M:%S %Z')}.")
+
+        # Schedule the initial membership validation to run once, 10 seconds after startup
+        job_queue.run_once(self.validate_memberships, when=10, name='initial_membership_validation')
+        self.logger.info("Scheduled initial membership validation to run 10 seconds after startup.")
+
         self.logger.info("Starting Manager Bot polling...")
-        # Schedule daily reminder task at 10:00 AM Tehran time
-        async def schedule_daily_reminders():
-            while True:
-                now = datetime.datetime.now()
-                # Schedule for 10:00 AM
-                target_time = datetime.datetime.combine(now.date(), datetime.time(17, 35))
-                if now > target_time:
-                    target_time += datetime.timedelta(days=1)
-                
-                # Calculate sleep time
-                sleep_seconds = (target_time - now).total_seconds()
-                self.logger.info(f"Next reminder check scheduled in {sleep_seconds} seconds")
-                await asyncio.sleep(sleep_seconds)
-                
-                # Send reminders
-                await self.send_expiration_reminders()
-        
-        asyncio.create_task(schedule_daily_reminders())
         # Start polling for updates
         await self.application.updater.start_polling(allowed_updates=self.application.allowed_updates)
         self.logger.info("Manager Bot started")
@@ -204,12 +197,15 @@ class ManagerBot:
 
     async def stop(self):
         """Stop the bot"""
-        self.logger.info("Stopping Manager Bot")
-        if self.application.updater and self.application.updater.running:
-            await self.application.updater.stop()
-        await self.application.stop()
-        await self.application.shutdown()
-        self.logger.info("Manager Bot stopped")
+        self.logger.info("Attempting to stop Manager Bot...")
+        if self.application.running:
+            await self.application.stop()
+            if self.application.updater:
+                await self.application.updater.stop()
+            await self.application.shutdown()
+            self.logger.info("Manager Bot has been stopped and shut down.")
+        else:
+            self.logger.info("Manager Bot was not running, so no action was taken.")
 
 
 
@@ -385,8 +381,8 @@ class ManagerBot:
                                 await bot.unban_chat_member(chat_id=current_channel_id, user_id=user_id_to_kick_check)
                                 self.logger.info(f"Successfully unbanned user {user_id_to_kick_check} from channel '{current_channel_title}'.")
                                 kicked_count += 1
-                                reason = f"اشتراک شما ({record.get('status', 'نامعتبر')}) برای دسترسی به '{current_channel_title}' به پایان رسیده یا نامعتبر است."
-                                await self.send_membership_status_notification(bot, user_id_to_kick_check, reason, is_kicked=True)
+                                reason = f'اشتراک شما برای دسترسی به «{current_channel_title}» به پایان رسیده یا نامعتبر است.'
+                                await self.send_membership_status_notification(user_id_to_kick_check, reason, current_channel_title, is_kicked=True)
                             except Forbidden as kick_err_forbidden:
                                 self.logger.error(f"FORBIDDEN error kicking user {user_id_to_kick_check} from '{current_channel_title}': {kick_err_forbidden}. BOT LACKS BAN PERMISSION?", exc_info=True)
                             except BadRequest as kick_err_bad_request:
@@ -437,28 +433,51 @@ class ManagerBot:
             self.logger.error(f"Unexpected error getting administrators for channel '{channel_title}' (ID: {channel_id}): {e}", exc_info=True)
         return admin_ids
 
-    async def send_membership_status_notification(self, bot, user_id, reason_message, is_kicked=False):
+    async def send_membership_status_notification(self, user_id, reason_message, current_channel_title, is_kicked=False):
         """
-        Sends a notification to the user about their membership status (e.g., kicked).
+        Sends a notification to the user about their membership status.
+        It first tries to send via the main bot. If that fails (e.g., user hasn't started main bot),
+        it falls back to sending via the manager bot with a message that guides the user to the main bot.
         """
-        action_taken = "از کانال حذف شدید" if is_kicked else "وضعیت عضویت شما تغییر کرده است"
-        message = (
-            f"کاربر گرامی،\n\n"
-            f"به اطلاع می‌رسانیم که شما {action_taken}.\n"
-            f"دلیل: {html.escape(reason_message)}\n\n"
-            f"در صورت نیاز به پشتیبانی یا داشتن سوال، لطفاً با ادمین‌های ما در ارتباط باشید.\n\n"
-            f"با احترام،\nآکادمی دارایی"
-        )
         try:
-            await bot.send_message(chat_id=user_id, text=message, parse_mode=ParseMode.HTML) # Ensure ParseMode is imported
-            self.logger.info(f"Sent membership status notification to user {user_id}.")
-        except BadRequest as e:
-            self.logger.error(f"Failed to send membership status notification to {user_id} (BadRequest): {e}")
-        except Forbidden as e:
-            # This can happen if the user has blocked the bot
-            self.logger.warning(f"Failed to send membership status notification to {user_id} (Forbidden - user may have blocked bot): {e}")
+            user_details = DatabaseQueries.get_user_details(user_id)
+            full_name = user_details['full_name'] if user_details and user_details['full_name'] else "کاربر گرامی"
+            action_taken = f"از کانال «{current_channel_title}» حذف شدید" if is_kicked else "وضعیت عضویت شما تغییر کرده است"
+
+            # --- Smart Notification Sending Logic ---
+            
+            # Message for the main bot (ideal case)
+            main_bot_message = (
+                f"{full_name} عزیز،\n\n"
+                f"به اطلاع می‌رسانیم که شما {action_taken}.\n"
+                f"دلیل: {html.escape(reason_message)}\n\n"
+                f"برای تمدید یا بررسی وضعیت اشتراک خود، از دکمه‌های همین ربات استفاده کنید.\n\n"
+                f"با احترام،\nآکادمی دارایی"
+            )
+
+            try:
+                # 1. Attempt to send via the main bot
+                await self.main_bot_app.bot.send_message(chat_id=user_id, text=main_bot_message, parse_mode=ParseMode.HTML)
+                self.logger.info(f"Successfully sent membership status notification to {user_id} via MAIN bot.")
+            except Forbidden as e:
+                # 2. Fallback to the manager bot with a guiding message
+                self.logger.error(f"MAIN BOT FORBIDDEN: Could not send to {user_id}. Reason: {e}. Falling back to manager bot.")
+                
+                main_bot_username = self.main_bot_app.bot.username
+                fallback_message = (
+                    f"{full_name} عزیز،\n\n"
+                    f"به اطلاع می‌رسانیم که شما {action_taken}.\n"
+                    f"دلیل: {html.escape(reason_message)}\n\n"
+                    f"جهت تمدید اشتراک و مدیریت حساب، لطفاً به ربات اصلی ما مراجعه کرده و دکمه START را بزنید:\n"
+                    f"➡️ @{main_bot_username} ⬅️\n\n"
+                    f"با احترام،\nآکادمی دارایی"
+                )
+                
+                await self.application.bot.send_message(chat_id=user_id, text=fallback_message, parse_mode=ParseMode.HTML)
+                self.logger.info(f"Successfully sent fallback notification to {user_id} via MANAGER bot.")
+
         except Exception as e:
-            self.logger.error(f"Unexpected error sending membership status notification to {user_id}: {e}", exc_info=True)
+            self.logger.error(f"An unexpected error occurred in send_membership_status_notification for user {user_id}: {e}", exc_info=True)
     
             self.logger.info(f"Found {len(expired)} expired subscriptions")
             
@@ -477,125 +496,65 @@ class ManagerBot:
         except Exception as e:
             self.logger.error(f"Error sending expiration reminders: {e}")
     
-    async def send_expiration_reminders(self):
+    async def send_expiration_reminders(self, context: Optional[ContextTypes.DEFAULT_TYPE] = None):
         """
         Send daily reminders to users whose subscriptions will expire in the next 5 days.
-        Each user will receive a reminder for each day from 5 days before expiration until the last day.
         """
+        self.logger.info("Running daily job: send_expiration_reminders")
         try:
-            # Get active subscriptions expiring within 5 days
             expiring_subscriptions = DatabaseQueries.get_active_subscriptions_expiring_within()
-            
             if not expiring_subscriptions:
                 self.logger.info("No subscriptions expiring in the next 5 days.")
                 return
-            
-            self.logger.info(f"Found {len(expiring_subscriptions)} subscriptions expiring in the next 5 days.")
-            
-            # Send reminder to each user
-            for subscription in expiring_subscriptions:
-                user_id = subscription['user_id']
-                days_left = subscription['days_left']
-                
-                # Check if we've already sent a reminder today for this specific days_left
-                today = datetime.now().strftime("%Y-%m-%d")
-                notification_type = f"expiration_reminder_{days_left}"
-                already_notified = DatabaseQueries.get_notifications(
-                    user_id=user_id,
-                    type=notification_type,
-                    date=today
-                )
-                
-                if already_notified:
-                    continue
+
+            self.logger.info(f"Found {len(expiring_subscriptions)} subscriptions for reminder checks.")
+
+            for sub in expiring_subscriptions:
+                user_id = sub['user_id']
+                days_left = sub['days_left']
                 
                 try:
-                    # Send reminder message
-                    await self.application.bot.send_message(
-                        chat_id=user_id,
-                        text=f"⚠️ یادآوری تمدید اشتراک\n"
-                           f"\n"
-                           f"{days_left} روز تا اتمام اشتراک شما باقی مانده است.\n"
-                           f"لطفا برای ادامه استفاده از خدمات ما، اشتراک خود را تمدید کنید.\n"
-                           f"\n"
-                           f"برای تمدید، روی دکمه زیر کلیک کنید:",
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("تمدید اشتراک", callback_data="start_subscription_flow")]
-                        ])
+                    today_str = datetime.now().strftime("%Y-%m-%d")
+                    notification_type = f"expiration_reminder_{days_left}"
+
+                    if DatabaseQueries.get_notifications(user_id, notification_type, today_str):
+                        self.logger.info(f"Reminder for {days_left} days left already sent to user {user_id} today.")
+                        continue
+
+                    user_details = DatabaseQueries.get_user_details(user_id)
+                    full_name = user_details['full_name'] if user_details and user_details['full_name'] else "کاربر گرامی"
+
+                    message = (
+                        f"⚠️ یادآوری تمدید اشتراک\n\n"
+                        f"{full_name} عزیز،\n"
+                        f"{days_left} روز تا اتمام اشتراک شما باقی مانده است.\n"
+                        f"برای تمدید، روی دکمه زیر کلیک کنید:"
                     )
                     
-                    # Record the notification with specific days_left in type
+                    keyboard = InlineKeyboardMarkup([[
+                        InlineKeyboardButton("تمدید اشتراک", callback_data="start_subscription_flow")
+                    ]])
+
+                    await self.main_bot_app.bot.send_message(
+                        chat_id=user_id,
+                        text=message,
+                        reply_markup=keyboard
+                    )
+
                     DatabaseQueries.add_notification(
                         user_id=user_id,
                         notification_type=notification_type,
-                        message=f"Reminder sent for subscription expiring in {days_left} days"
+                        message=f"Reminder sent for {days_left} days left."
                     )
-                    
-                    self.logger.info(f"Sent expiration reminder to user {user_id} (days left: {days_left})")
-                    
+                    self.logger.info(f"Successfully sent {days_left}-day expiration reminder to user {user_id}.")
+
+                except Forbidden:
+                    self.logger.warning(f"Could not send reminder to user {user_id}. They may have blocked the bot.")
                 except Exception as e:
-                    self.logger.error(f"Error sending expiration reminder to user {user_id}: {e}")
-                    
+                    self.logger.error(f"Failed to send reminder to user {user_id}: {e}", exc_info=True)
+
         except Exception as e:
-            self.logger.error(f"Error in send_expiration_reminders: {e}")
-        """
-        Send reminders to users whose subscriptions will expire in the next 5 days.
-        """
-        try:
-            # Get active subscriptions expiring within 5 days
-            expiring_subscriptions = DatabaseQueries.get_active_subscriptions_expiring_within(5)
-            
-            if not expiring_subscriptions:
-                self.logger.info("No subscriptions expiring in the next 5 days.")
-                return
-            
-            self.logger.info(f"Found {len(expiring_subscriptions)} subscriptions expiring in the next 5 days.")
-            
-            # Send reminder to each user
-            for subscription in expiring_subscriptions:
-                user_id = subscription['user_id']
-                days_left = subscription['days_left']
-                
-                # Check if we've already sent a reminder today
-                today = datetime.now().strftime("%Y-%m-%d")
-                already_notified = DatabaseQueries.get_notifications(
-                    user_id=user_id,
-                    type="expiration_reminder",
-                    date=today
-                )
-                
-                if already_notified:
-                    continue
-                
-                try:
-                    # Send reminder message
-                    await self.application.bot.send_message(
-                        chat_id=user_id,
-                        text=f"⚠️ یادآوری تمدید اشتراک\n"
-                           f"\n"
-                           f"{days_left} روز تا اتمام اشتراک شما باقی مانده است.\n"
-                           f"لطفا برای ادامه استفاده از خدمات ما، اشتراک خود را تمدید کنید.\n"
-                           f"\n"
-                           f"برای تمدید، روی دکمه زیر کلیک کنید:",
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("تمدید اشتراک", callback_data="start_subscription_flow")]
-                        ])
-                    )
-                    
-                    # Record the notification
-                    DatabaseQueries.add_notification(
-                        user_id=user_id,
-                        notification_type="expiration_reminder",
-                        message=f"Reminder sent for subscription expiring in {days_left} days"
-                    )
-                    
-                    self.logger.info(f"Sent expiration reminder to user {user_id} (days left: {days_left})")
-                    
-                except Exception as e:
-                    self.logger.error(f"Error sending expiration reminder to user {user_id}: {e}")
-                    
-        except Exception as e:
-            self.logger.error(f"Error in send_expiration_reminders: {e}")
+            self.logger.error(f"An unexpected error occurred in the send_expiration_reminders job: {e}", exc_info=True)
 
     def setup_handlers(self):
         """Setup command, message, and callback query handlers."""
@@ -639,7 +598,7 @@ class ManagerBot:
                     
                     if 'main_bot_support_staff' in roles and chat_id:
                         try:
-                            await self.application.bot.send_message(
+                            await self.main_bot_app.bot.send_message(
                                 chat_id=chat_id,
                                 text=notif_message,
                                 parse_mode=ParseMode.HTML
