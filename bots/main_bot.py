@@ -464,7 +464,10 @@ class MainBot:
     
     async def stop(self):
         """Stop the bot"""
-        self.logger.info("Stopping main bot")
-        await self.application.stop()
-        await self.application.shutdown()
-        self.logger.info("Main bot stopped")
+        self.logger.info("Attempting to stop main bot...")
+        if self.application.running:
+            await self.application.stop()
+            await self.application.shutdown()
+            self.logger.info("Main bot has been stopped and shut down.")
+        else:
+            self.logger.info("Main bot was not running, so no action was taken.")
