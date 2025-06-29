@@ -17,6 +17,7 @@ from database.queries import DatabaseQueries
 from utils import constants
 from utils import keyboards
 from utils.validators import is_valid_persian_birth_year
+from handlers.subscription.subscription_handlers import subscription_status_handler
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Explicitly set level for this specific logger
@@ -424,6 +425,17 @@ from utils.constants import (
     TEXT_MAIN_MENU_EDIT_PROFILE, CALLBACK_START_PROFILE_EDIT # Added for entry points
 )
 
+async def show_status_and_end_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Handles the 'show_status' callback by showing the user's profile and ending the current conversation.
+    """
+    logger.debug("PROFILE_HANDLER: 'show_status' callback received. Ending edit conversation and showing profile.")
+    # Call the main status handler to display the profile
+    # This function is designed to work with callbacks, so it will handle answering the query etc.
+    await subscription_status_handler(update, context)
+    # End the current conversation
+    return ConversationHandler.END
+
 def get_profile_edit_conv_handler() -> ConversationHandler:
     logger.debug("PROFILE_HANDLER: Entering get_profile_edit_conv_handler")
 
@@ -447,6 +459,7 @@ def get_profile_edit_conv_handler() -> ConversationHandler:
                 CallbackQueryHandler(ask_edit_email, pattern=f"^{constants.CALLBACK_PROFILE_EDIT_EMAIL}$"),
                 CallbackQueryHandler(ask_edit_phone, pattern=f"^{constants.CALLBACK_PROFILE_EDIT_PHONE}$" ),
                 CallbackQueryHandler(end_profile_edit_globally, pattern=f"^{constants.CALLBACK_BACK_TO_MAIN_MENU_FROM_EDIT}$" ),
+                CallbackQueryHandler(show_status_and_end_conversation, pattern="^show_status$"),
                 CallbackQueryHandler(catch_all_select_field_callback, pattern="^.*$") # Catch-all handler, MUST BE LAST
             ],
             constants.EDIT_FULL_NAME: [
