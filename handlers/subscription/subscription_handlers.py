@@ -199,7 +199,7 @@ async def start_subscription_status(update: Update, context: ContextTypes.DEFAUL
         # No active subscription
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("خرید محصولات", callback_data="start_subscription_flow")], # Changed text and callback
-            [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="back_to_main_menu")] # Consistent callback
+            [InlineKeyboardButton("بازگشت به منو اصلی", callback_data="back_to_main_menu")] # Consistent callback
         ])
         
         await update.message.reply_text(
