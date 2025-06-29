@@ -1217,6 +1217,133 @@ class DatabaseQueries:
         return False
 
     @staticmethod
+    def get_active_subscriptions_expiring_within(days: int = 5):
+        """
+        Get active subscriptions that will expire within the next 5 days.
+        Returns list of dictionaries with user_id and days_left.
+        """
+        db = Database()
+        if db.connect():
+            try:
+                now = datetime.now()
+                end_date = (now + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+                query = """
+                    SELECT s.user_id, 
+                           s.end_date,
+                           julianday(s.end_date) - julianday('now') as days_left
+                    FROM subscriptions s
+                    WHERE s.status = 'active' 
+                    AND s.end_date > ?
+                    AND s.end_date <= ?
+                    AND julianday(s.end_date) - julianday('now') BETWEEN 1 AND ?
+                """
+                db.execute(query, (
+                    now.strftime("%Y-%m-%d %H:%M:%S"), 
+                    end_date,
+                    days
+                ))
+                results = db.fetchall()
+                
+                # Convert results to list of dictionaries
+                expiring_subscriptions = []
+                for row in results:
+                    expiring_subscriptions.append({
+                        'user_id': row[0],
+                        'end_date': row[1],
+                        'days_left': int(row[2])
+                    })
+                
+                return expiring_subscriptions
+            except sqlite3.Error as e:
+                print(f"SQLite error in get_active_subscriptions_expiring_within: {e}")
+            finally:
+                db.close()
+        return []
+        """
+        Get active subscriptions that will expire within the specified number of days.
+        Returns list of dictionaries with user_id and days_left.
+        """
+        db = Database()
+        if db.connect():
+            try:
+                now = datetime.now()
+                end_date = (now + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+                query = """
+                    SELECT s.user_id, 
+                           s.end_date,
+                           julianday(s.end_date) - julianday('now') as days_left
+                    FROM subscriptions s
+                    WHERE s.status = 'active' 
+                    AND s.end_date > ?
+                    AND s.end_date <= ?
+                """
+                db.execute(query, (now.strftime("%Y-%m-%d %H:%M:%S"), end_date))
+                results = db.fetchall()
+                
+                # Convert results to list of dictionaries
+                expiring_subscriptions = []
+                for row in results:
+                    expiring_subscriptions.append({
+                        'user_id': row[0],
+                        'end_date': row[1],
+                        'days_left': int(row[2])
+                    })
+                
+                return expiring_subscriptions
+            except sqlite3.Error as e:
+                print(f"SQLite error in get_active_subscriptions_expiring_within: {e}")
+            finally:
+                db.close()
+        return []
+
+    @staticmethod
+    def add_notification(user_id: int, notification_type: str, message: str = None):
+        """Add a notification record for a user."""
+        db = Database()
+        if db.connect():
+            try:
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                db.execute(
+                    "INSERT INTO notifications (user_id, type, message, created_at) VALUES (?, ?, ?, ?)",
+                    (user_id, notification_type, message or '', now)
+                )
+                db.commit()
+                return True
+            except sqlite3.Error as e:
+                print(f"SQLite error in add_notification: {e}")
+                if db.conn:
+                    db.conn.rollback()
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def get_notifications(user_id: int, notification_type: str, date: str):
+        """
+        Check if a user has received a notification of the specified type today.
+        Returns True if found, False otherwise.
+        """
+        db = Database()
+        if db.connect():
+            try:
+                query = """
+                    SELECT 1 
+                    FROM notifications 
+                    WHERE user_id = ? 
+                    AND type = ? 
+                    AND date(created_at) = ?
+                    LIMIT 1
+                """
+                db.execute(query, (user_id, notification_type, date))
+                result = db.fetchone()
+                return result is not None
+            except sqlite3.Error as e:
+                print(f"SQLite error in get_notifications: {e}")
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
     def get_all_banned_users():
         db = Database()
         if db.connect():
