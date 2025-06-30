@@ -117,11 +117,9 @@ def get_subscription_plans_keyboard(telegram_id=None): # Added telegram_id as op
         # sqlite3.Row objects are accessed by index or key, not with .get()
         capacity = plan['capacity'] if 'capacity' in plan.keys() else None
         if capacity is not None:
-            # Check current subscription count for this plan
-            count_query = "SELECT COUNT(*) FROM subscriptions WHERE plan_id = ? AND status = 'active'"
-            # Use plan['id'] to access the id
-            count_result = _DB.execute_query(count_query, (plan['id'],), fetch_one=True)
-            subscription_count = count_result[0] if count_result else 0
+            # Correctly count active subscriptions for the plan
+            count = _DB.count_total_subs(plan_id=plan['id'])
+            subscription_count = count
 
             if subscription_count >= capacity:
                 continue  # Skip this plan as it has reached its capacity
@@ -130,13 +128,13 @@ def get_subscription_plans_keyboard(telegram_id=None): # Added telegram_id as op
     if not active_plans:
         keyboard.append([InlineKeyboardButton("در حال حاضر طرح فعالی وجود ندارد.", callback_data='no_plans_available')])
     else:
-        # Group plans into rows of 3 for better layout
+        # Group plans into rows of 2 for better layout
         plan_buttons_row = []
         for plan in active_plans:
             plan_id = plan['id']
             button_text = plan['name']  # Use plan's name directly for the button
             plan_buttons_row.append(InlineKeyboardButton(button_text, callback_data=f"plan_{plan_id}"))
-            if len(plan_buttons_row) == 3:
+            if len(plan_buttons_row) == 2:
                 keyboard.append(plan_buttons_row)
                 plan_buttons_row = []
         
@@ -318,8 +316,7 @@ def confirm_discount_keyboard():
 def get_ask_discount_keyboard():
     """Returns a keyboard to ask the user if they have a discount code."""
     keyboard = [
-        [InlineKeyboardButton("کد تخفیف دارم", callback_data='have_discount_code')],
-        [InlineKeyboardButton("ادامه / رد کردن", callback_data='skip_discount_code')],
+        [InlineKeyboardButton("کد تخفیف دارم", callback_data='have_discount_code'), InlineKeyboardButton("ادامه / رد کردن", callback_data='skip_discount_code')],
         [InlineKeyboardButton("↩️ بازگشت به انتخاب پلن", callback_data='back_to_plans')]
     ]
     return InlineKeyboardMarkup(keyboard)
