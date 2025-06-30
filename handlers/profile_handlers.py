@@ -349,7 +349,25 @@ async def cancel_current_field_edit_cb(update: Update, context: ContextTypes.DEF
     return constants.SELECT_FIELD_TO_EDIT
 
 async def end_profile_edit_globally(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    logger.debug(f"PROFILE_HANDLER: Entering FALLBACK end_profile_edit_globally (cancel). User: {update.effective_user.id}. Callback data: {update.callback_query.data if update.callback_query else 'No callback query'}")
+    logger.debug(
+        f"PROFILE_HANDLER: Entering FALLBACK end_profile_edit_globally (cancel/back to main). "
+        f"User: {update.effective_user.id}. Callback data: {update.callback_query.data if update.callback_query else 'No callback query'}"
+    )
+    # Determine action based on which button triggered this fallback
+    back_to_main_pressed = (
+        update.callback_query is not None and
+        update.callback_query.data == constants.CALLBACK_BACK_TO_MAIN_MENU_FROM_EDIT
+    )
+
+    if back_to_main_pressed:
+        # User explicitly asked to go back to the main menu (i.e. the /status view)
+        from handlers.core.core_handlers import handle_back_to_main  # Local import to avoid circular deps
+        # Call core handler to display the same view as /status
+        await handle_back_to_main(update, context)
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    # Otherwise, treat it as a normal cancel of field editing
     message_to_send = constants.PROFILE_EDIT_CANCELLED
     user_id = update.effective_user.id
     is_admin = is_user_in_admin_list(user_id, config.ALL_ADMINS_LIST)
@@ -380,7 +398,8 @@ async def catch_all_select_field_callback(update: Update, context: ContextTypes.
             f"PROFILE_HANDLER: CATCH_ALL_SELECT_FIELD_CALLBACK triggered. Data: '{query.data}'. "
             f"User: {update.effective_user.id}."
         )
-        await query.answer("Callback caught by catch-all in select field state.")
+        # Silently acknowledge the callback so the user doesn't see an unnecessary popup
+        await query.answer()
     else:
         logger.debug(
             f"PROFILE_HANDLER: CATCH_ALL_SELECT_FIELD_CALLBACK triggered without query. Update: {update}"
