@@ -24,6 +24,82 @@ class DatabaseQueries:
             return result
         return False
     
+    # -----------------------------------
+    # Video file caching
+    # -----------------------------------
+    @staticmethod
+    def _ensure_video_table(db):
+        """Ensure the video_files table exists."""
+        create_sql = """
+            CREATE TABLE IF NOT EXISTS video_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_name TEXT UNIQUE,
+                telegram_file_id TEXT
+            );
+        """
+        # Create table if it doesn't exist
+        db.execute(create_sql)
+
+        # ------------------------------------------------------------------
+        # Lightweight schema-migration guard: make sure crucial columns exist
+        # ------------------------------------------------------------------
+        # Older versions of the bot may have created the table without the
+        # telegram_file_id column or UNIQUE constraint. We inspect the table
+        # schema at runtime and patch it if required so that inserts do not
+        # fail silently.
+        try:
+            db.execute("PRAGMA table_info(video_files)")
+            columns_info = db.fetchall()  # list[sqlite3.Row]
+            existing_columns = {row[1] for row in columns_info}
+
+            # Add telegram_file_id column if it's missing
+            if "telegram_file_id" not in existing_columns:
+                db.execute("ALTER TABLE video_files ADD COLUMN telegram_file_id TEXT")
+
+            # Ensure file_name column is UNIQUE – if the column already exists
+            # but is not UNIQUE we cannot alter easily; in that rare case we
+            # leave it as-is because INSERT OR REPLACE will still work, but may
+            # store duplicates. A full migration would require copying data to a
+            # new table which is out of scope for a runtime patch.
+        finally:
+            # Persist any DDL changes before continuing
+            db.commit()
+
+    @staticmethod
+    def get_video_file_id(file_name: str):
+        """Return cached telegram_file_id for a local video filename, or None."""
+        db = Database()
+        if db.connect():
+            try:
+                DatabaseQueries._ensure_video_table(db)
+                db.execute("SELECT telegram_file_id FROM video_files WHERE file_name = ?", (file_name,))
+                row = db.fetchone()
+                return row[0] if row else None
+            finally:
+                db.close()
+        return None
+
+    @staticmethod
+    def save_video_file_id(file_name: str, file_id: str):
+        """Upsert telegram_file_id for a given video filename."""
+        db = Database()
+        if db.connect():
+            try:
+                DatabaseQueries._ensure_video_table(db)
+                # Use INSERT OR REPLACE for wider SQLite compatibility (<3.24 does not support ON CONFLICT ... DO UPDATE)
+                db.execute(
+                    "INSERT OR REPLACE INTO video_files (file_name, telegram_file_id) VALUES (?, ?)",
+                    (file_name, file_id),
+                )
+                db.commit()
+                return True
+            except Exception as e:
+                logging.error(f"Error saving video file_id for {file_name}: {e}")
+            finally:
+                db.close()
+        return False
+
+    # -----------------------------------
     # User-related queries
     @staticmethod
     def user_exists(user_id):
@@ -400,11 +476,6 @@ class DatabaseQueries:
                 "SELECT user_id, status FROM subscriptions WHERE status != 'active' OR end_date <= ?",
                 (now,)
             )
-            result = db.fetchall()
-            db.close()
-            return result
-        return []
-
     @staticmethod
     def _update_existing_subscription(subscription_id, plan_id, payment_id, new_end_date_str, amount_paid, payment_method, status='active'):
         """
@@ -431,11 +502,29 @@ class DatabaseQueries:
                 return True
             except sqlite3.Error as e:
                 print(f"Error updating subscription {subscription_id}: {e}")
-                # Consider logging the error to a file or monitoring system
+                return False
+            except Exception as e:
+                print(f"Unexpected error updating subscription {subscription_id}: {e}")
                 return False
             finally:
                 db.close()
         return False
+
+    @staticmethod
+    def count_total_subs(plan_id: int) -> int:
+        """Return total number of active subscription records for the specified plan."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "SELECT COUNT(*) FROM subscriptions WHERE plan_id = ? AND status = 'active'"
+                if db.execute(query, (plan_id,)):
+                    result = db.fetchone()
+                    return result[0] if result else 0
+            except sqlite3.Error as e:
+                print(f"SQLite error in count_total_subs: {e}")
+            finally:
+                db.close()
+        return 0
 
     @staticmethod
     def add_subscription(user_id: int, plan_id: int, payment_id: int, 
@@ -862,7 +951,7 @@ class DatabaseQueries:
     
     # Payment-related queries
     @staticmethod
-    def add_payment(user_id, amount, payment_method, description, transaction_id=None, status="pending", plan_id=None):
+    def add_payment(user_id, amount, payment_method, description=None, transaction_id=None, status="pending", plan_id=None):
         """Add a new payment"""
         db = Database()
         if db.connect():
@@ -879,6 +968,19 @@ class DatabaseQueries:
             return payment_id
         return None
     
+    @staticmethod
+    def create_payment(user_id: int, plan_id: int, amount: float, payment_method: str, status: str = "pending", description: str = None, transaction_id: str = None):
+        """Backwards compatible alias expected by some handlers."""
+        return DatabaseQueries.add_payment(
+            user_id=user_id,
+            amount=amount,
+            payment_method=payment_method,
+            description=description,
+            transaction_id=transaction_id,
+            status=status,
+            plan_id=plan_id,
+        )
+
     @staticmethod
     def get_payment(payment_id):
         """Get payment details by its primary key `payment_id`. (Legacy alias for `get_payment_by_id`.)"""
@@ -922,28 +1024,61 @@ class DatabaseQueries:
             db.close()
             return True
         return False
-    
     # Plan-related queries
 
-    
     @staticmethod
-    def get_plan(plan_id):
-        """Get plan details"""
+    def get_active_plans():
+        """Get all active subscription plans, ordered by display_order."""
+        db = Database()
+        if db.connect():
+            now_str = get_current_time().strftime("%Y-%m-%d %H:%M:%S")
+            db.execute(
+                """
+                SELECT * FROM plans 
+                WHERE is_active = 1 
+                AND (expiration_date IS NULL OR expiration_date > ?)
+                ORDER BY display_order
+                """,
+                (now_str,)
+            )
+            result = db.fetchall()
+            db.close()
+            return result
+        return []
+
+    @staticmethod
+    def count_subscriptions_for_plan(plan_id):
+        """Count the number of active subscriptions for a given plan."""
         db = Database()
         if db.connect():
             db.execute(
-                "SELECT * FROM plans WHERE id = ?",
+                "SELECT COUNT(id) FROM subscriptions WHERE plan_id = ? AND status = 'active'",
                 (plan_id,)
+            )
+            count = db.fetchone()[0]
+            db.close()
+            return count
+        return 0
+
+    @staticmethod
+    def has_user_subscribed_to_plan(user_id, plan_id):
+        """Check if a user has an active subscription to a specific plan."""
+        db = Database()
+        if db.connect():
+            db.execute(
+                "SELECT 1 FROM subscriptions WHERE user_id = ? AND plan_id = ? AND status = 'active'",
+                (user_id, plan_id)
             )
             result = db.fetchone()
             db.close()
-            return result
-        return None
-    
+            return result is not None
+        return False
+
     # Support ticket queries
     @staticmethod
     def create_ticket(user_id, subject, message):
         """Create a new support ticket"""
+# ... (rest of the code remains the same)
         db = Database()
         if db.connect():
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1139,21 +1274,28 @@ class DatabaseQueries:
 
         
     @staticmethod
-    def close_ticket(self, ticket_id, admin_id):
-        try:
-            query = """
-            UPDATE tickets 
-            SET status = 'closed', closed_at = datetime('now'), closed_by = ?
-            WHERE ticket_id = ?
-            """
-            return self.execute_query(query, (admin_id, ticket_id), fetch=False)
-        except Exception as e:
-            return False
+    def close_ticket(ticket_id, admin_id):
+        db = Database()
+        if db.connect():
+            try:
+                query = """
+                UPDATE tickets 
+                SET status = 'closed', closed_at = datetime('now'), closed_by = ?
+                WHERE ticket_id = ?
+                """
+                if db.execute(query, (admin_id, ticket_id)):
+                    db.commit()
+                    return True
+            except sqlite3.Error as e:
+                print(f"SQLite error in close_ticket: {e}")
+            finally:
+                db.close()
+        return False
 
     # --- Discount Management ---
 
     @staticmethod
-    def create_discount(code: str, type: str, value: float, start_date: str = None, end_date: str = None, max_uses: int = None, is_active: bool = True) -> int:
+    def create_discount(code: str, discount_type: str, value: float, start_date: str = None, end_date: str = None, max_uses: int = None, is_active: bool = True) -> int:
         """Creates a new discount code and returns its ID."""
         db = Database()
         if db.connect():
@@ -1162,7 +1304,7 @@ class DatabaseQueries:
                     INSERT INTO discounts (code, type, value, start_date, end_date, max_uses, is_active)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """
-                params = (code, type, value, start_date, end_date, max_uses, is_active)
+                params = (code, discount_type, value, start_date, end_date, max_uses, is_active)
                 if db.execute(query, params):
                     discount_id = db.cursor.lastrowid
                     db.commit()
@@ -1189,7 +1331,54 @@ class DatabaseQueries:
         return None
 
     @staticmethod
-    def link_discount_to_plans(discount_id: int, plan_ids: list):
+    def get_all_discounts():
+        """Retrieves all discounts from the database."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "SELECT * FROM discounts ORDER BY id DESC"
+                if db.execute(query):
+                    return db.fetchall()
+            except sqlite3.Error as e:
+                print(f"SQLite error in get_all_discounts: {e}")
+            finally:
+                db.close()
+        return []
+
+    @staticmethod
+    def toggle_discount_status(discount_id: int, is_active: bool) -> bool:
+        """Activates or deactivates a discount."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "UPDATE discounts SET is_active = ? WHERE id = ?"
+                if db.execute(query, (is_active, discount_id)):
+                    db.commit()
+                    return True
+            except sqlite3.Error as e:
+                print(f"SQLite error in toggle_discount_status: {e}")
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def assign_discount_to_plan(discount_id: int, plan_id: int) -> bool:
+        """Assigns a discount to a specific plan."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "INSERT INTO plan_discounts (discount_id, plan_id) VALUES (?, ?)"
+                if db.execute(query, (discount_id, plan_id)):
+                    db.commit()
+                    return True
+            except sqlite3.Error as e:
+                print(f"SQLite error in assign_discount_to_plan: {e}")
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def link_discount_to_plans(discount_id: int, plan_ids: list) -> bool:
         """Links a discount to one or more plans."""
         db = Database()
         if db.connect():
@@ -1239,6 +1428,21 @@ class DatabaseQueries:
             finally:
                 db.close()
         return False
+
+    @staticmethod
+    def get_all_plans():
+        """Retrieves all subscription plans."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "SELECT id, name, price FROM plans ORDER BY display_order"
+                if db.execute(query):
+                    return db.fetchall()
+            except sqlite3.Error as e:
+                print(f"SQLite error in get_all_plans: {e}")
+            finally:
+                db.close()
+        return []
 
     @staticmethod
     def get_user_by_telegram_id(telegram_id):
