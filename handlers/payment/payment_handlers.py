@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 from datetime import datetime, timedelta
 import uuid
+import os
 # import config # Direct access to SUBSCRIPTION_PLANS removed
 from database.queries import DatabaseQueries as Database
 from utils.price_utils import get_usdt_to_irr_rate, convert_irr_to_usdt
@@ -135,7 +136,7 @@ async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
 
     selected_plan = context.user_data.get('selected_plan_details')
-    message_text = f"شما پلن '{selected_plan['name']}' را انتخاب کرده‌اید. آیا کد تخفیف دارید؟"
+    message_text = f"شما پلن «{selected_plan['name']}» را انتخاب کرده‌اید. آیا کد تخفیف دارید؟"
 
     await query.message.edit_text(
         text=message_text,
@@ -143,8 +144,121 @@ async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     return ASK_DISCOUNT
 
+async def handle_free_content_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handles the logic for a one-time free content plan (e.g., sending videos).
+    Checks eligibility, records the subscription, and sends the content.
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+    telegram_id = update.effective_user.id
+
+    if not query:
+        logger.warning("handle_free_content_plan called without a query.")
+        return ConversationHandler.END
+
+    await query.answer()
+
+    plan = context.user_data.get('selected_plan')
+    if not plan:
+        await query.message.edit_text("خطایی رخ داده است. لطفاً دوباره امتحان کنید.")
+        return ConversationHandler.END
+
+    plan_id = plan['id']
+    plan_name = plan['name']
+
+    # 1. Check if the plan capacity is full
+    if plan.get('capacity') is not None:
+        current_usage = Database.count_subscriptions_for_plan(plan_id)
+        if current_usage >= plan['capacity']:
+            await query.message.edit_text(
+                "ظرفیت این پلن تکمیل شده است.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return ConversationHandler.END
+
+    # Use a placeholder for transaction_id and payment_table_id for free content
+    transaction_id = f"free_{user_id}_{plan_id}_{datetime.now().timestamp()}"
+    payment_table_id = None  # No payment record for free content
+
+    success, message = await activate_or_extend_subscription(
+        user_id=user_id,
+        telegram_id=telegram_id,
+        plan_id=plan_id,
+        plan_name=plan_name,
+        payment_amount=0,
+        payment_method="free",
+        transaction_id=transaction_id,
+        context=context,
+        payment_table_id=payment_table_id
+    )
+
+    if not success:
+        logger.error(f"Failed to record free content access for user {user_id}, plan {plan_id}: {message}")
+        await query.message.edit_text(f"خطا در فعال‌سازی پلن رایگان: {message}")
+        return ConversationHandler.END
+
+    # Send the educational videos
+    video_folder_path = os.path.join(os.getcwd(), 'database', 'data', 'videos')
+    if os.path.exists(video_folder_path) and os.path.isdir(video_folder_path):
+        videos = sorted([v for v in os.listdir(video_folder_path) if v.lower().endswith(('.mp4', '.mov', '.avi'))])
+        
+        if not videos:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="در حال حاضر ویدیوی آموزشی برای ارسال وجود ندارد. لطفاً بعداً دوباره تلاش کنید."
+            )
+        else:
+            # Notify user that videos are about to be sent
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="ویدئو آموزشی به زودی برای شما ارسال می شود. لطفاً صبور باشید."
+            )
+            # Now send the videos.
+            from database.queries import DatabaseQueries
+            for video_file in videos:
+                caption = os.path.splitext(video_file)[0]
+                cached_file_id = DatabaseQueries.get_video_file_id(video_file)
+                try:
+                    if cached_file_id:
+                        # Use cached file_id – instant send
+                        message = await context.bot.send_video(
+                            chat_id=user_id,
+                            video=cached_file_id,
+                            caption=caption
+                        )
+                    else:
+                        # Upload from disk, then cache id for future use
+                        video_path = os.path.join(video_folder_path, video_file)
+                        with open(video_path, 'rb') as video:
+                            message = await context.bot.send_video(
+                                chat_id=user_id,
+                                video=video,
+                                caption=caption
+                            )
+                        # Cache the new file_id
+                        if message and message.video and message.video.file_id:
+                            DatabaseQueries.save_video_file_id(video_file, message.video.file_id)
+                except Exception as e:
+                    logger.error(f"Failed to send video {video_file} to user {user_id}: {e}")
+                    # Do not send an error message to the user to avoid confusion.
+    else:
+        logger.warning(f"Video folder not found at {video_folder_path}")
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="ویدیوهای آموزشی یافت نشد. لطفاً با پشتیبانی تماس بگیرید."
+        )
+
+    # Show user account info after sending videos
+    from handlers.core.core_handlers import handle_back_to_main
+    await handle_back_to_main(update, context)
+
+    # End conversation
+    context.user_data.clear()
+    return ConversationHandler.END
+
 async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the user's plan selection and proceeds to payment method selection."""
+    """Handles the user's plan selection and proceeds to payment method selection or content delivery."""
     query = update.callback_query
     user_id = update.effective_user.id
     logger.info(f"[select_plan_handler] User {user_id} triggered with data: {query.data}")
@@ -152,97 +266,36 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     Database.update_user_activity(user_id)
 
-    # The ConversationHandler's pattern ensures query.data starts with 'plan_'
-    callback_data = query.data.split('_')
     try:
-        numeric_plan_id = int(callback_data[1])
+        plan_id = int(query.data.split('_')[1])
     except (ValueError, IndexError):
         logger.error(f"[select_plan_handler] Invalid plan_id format from callback: {query.data} for user {user_id}")
         await query.message.edit_text("خطا: شناسه طرح نامعتبر است.")
         return SELECT_PLAN
 
-    selected_plan = Database.get_plan_by_id(numeric_plan_id)
-    logger.info(f"[select_plan_handler] Selected plan: {selected_plan}")
-
-    # Handle free plans immediately
-    # sqlite3.Row objects are accessed by index or key, not with .get()
-    # Treat plans with a price of 0 or NULL as free plans
-    if selected_plan and float(selected_plan['price'] or 0) == 0:
-        logger.info(f"[select_plan_handler] Detected free plan: {selected_plan['name']}. Processing... ")
-        plan_id = selected_plan['id']
-
-        # 1. Check if user has already used this free plan
-        if Database.has_user_used_free_plan(user_id, plan_id):
-            logger.warning(f"User {user_id} has already used free plan {plan_id}.")
-            keyboard = [[InlineKeyboardButton("بازگشت به پروفایل کاربری", callback_data='back_to_main_menu')]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                text="شما قبلاً از این طرح رایگان استفاده کرده‌اید و امکان دریافت مجدد آن وجود ندارد.",
-                reply_markup=reply_markup
-            )
-            return ConversationHandler.END
-
-        # 2. Check for plan capacity
-        # The 'capacity' column must exist in the 'plans' table for this to work.
-        capacity = selected_plan['capacity'] if 'capacity' in selected_plan.keys() and selected_plan['capacity'] is not None else None
-        if capacity is not None:
-            logger.info(f"Checking total capacity for plan {plan_id}. Capacity: {capacity}")
-            subscription_count = Database.count_total_subscriptions_for_plan(plan_id)
-            logger.info(f"Total subscriptions ever created for plan {plan_id}: {subscription_count}")
-
-            if subscription_count >= capacity:
-                logger.warning(f"Free plan {plan_id} has reached its capacity. Deactivating plan.")
-                # Deactivate the plan for future users
-                Database.deactivate_plan(plan_id)
-                keyboard = [[InlineKeyboardButton("بازگشت به پروفایل کاربری", callback_data='back_to_main_menu')]]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await query.edit_message_text(
-                    text="ظرفیت این طرح رایگان تکمیل شده است و دیگر در دسترس نیست.",
-                    reply_markup=reply_markup
-                )
-                return ConversationHandler.END
-
-        # 3. If all checks pass, activate the subscription
-        logger.info(f"Activating free subscription for user {user_id} and plan {plan_id}.")
-        telegram_id = query.from_user.id
-        transaction_id = f"FREE_PLAN_{user_id}_{plan_id}"
-        payment_id = None  # No payment record for free plans
-        amount = 0
-        payment_method = 'free'
-        plan_name = selected_plan['name']
-
-        success, error_message = await activate_or_extend_subscription(
-            user_id=user_id,
-            telegram_id=telegram_id,
-            plan_id=plan_id,
-            plan_name=plan_name,
-            payment_amount=amount,
-            payment_method=payment_method,
-            transaction_id=transaction_id,
-            context=context,
-            payment_table_id=payment_id
-        )
-
-        if success:
-            await query.edit_message_text("✅ اشتراک رایگان شما با موفقیت فعال شد!")
-        else:
-            await query.edit_message_text(
-                f"مشکلی در فعال‌سازی اشتراک رایگان شما پیش آمد. {error_message if error_message else 'لطفاً با پشتیبانی تماس بگیرید.'}"
-            )
-        
-        return ConversationHandler.END
+    selected_plan = Database.get_plan_by_id(plan_id)
     if not selected_plan or not selected_plan['is_active']:
-        logger.warning(f"[select_plan_handler] Plan not found or inactive: {numeric_plan_id}")
+        logger.warning(f"[select_plan_handler] Plan not found or inactive: {plan_id}")
         await query.message.edit_text(
             "خطا: طرح انتخاب شده معتبر نیست یا دیگر فعال نمی‌باشد. لطفاً مجدداً یک طرح را انتخاب کنید.",
             reply_markup=get_subscription_plans_keyboard(user_id)
         )
         return SELECT_PLAN
 
-    context.user_data['selected_plan_details'] = dict(selected_plan)
-    context.user_data['final_price'] = selected_plan['price'] # Initialize final_price
+    # Convert sqlite3.Row to a dictionary for easier and safer access
+    plan_dict = dict(selected_plan)
+    context.user_data['selected_plan'] = plan_dict
+    logger.info(f"[select_plan_handler] Selected plan: {plan_dict}")
 
-    logger.info(f"[select_plan_handler] Proceeding to ask for discount for user {user_id} and plan {selected_plan['id']}.")
+    # Route based on plan_type
+    if plan_dict.get('plan_type') == 'one_time_content':
+        logger.info(f"Plan {plan_id} is one_time_content. Routing to handle_free_content_plan.")
+        return await handle_free_content_plan(update, context)
+    
+    # Default to subscription flow
+    logger.info(f"Plan {plan_id} is a subscription. Proceeding to ask for discount.")
+    context.user_data['selected_plan_details'] = plan_dict
+    context.user_data['final_price'] = plan_dict['price'] # Initialize final_price
     return await ask_discount_handler(update, context)
     
 
@@ -775,26 +828,7 @@ async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TY
                     display_end_date = end_date_dt.strftime("%Y-%m-%d")
                 except ValueError:
                     logger.warning(f"Error parsing end_date from updated_subscription: {updated_subscription.get('end_date')}")
-            
-            base_success_message = PAYMENT_SUCCESS_MESSAGE.format(
-                plan_name=plan_name,
-                end_date=display_end_date
-            )
-            channel_links_parts = []
-            if hasattr(config, 'TELEGRAM_CHANNELS_INFO') and config.TELEGRAM_CHANNELS_INFO:
-                channel_links_parts.append("\n\nلینک کانال‌ها و گروه‌های اختصاصی شما:")
-                for channel_info in config.TELEGRAM_CHANNELS_INFO:
-                    title = channel_info.get('title', 'کانال')
-                    link = channel_info.get('link')
-                    if link:
-                        channel_links_parts.append(f"- [{title}]({link})")
-            full_success_message = base_success_message + "\n".join(channel_links_parts)
 
-            await query.message.edit_text(
-                full_success_message,
-                reply_markup=get_main_menu_keyboard(user_id=telegram_id),
-                parse_mode=ParseMode.MARKDOWN
-            )
         else:
             UserAction.log_user_action(
                 telegram_id=telegram_id,
@@ -937,7 +971,17 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
             ref_id = verification_result.get('ref_id')
             logger.info(f"Zarinpal payment successful for user {telegram_id}, authority {zarinpal_authority}, ref_id {ref_id}.")
             Database.update_payment_status(payment_db_id, 'completed', transaction_id=str(ref_id))
-            activation_details = await activate_or_extend_subscription(user_db_id, plan_id, payment_db_id, 'zarinpal', telegram_id, context)
+            activation_details = await activate_or_extend_subscription(
+                user_id=user_db_id,
+                telegram_id=telegram_id,
+                plan_id=plan_id,
+                plan_name=selected_plan_name,
+                payment_amount=float(rial_amount),
+                payment_method='zarinpal',
+                transaction_id=str(ref_id),
+                context=context,
+                payment_table_id=payment_db_id
+            )
             success_message = PAYMENT_SUCCESS_MESSAGE.format(
                 plan_name=selected_plan_name,
                 expiry_date=activation_details.get('new_expiry_date_jalali', 'N/A')
@@ -953,7 +997,17 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
             if current_payment_record['status'] != 'completed':
                 logger.info(f"Processing Zarinpal status 101 as success for payment_db_id {payment_db_id} (user {telegram_id}) as it's not completed in our DB.")
                 Database.update_payment_status(payment_db_id, 'completed', transaction_id=str(ref_id))
-                activation_details = await activate_or_extend_subscription(user_db_id, plan_id, payment_db_id, 'zarinpal', telegram_id, context)
+                activation_details = await activate_or_extend_subscription(
+                    user_id=user_db_id,
+                    telegram_id=telegram_id,
+                    plan_id=plan_id,
+                    plan_name=selected_plan_name,
+                    payment_amount=float(rial_amount),
+                    payment_method='zarinpal',
+                    transaction_id=str(ref_id),
+                    context=context,
+                    payment_table_id=payment_db_id
+                )
                 success_message = PAYMENT_SUCCESS_MESSAGE.format(plan_name=selected_plan_name, expiry_date=activation_details.get('new_expiry_date_jalali', 'N/A'))
                 await query.message.edit_text(success_message, reply_markup=get_main_menu_keyboard(telegram_id))
                 UserAction.log_user_action(telegram_id, 'zarinpal_payment_verified_status_101', {'payment_db_id': payment_db_id, 'zarinpal_ref_id': ref_id, 'subscription_details': activation_details})
@@ -1100,8 +1154,11 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
             error_message = "این کد تخفیف برای پلن انتخابی شما معتبر نیست."
 
     if error_message:
-        await update.message.reply_text(error_message + "\nلطفا کد دیگری وارد کنید یا بدون تخفیف ادامه دهید.")
-        return VALIDATE_DISCOUNT # Stay in the same state
+        await update.message.reply_text(
+            error_message + "\nلطفا کد دیگری وارد کنید یا بدون تخفیف ادامه دهید.",
+            reply_markup=get_ask_discount_keyboard()
+        )
+        return ASK_DISCOUNT
 
     # Apply discount
     if discount['type'] == 'percentage':
@@ -1113,9 +1170,44 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
     context.user_data['final_price'] = final_price
     context.user_data['discount_id'] = discount['id']
 
+    # If price is zero after discount, activate subscription directly
+    if final_price == 0:
+        plan_id = context.user_data['selected_plan']['id']
+        
+        # Create a placeholder payment record for this free activation
+        payment_id = Database.create_payment(
+            user_id=user_id,
+            plan_id=plan_id,
+            amount=0,
+            payment_method='discount_100',
+            status='completed',
+            description=f"Activated with 100% discount code id: {discount['id']}"
+        )
+
+        success, message = await activate_or_extend_subscription(
+            user_id=user_id,
+            telegram_id=user_id,
+            plan_id=plan_id,
+            plan_name=selected_plan.get('name', 'N/A'),
+            payment_amount=0,
+            payment_method='discount_100',
+            transaction_id=f"discount_{discount['id']}",
+            context=context,
+            payment_table_id=payment_id
+        )
+        
+        if success:
+            logger.info(f"User {user_id} activated plan {plan_id} for free using discount code ID {discount['id']}.")
+            # پیام لینک‌ها در activate_or_extend_subscription ارسال شده است؛ ارسال دوباره لازم نیست.
+            context.user_data.clear()
+            return ConversationHandler.END
+        else:
+            await update.message.reply_text(f"خطایی در فعال‌سازی اشتراک رخ داد: {message}")
+            return ConversationHandler.END
+
+    # If price is not zero, proceed to payment
     await update.message.reply_text(f"تخفیف با موفقیت اعمال شد. قیمت جدید: {final_price:,} ریال")
 
-    # Directly send payment options instead of calling show_payment_methods with a fake object
     keyboard = get_payment_methods_keyboard()
     await update.message.reply_text(
         'لطفاً روش پرداخت خود را انتخاب کنید:',
