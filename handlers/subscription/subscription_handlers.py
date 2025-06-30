@@ -37,7 +37,7 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def send_channel_links_and_confirmation(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_name: str):
     """Sends a confirmation message with channel links and schedules it for deletion."""
-    message_text = f"✅ اشتراک پلن '{plan_name}' برای شما با موفقیت فعال شد.\n\n🎉 اکنون می‌توانید از طریق لینک‌های زیر به کانال‌ها و گروه‌های ویژه دسترسی داشته باشید:"
+    message_text = f"✅ اشتراک پلن «{plan_name}» برای شما با موفقیت فعال شد.\n\n🎉 اکنون می‌توانید از طریق لینک‌های زیر به کانال‌ها و گروه‌های ویژه دسترسی داشته باشید:"
     
     keyboard = []
     if hasattr(config, 'TELEGRAM_CHANNELS_INFO') and config.TELEGRAM_CHANNELS_INFO:
@@ -171,10 +171,11 @@ async def activate_or_extend_subscription(
 
         logger.info(f"Successfully activated/extended subscription_id: {subscription_id} for user_id: {user_id}.")
         
-        # Call the confirmation function with the plan name
-        await send_channel_links_and_confirmation(telegram_id=telegram_id, context=context, plan_name=plan_name)
+        # Only send channel links for actual subscription plans, not one-time content
+        if plan_details['plan_type'] != 'one_time_content':
+            await send_channel_links_and_confirmation(telegram_id=telegram_id, context=context, plan_name=plan_name)
         
-        # Return only boolean, as the message is now sent by the function above
+        # Return success
         return True, ""
 
     except Exception as e:
