@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS plans (
     original_price_usdt REAL,  -- Original price in USDT before discount, nullable
     days INTEGER NOT NULL,     -- Duration in days
     features TEXT, -- JSON string for list of features
+    plan_type TEXT DEFAULT 'subscription' NOT NULL, -- e.g., 'subscription', 'one_time_content'
+    expiration_date TEXT DEFAULT NULL, -- Date when the plan is no longer available, NULL for no expiry
     is_active INTEGER DEFAULT 1, -- 0 for inactive, 1 for active
     display_order INTEGER DEFAULT 0, -- For ordering plans in lists
     capacity INTEGER DEFAULT NULL -- Maximum number of subscribers, NULL for unlimited
@@ -200,3 +202,29 @@ ALL_TABLES = [
     DISCOUNTS_TABLE,
     PLAN_DISCOUNTS_TABLE
 ]
+
+if __name__ == '__main__':
+    import sys
+    import os
+    # Add the project root to the Python path
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    sys.path.insert(0, project_root)
+    from database.models import Database
+    print("Initializing database schema...")
+    db = Database()
+    if db.connect():
+        try:
+            for table_query in ALL_TABLES:
+                print(f"Executing: {table_query[:50].strip()}...") # Print first 50 chars of query
+                if not db.execute(table_query):
+                    print(f"Failed to create a table. Aborting.")
+                    break
+            db.commit()
+            print("Database schema initialized successfully.")
+        except Exception as e:
+            print(f"An error occurred during schema initialization: {e}")
+        finally:
+            db.close()
+            print("Database connection closed.")
+    else:
+        print("Failed to connect to the database.")
