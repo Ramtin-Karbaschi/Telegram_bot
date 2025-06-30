@@ -236,7 +236,17 @@ async def handle_back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE
     # DatabaseQueries.update_user_activity(user_id) # Consider if view_active_subscription handles user activity
 
     if update.callback_query:
-        await update.callback_query.answer() # Answer callback query if applicable
+        # Attempt to answer the callback query; ignore if it is already too old / invalid
+        try:
+            await update.callback_query.answer()
+        except Exception as e:
+            import telegram.error  # Local import to avoid circular deps in typing
+            if isinstance(e, telegram.error.BadRequest):
+                # Likely "Query is too old" – safe to ignore
+                logger.warning(f"handle_back_to_main: could not answer callback query (possibly too old): {e}")
+            else:
+                # Re-raise unexpected errors
+                raise
 
     # Call the function to show subscription status
     await view_active_subscription(update, context)
