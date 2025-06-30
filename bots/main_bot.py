@@ -81,6 +81,7 @@ from telegram.ext import (
     ConversationHandler, filters, ContextTypes, TypeHandler, # Added TypeHandler
     PicklePersistence  # Added for application persistence
 )
+from telegram.request import HTTPXRequest
 import config
 from database.queries import DatabaseQueries as Database
 from database.models import Database as DBConnection
@@ -275,7 +276,15 @@ class MainBot:
                 # Create a persistence object
         persistence = PicklePersistence(filepath="database/data/bot_persistence.pkl")
         
-        self.application = Application.builder().token(config.MAIN_BOT_TOKEN).persistence(persistence).build()
+        # Configure HTTPX request with extended timeouts for large file uploads
+        request = HTTPXRequest(connect_timeout=30.0, read_timeout=300.0, write_timeout=300.0)
+        self.application = (
+            Application.builder()
+            .token(config.MAIN_BOT_TOKEN)
+            .persistence(persistence)
+            .request(request)
+            .build()
+        )
         # Explicitly set allowed_updates to ensure the bot subscribes to the desired update types and to
         # avoid AttributeError inside the telegram.ext internals (some components expect this attribute).
         self.application.allowed_updates = [
