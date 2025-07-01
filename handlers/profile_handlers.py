@@ -342,7 +342,7 @@ async def cancel_current_field_edit_cb(update: Update, context: ContextTypes.DEF
     )
     await query.message.reply_text( 
         constants.PROFILE_EDIT_MENU_PROMPT,
-        reply_markup=keyboards.get_profile_edit_menu_keyboard(user_id=user_id)
+        reply_markup=keyboards.get_profile_edit_menu_keyboard(user_id=update.effective_user.id)
     )
     context.user_data.pop('editing_field_key', None)
     context.user_data.pop('editing_field_readable_name', None)
