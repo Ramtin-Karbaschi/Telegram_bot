@@ -28,6 +28,7 @@ from utils.constants import (
     CITY_REQUEST,
 )
 from utils.helpers import is_valid_full_name
+from utils.keyboards import get_main_reply_keyboard
 import config
 
 logger = logging.getLogger(__name__)
@@ -176,13 +177,16 @@ async def get_fullname(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # Notify user of successful initial registration
+    # Get the updated main reply keyboard. The user is now registered.
+    main_menu_keyboard = get_main_reply_keyboard(user_id=user_id, is_registered=True)
+
+    # Notify user of successful initial registration and update the main keyboard
     await update.message.reply_text(
-        "✅ ثبت نام اولیه شما با موفقیت انجام شد. \n برای تکمیل اطلاعات خود و استفاده از امکانات ربات، لطفاً از منوی «پروفایل کاربری» اقدام کنید.",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(TEXT_GENERAL_BACK_TO_MAIN_MENU, callback_data=CALLBACK_BACK_TO_MAIN_MENU)]
-        ])
+        "✅ ثبت نام اولیه شما با موفقیت انجام شد.\n"
+        "برای تکمیل اطلاعات خود و استفاده از امکانات ربات، لطفاً از منوی «پروفایل کاربری» اقدام کنید.",
+        reply_markup=main_menu_keyboard
     )
-    
+
     return ConversationHandler.END
 
 async def get_birthyear(update: Update, context: ContextTypes.DEFAULT_TYPE):
