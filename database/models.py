@@ -4,16 +4,37 @@ Database models for the Daraei Academy Telegram bot
 
 import uuid
 from datetime import datetime, timedelta
-
 import sqlite3
 import os
-# Removed duplicate: from datetime import datetime, timedelta
 import config
+import threading
+
+# A lock to make the singleton creation thread-safe
+_lock = threading.Lock()
+_instance = None
 
 class Database:
-    """SQLite database connection and initialization"""
+    """
+    SQLite database connection and initialization.
+    This class is implemented as a singleton to ensure a single, shared
+    database connection is used throughout the application, preventing
+    'database is locked' errors in a concurrent environment.
+    """
     
+    def __new__(cls, *args, **kwargs):
+        global _instance
+        if _instance is None:
+            with _lock:
+                if _instance is None:
+                    _instance = super().__new__(cls)
+        return _instance
+
     def __init__(self, db_name=None):
+        # The __init__ might be called multiple times, but we only want to
+        # initialize the connection once.
+        if hasattr(self, 'conn') and self.conn is not None:
+            return
+
         if db_name is None:
             if hasattr(config, 'DATABASE_NAME') and config.DATABASE_NAME:
                 self.db_name = config.DATABASE_NAME
@@ -24,27 +45,35 @@ class Database:
         else:
             self.db_name = db_name
             
-        print(f"Database class initialized. Attempting to use database at: {os.path.abspath(self.db_name)}") 
+        print(f"Database singleton initialized. Attempting to use database at: {os.path.abspath(self.db_name)}") 
         self.conn = None
         self.cursor = None
+        self.connect()
         
     def connect(self):
-        """Connect to the SQLite database"""
+        """Connect to the SQLite database if not already connected."""
+        if self.conn is not None:
+            return True
         try:
             print(f"Connecting to: {os.path.abspath(self.db_name)}")
-            self.conn = sqlite3.connect(self.db_name, timeout=10)
+            # `check_same_thread=False` is crucial for sharing the connection
+            # across different parts of the async application.
+            self.conn = sqlite3.connect(self.db_name, timeout=10, check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
             self.cursor = self.conn.cursor()
             print(f"Successfully connected to {os.path.abspath(self.db_name)}")
             return True
         except sqlite3.Error as e:
             print(f"Database connection error for {os.path.abspath(self.db_name)}: {e}")
+            self.conn = None
             return False
             
     def close(self):
-        """Close the database connection"""
-        if self.conn:
-            self.conn.close()
+        """
+        This is a no-op in the singleton implementation to prevent the shared
+        connection from being closed prematurely by a single handler.
+        """
+        pass
             
     def commit(self):
         """Commit changes to the database"""
@@ -54,6 +83,9 @@ class Database:
     def execute(self, query, params=()):
         """Execute a database query with parameters"""
         try:
+            # Using a single, shared cursor is not ideal for thread-safety,
+            # but for an asyncio app, it's often sufficient and avoids
+            # major refactoring. The primary goal is to stop opening/closing connections.
             self.cursor.execute(query, params)
             return True
         except sqlite3.Error as e:
@@ -84,6 +116,7 @@ class Database:
         for table_query in tables:
             if not self.execute(table_query):
                 return False
+        self.commit()
         return True
 
     # --- Crypto Payment Management ---
