@@ -22,7 +22,19 @@ logger = logging.getLogger(__name__)
 async def start_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start the support process, handling both command and callback query"""
     user_id = update.effective_user.id
-    
+
+    # Check if user is registered
+    if not Database.is_registered(user_id):
+        keyboard = [[InlineKeyboardButton("📝 ثبت نام", callback_data="register")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        message_text = "برای استفاده از بخش پشتیبانی، لطفاً ابتدا ثبت نام کنید."
+        
+        if update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.message.edit_text(message_text, reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(message_text, reply_markup=reply_markup)
+        return ConversationHandler.END # End the support conversation if not registered
     # Update user activity
     Database.update_user_activity(user_id)
     
@@ -150,7 +162,8 @@ async def get_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     success_message_user = (
         f"✅ تیکت شما با شناسه <b>{formatted_ticket_id}</b> با موفقیت ثبت شد.\n"
         f"موضوع: {subject}\n\n"
-        "به زودی توسط تیم پشتیبانی بررسی خواهد شد."
+        "به زودی توسط تیم پشتیبانی بررسی خواهد شد.\n"
+        "جهت دریافت پاسخ، لطفاً ربات @Daraei_Academy_Manager_bot را Start کنید."
     )
     
     # Get user's tickets again to update the support menu
@@ -305,6 +318,8 @@ async def send_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
     if success:
+        # Get AI-suggested answer, passing user_id for context-aware response
+        suggested_answer = responder.answer_ticket(ticket['subject'], message_text, user_id=user_id)
         # View updated ticket
         # Ensure the view_ticket function is called correctly, it might need context or update object if called directly
         # The current structure of view_ticket expects to be a handler, so we pass update and context.
