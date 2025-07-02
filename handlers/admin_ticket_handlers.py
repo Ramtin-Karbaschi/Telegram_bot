@@ -1,10 +1,11 @@
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
+from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 from database.queries import DatabaseQueries
 import config
 from utils.helpers import admin_only_decorator as admin_only
 import json
+from ai.model import responder
 
 logger = logging.getLogger(__name__)
 
@@ -77,44 +78,49 @@ class AdminTicketHandler:
         """Show detailed view of a specific ticket"""
         query = update.callback_query
         await query.answer()
-        
+
         user_id = query.from_user.id
-        
+
         # Check if user is admin
         if not self._is_admin(user_id):
             await query.edit_message_text("❌ شما دسترسی لازم برای این عملیات را ندارید.")
             return
-        
+
         try:
             # Extract ticket ID from callback data
             ticket_id = int(query.data.split('_')[-1])
             logger.info(f"DEBUG: Admin {user_id} viewing ticket with ID: {ticket_id}")
-            
+
             # Get ticket details
-            ticket = self._get_ticket_by_id(ticket_id) # This will now call the corrected version
-            
+            ticket = self._get_ticket_by_id(ticket_id)
+
             if not ticket:
                 logger.warning(f"Ticket with ID {ticket_id} not found by _get_ticket_by_id.")
                 await query.edit_message_text("❌ تیکت یافت نشد.")
                 return
-            
+
             logger.info(f"DEBUG: Ticket data for display: {ticket}")
 
             user_id_ticket = ticket.get('user_id')
             subject = ticket.get('subject', 'بدون موضوع')
-            message = ticket.get('message', 'پیام موجود نیست') # Ensure 'message' key is populated by _get_ticket_by_id
+            message = ticket.get('message', 'پیام موجود نیست')
             created_at = ticket.get('created_at', 'نامشخص')
             status = ticket.get('status', 'نامشخص')
-            
+
+            # Generate AI suggested answer for the specific user
+            ticket_owner_id = ticket.get('user_id')
+            ai_answer = responder.answer_ticket(subject, message, ticket_owner_id)
+            context.user_data[f'ai_answer_{ticket_id}'] = ai_answer
+
             # Get user info
             user_info = self._get_user_info(user_id_ticket)
             if not user_info:
                 await query.edit_message_text("❌ اطلاعات کاربر یافت نشد.")
                 return
-            
+
             user_display = self._format_user_info(user_info)
             contact_info = self._get_contact_info(user_info)
-            
+
             # Format ticket details
             message_text = f"🎫 *جزئیات تیکت #{ticket_id}*\n\n"
             message_text += f"👤 *کاربر:* {user_display}\n"
@@ -127,28 +133,111 @@ class AdminTicketHandler:
             message_text += "📋 *راهنما برای ادمین:*\n"
             message_text += f"• برای پاسخ به کاربر، از طریق {contact_info} با او تماس بگیرید\n"
             message_text += "• پس از حل مشکل، تیکت را بسته کنید"
-            
+
+            # Append AI suggested answer to message
+            message_text += f"🤖 *پاسخ پیشنهادی هوش‌مصنوعی:*\n{ai_answer}\n\n"
+
             # Create action buttons
             keyboard = [
                 [
-                    InlineKeyboardButton("✅ بستن تیکت", callback_data=f"close_ticket_{ticket_id}"),
+                    InlineKeyboardButton("📤 ارسال پاسخ به کاربر", callback_data=f"send_answer_{ticket_id}"),
+                    InlineKeyboardButton("✏️ ویرایش پاسخ", callback_data=f"edit_answer_{ticket_id}")
+                ],
+                [
+                    InlineKeyboardButton("✅ بستن تیکت", callback_data=f"close_ticket_{ticket_id}")
                 ],
                 [
                     InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="refresh_tickets")
                 ]
             ]
-            
+
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
                 message_text,
                 parse_mode='Markdown',
                 reply_markup=reply_markup
             )
-            
+
         except Exception as e:
             logger.error(f"Error viewing ticket: {e}")
             await query.edit_message_text("❌ خطا در نمایش تیکت.")
-    
+
+    async def send_answer_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Send the stored AI answer to the ticket owner"""
+        query = update.callback_query
+        await query.answer()
+
+        user_id = query.from_user.id
+        if not self._is_admin(user_id):
+            await query.edit_message_text("❌ شما دسترسی لازم برای این عملیات را ندارید.")
+            return
+
+        ticket_id = int(query.data.split('_')[-1])
+        ticket = self._get_ticket_by_id(ticket_id)
+        if not ticket:
+            await query.edit_message_text("❌ تیکت یافت نشد.")
+            return
+
+        target_user_id = ticket.get('user_id')
+        ai_answer = context.user_data.get(f'ai_answer_{ticket_id}')
+        if not ai_answer:
+            await query.edit_message_text("❌ پاسخ هوش‌مصنوعی یافت نشد.")
+            return
+
+        try:
+            await context.bot.send_message(chat_id=target_user_id, text=ai_answer)
+            await query.edit_message_text(
+                f"✅ پاسخ برای کاربر ارسال شد:\n\n{ai_answer}"
+            )
+        except Exception as e:
+            logger.error(f"Error sending AI answer: {e}")
+            await query.edit_message_text("❌ خطا در ارسال پاسخ به کاربر.")
+
+    async def edit_answer_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Provide AI answer for admin to edit manually"""
+        query = update.callback_query
+        await query.answer()
+
+        user_id = query.from_user.id
+        if not self._is_admin(user_id):
+            await query.edit_message_text("❌ شما دسترسی لازم برای این عملیات را ندارید.")
+            return
+
+        ticket_id = int(query.data.split('_')[-1])
+        ai_answer = context.user_data.get(f'ai_answer_{ticket_id}')
+        if not ai_answer:
+            await query.edit_message_text("❌ پاسخ هوش‌مصنوعی یافت نشد.")
+            return
+
+        # Ask admin to edit the answer using ForceReply
+        await query.message.reply_text(
+            f"✏️ لطفاً پاسخ را ویرایش کرده و ارسال کنید. پس از ارسال، ربات آن را به کاربر فوروارد خواهد کرد.\n\nمتن پیشنهادی:\n{ai_answer}",
+            reply_markup=ForceReply(selective=True)
+        )
+        # Set state for later processing (implementation of listener not included here)
+        context.user_data['editing_ticket_id'] = ticket_id
+
+    async def receive_edited_answer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle admin's edited answer after ForceReply"""
+        user_id = update.effective_user.id
+        if not self._is_admin(user_id):
+            return  # ignore non-admins
+        ticket_id = context.user_data.pop('editing_ticket_id', None)
+        if not ticket_id:
+            return  # nothing to process
+        ticket = self._get_ticket_by_id(ticket_id)
+        if not ticket:
+            await update.message.reply_text("❌ تیکت یافت نشد.")
+            return
+        target_user_id = ticket.get('user_id')
+        text = update.message.text
+        try:
+            await context.bot.send_message(chat_id=target_user_id, text=text)
+            await update.message.reply_text("✅ پاسخ ویرایش‌شده برای کاربر ارسال شد.")
+        except Exception as e:
+            logger.error(f"Error forwarding edited answer: {e}")
+            await update.message.reply_text("❌ خطا در ارسال پاسخ.")
+
     async def close_ticket_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Close a ticket"""
         query = update.callback_query
@@ -443,6 +532,9 @@ class AdminTicketHandler:
         return [
             CommandHandler('tickets', self.show_tickets_command),
             CallbackQueryHandler(self.view_ticket_callback, pattern=r'^view_ticket_\d+$'),
+            CallbackQueryHandler(self.send_answer_callback, pattern=r'^send_answer_\d+$'),
+            CallbackQueryHandler(self.edit_answer_callback, pattern=r'^edit_answer_\d+$'),
             CallbackQueryHandler(self.close_ticket_callback, pattern=r'^close_ticket_\d+$'),
             CallbackQueryHandler(self.refresh_tickets_callback, pattern=r'^refresh_tickets$'),
+            MessageHandler(filters.TEXT & (~filters.COMMAND), self.receive_edited_answer),
         ]
