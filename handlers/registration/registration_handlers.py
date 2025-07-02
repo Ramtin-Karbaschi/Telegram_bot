@@ -6,7 +6,7 @@ import logging
 
 import re
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     ContextTypes, ConversationHandler, CommandHandler, 
     MessageHandler, filters, CallbackQueryHandler
@@ -29,6 +29,7 @@ from utils.constants import (
 )
 from utils.helpers import is_valid_full_name
 from utils.keyboards import get_main_reply_keyboard
+from telegram.constants import ParseMode
 import config
 
 logger = logging.getLogger(__name__)
@@ -71,14 +72,17 @@ async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Start registration process
     await effective_message.reply_text(
-        REGISTRATION_WELCOME,
-        reply_markup=get_back_button()
+        REGISTRATION_WELCOME
     )
     
     # Move to phone number step
+    # Create a keyboard with only the contact sharing button, no back button
+    contact_keyboard = [[KeyboardButton("📲 اشتراک شماره تلفن", request_contact=True)]]
+    reply_markup = ReplyKeyboardMarkup(contact_keyboard, resize_keyboard=True, one_time_keyboard=False)
+
     await effective_message.reply_text(
         PHONE_REQUEST,
-        reply_markup=get_contact_button()
+        reply_markup=reply_markup
     )
     
     logger.critical("CRITICAL_LOG: START_REGISTRATION_ATTEMPTING_TO_RETURN_GET_PHONE")
@@ -101,11 +105,15 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             phone = '+' + phone
     elif update.message.text:
         logger.info(f"Received phone via text: '{update.message.text}'")
-        # Consider using a constant for "🔙 بازگشت"
-        if update.message.text == "🔙 بازگشت": 
-            logger.info("Back button pressed in GET_PHONE. Cancelling registration.")
-            return await cancel_registration(update, context)
         
+        # Explicitly handle "back" button text to avoid processing it as a phone number
+        if "بازگشت" in update.message.text:
+            await update.message.reply_text(
+                "برای ادامه ثبت‌نام، لطفاً شماره تلفن خود را وارد یا به اشتراک بگذارید. برای لغو کامل می‌توانید از دستور /cancel استفاده کنید.",
+                reply_markup=get_contact_button()
+            )
+            return GET_PHONE
+
         phone = update.message.text.strip()
         if not phone.startswith('+'):
             phone = '+' + phone
@@ -289,10 +297,27 @@ async def get_occupation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return GET_CITY
 
+async def back_to_get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Go back to the phone number entry step."""
+    logger.info("User chose to go back from entering full name to phone number step.")
+    
+    # Re-request phone number
+    await update.message.reply_text(
+        text=PHONE_REQUEST,
+        reply_markup=get_contact_button(),
+        parse_mode=ParseMode.HTML
+    )
+    return GET_PHONE
+
 async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel the registration process"""
     await update.message.reply_text(
-        "ثبت‌نام لغو شد. می‌توانید از منوی اصلی گزینه مورد نظر خود را انتخاب کنید.",
+        "ثبت‌نام لغو شد.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    # Also send the main menu to guide the user
+    await update.message.reply_text(
+        "می‌توانید از منوی اصلی گزینه مورد نظر خود را انتخاب کنید.",
         reply_markup=get_main_menu_keyboard()
     )
     return ConversationHandler.END
@@ -302,13 +327,15 @@ registration_conversation = ConversationHandler(
     entry_points=[
         CommandHandler("register", start_registration),
         MessageHandler(filters.Regex("^📝 ثبت نام$"), start_registration),
-        CallbackQueryHandler(start_registration, pattern="^start_registration_flow$")
+        CallbackQueryHandler(start_registration, pattern="^start_registration_flow$"),
+        CallbackQueryHandler(start_registration, pattern="^register$")
     ],
     states={
         GET_PHONE: [
             MessageHandler(filters.CONTACT | (filters.TEXT & ~filters.COMMAND), get_phone)
         ],
         GET_FULLNAME: [
+            MessageHandler(filters.Regex("^↩ بازگشت$"), back_to_get_phone),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_fullname)
         ]
     },
