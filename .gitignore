@@ -13,6 +13,7 @@ ENV/
 # Database
 database/data/*.db
 migrate.py
+*.json
 
 # Video files
 *.mp4
