@@ -467,6 +467,29 @@ class DatabaseQueries:
         return []
 
     @staticmethod
+    def has_active_subscription(user_id: int) -> bool:
+        """Check if a user has an active, non-expired subscription."""
+        db = Database()
+        if db.connect():
+            try:
+                # Use current time that is timezone-aware
+                current_time = get_current_time()
+                query = """
+                    SELECT 1 FROM subscriptions
+                    WHERE user_id = ? AND end_date > ? AND status = 'active'
+                    LIMIT 1
+                """
+                db.execute(query, (user_id, current_time))
+                result = db.fetchone()
+                return result is not None
+            except sqlite3.Error as e:
+                logging.error(f"Database error in has_active_subscription for user {user_id}: {e}")
+                return False
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
     def get_users_with_non_active_subscription_records():
         """Get users with non-active (expired, cancelled, etc.) subscription records."""
         db = Database()
