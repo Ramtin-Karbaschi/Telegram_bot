@@ -112,7 +112,7 @@ def admin_only_decorator(func):
         user = update.effective_user
         if not user or not is_user_in_admin_list(user.id, self.admin_config):
             if update.effective_message:
-                await update.effective_message.reply_text("شما اجازه دسترسی به این دستور را ندارید.")
+                await update.effective_message.reply_text("پیام های پشتیبانی در این ربات برای شما ارسال می شود.")
             elif update.callback_query:
                 await update.callback_query.answer("شما اجازه دسترسی به این عمل را ندارید.", show_alert=True)
             return
