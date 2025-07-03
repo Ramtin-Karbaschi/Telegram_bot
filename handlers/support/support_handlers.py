@@ -421,7 +421,7 @@ async def choose_suggested_subject(update: Update, context: ContextTypes.DEFAULT
     # Ask for ticket message
     await query.message.edit_text(
         text=f"لطفاً متن پیام خود را در ارتباط با موضوع <b>{subject}</b> وارد کنید.",
-        reply_markup=get_back_button(),
+        reply_markup=None,  # Remove inline keyboard to avoid BadRequest
         parse_mode=ParseMode.HTML
     )
     return NEW_TICKET_MESSAGE
