@@ -25,6 +25,46 @@ class DatabaseQueries:
         return False
     
     # -----------------------------------
+    # User search helper
+    # -----------------------------------
+    @staticmethod
+    def search_users(term: str):
+        """Search users by user_id numeric, username or part of full_name (case-insensitive). Returns list of rows."""
+        db = Database()
+        results = []
+        if db.connect():
+            try:
+                if term.isdigit():
+                    db.execute("SELECT user_id, full_name, username FROM users WHERE user_id = ?", (int(term),))
+                else:
+                    like_term = f"%{term}%"
+                    db.execute("SELECT user_id, full_name, username FROM users WHERE username LIKE ? OR full_name LIKE ?", (like_term, like_term))
+                results = db.fetchall()
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in search_users: {e}")
+            finally:
+                db.close()
+        return results
+
+    # -----------------------------------
+    # Payments helpers
+    # -----------------------------------
+    @staticmethod
+    def get_recent_payments(limit: int = 20):
+        """Return recent payment records ordered by created_at DESC."""
+        db = Database()
+        payments = []
+        if db.connect():
+            try:
+                db.execute("SELECT id, user_id, amount, payment_method, plan_id, status, created_at FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
+                payments = db.fetchall()
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in get_recent_payments: {e}")
+            finally:
+                db.close()
+        return payments
+
+    # -----------------------------------
     # Video file caching
     # -----------------------------------
     @staticmethod

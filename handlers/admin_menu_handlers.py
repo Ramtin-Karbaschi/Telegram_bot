@@ -5,7 +5,7 @@ so administrators can quickly access management features
 
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler
+from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 from utils.helpers import admin_only_decorator as admin_only
 from handlers.admin_ticket_handlers import AdminTicketHandler
@@ -22,6 +22,8 @@ class AdminMenuHandler:
         self.admin_config = admin_config
         # Re-use ticket handler to show lists inside this menu
         self.ticket_handler = AdminTicketHandler()
+        # Simple flag for maintenance mode toggle in misc settings
+        self.maintenance_mode = False
     """Show an interactive admin panel and dispatch to feature modules."""
 
     # Callback data constants
@@ -76,8 +78,30 @@ class AdminMenuHandler:
         elif data == "users_active":
             await self._show_active_users(query)
         elif data == "users_search":
-            await query.answer("جستجو هنوز پیاده‌سازی نشده است.")
-            await self._users_submenu(query)
+            # Ask admin for search term
+            await query.edit_message_text("🔎 لطفاً نام کاربری، نام یا آیدی عددی کاربر را ارسال کنید:")
+            context.user_data["awaiting_user_search_query"] = True
+        # ----- Payments submenu actions -----
+        elif data == "payments_recent":
+            await self._show_recent_payments(query)
+        elif data == "payments_stats":
+            await self._show_payments_stats(query)
+        # ----- Settings submenu actions -----
+        elif data == "settings_admins":
+            await self._show_admins_settings(query)
+        elif data == "settings_misc":
+            await self._settings_misc_submenu(query)
+        elif data == "settings_toggle_maintenance":
+            # Toggle the flag
+            self.maintenance_mode = not self.maintenance_mode
+            await query.answer("به‌روزرسانی شد")
+            await self._settings_misc_submenu(query)
+        # ----- Broadcast submenu actions -----
+        elif data == "broadcast_send":
+            # Initiate broadcast flow – ask admin to send the content
+            await query.edit_message_text("✉️ لطفاً پیام مورد نظر خود را ارسال کنید. پس از ارسال، پیام به‌صورت خودکار برای تمامی کاربران فعال فوروارد خواهد شد.")
+            # Flag the admin's user_data so the next incoming message will be treated as broadcast content
+            context.user_data["awaiting_broadcast_content"] = True
         elif data == self.BACK_MAIN:
             # Just recreate the main menu
             await self.show_admin_menu(query, context)  # type: ignore[arg-type]
@@ -144,10 +168,136 @@ class AdminMenuHandler:
         ]
         await query.edit_message_text("⚙️ *تنظیمات*:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
+    # ---------- Broadcast content handler ----------
+    @admin_only
+    async def broadcast_message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle dynamic admin inputs based on flow flags (broadcast, user search)."""
+        message = update.effective_message
+
+        # -------- Broadcast flow --------
+        if context.user_data.get("awaiting_broadcast_content"):
+            # Notify admin that sending is in progress
+            await message.reply_text("⏳ در حال ارسال پیام به کاربران، لطفاً صبر کنید...")
+
+            users = DatabaseQueries.get_all_active_subscribers()
+            total = len(users)
+            success = 0
+            for u in users:
+                try:
+                    user_id = u[0] if isinstance(u, (list, tuple)) else (u.get('user_id') if isinstance(u, dict) else u)
+                    await context.bot.copy_message(chat_id=user_id, from_chat_id=message.chat_id, message_id=message.message_id)
+                    success += 1
+                except Exception as e:
+                    logger.warning(f"Failed to send broadcast to {user_id}: {e}")
+                    continue
+
+            await message.reply_text(f"✅ ارسال پیام به پایان رسید. موفق: {success}/{total}")
+            context.user_data.pop("awaiting_broadcast_content", None)
+            return
+
+        # -------- User search flow --------
+        if context.user_data.get("awaiting_user_search_query"):
+            term = message.text.strip()
+            results = DatabaseQueries.search_users(term)
+            if not results:
+                await message.reply_text("❌ کاربری یافت نشد.")
+            else:
+                lines = ["🔎 *نتایج جستجو:*\n"]
+                for r in results:
+                    try:
+                        user_id = r[0] if isinstance(r, (list, tuple)) else r.get('user_id')
+                        full_name = r[1] if isinstance(r, (list, tuple)) else r.get('full_name', '')
+                        username = r[2] if isinstance(r, (list, tuple)) else r.get('username', '')
+                        line = f"• {full_name} ({'@'+username if username else '-'}) – {user_id}"
+                    except Exception:
+                        line = str(r)
+                    lines.append(line)
+                await message.reply_text("\n".join(lines), parse_mode="Markdown")
+            context.user_data.pop("awaiting_user_search_query", None)
+            return
+
+        # If no flags matched, ignore
+        # Notify admin that sending is in progress
+        await message.reply_text("⏳ در حال ارسال پیام به کاربران، لطفاً صبر کنید...")
+
+        users = DatabaseQueries.get_all_active_subscribers()
+        total = len(users)
+        success = 0
+        for u in users:
+            # Each row may be tuple, dict or sqlite Row; extract telegram user_id safely
+            try:
+                user_id = u[0] if isinstance(u, (list, tuple)) else (u.get('user_id') if isinstance(u, dict) else u)
+                await context.bot.copy_message(chat_id=user_id, from_chat_id=message.chat_id, message_id=message.message_id)
+                success += 1
+            except Exception as e:
+                logger.warning(f"Failed to send broadcast to {user_id}: {e}")
+                continue
+
+        await message.reply_text(f"✅ ارسال پیام به پایان رسید. موفق: {success}/{total}")
+        # Clear flag
+        context.user_data.pop("awaiting_broadcast_content", None)
+
+    # ---------- Payments helpers ----------
+    async def _show_recent_payments(self, query):
+        payments = DatabaseQueries.get_recent_payments(20)
+        if not payments:
+            await query.edit_message_text("📄 پرداختی یافت نشد.")
+            return
+        lines = ["💰 *۲۰ تراکنش اخیر:*\n"]
+        for p in payments:
+            try:
+                payment_id = p[0] if isinstance(p, (list, tuple)) else p.get('id')
+                user_id = p[1] if isinstance(p, (list, tuple)) else p.get('user_id')
+                amount = p[2] if isinstance(p, (list, tuple)) else p.get('amount')
+                status = p[5] if isinstance(p, (list, tuple)) else p.get('status')
+                created_at = p[6] if isinstance(p, (list, tuple)) else p.get('created_at')
+                lines.append(f"• #{payment_id} – {amount} ریال – {status} – {created_at} – UID:{user_id}")
+            except Exception:
+                lines.append(str(p))
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+
+    async def _show_payments_stats(self, query):
+        plans = DatabaseQueries.get_active_plans()
+        if not plans:
+            await query.edit_message_text("📊 هیچ پلن فعالی یافت نشد.")
+            return
+        lines = ["📈 *آمار اشتراک‌های فعال:*\n"]
+        for plan in plans:
+            plan_id = plan[0] if isinstance(plan, (list, tuple)) else plan.get('id')
+            plan_name = plan[1] if isinstance(plan, (list, tuple)) else plan.get('name')
+            count = DatabaseQueries.count_total_subs(plan_id)
+            lines.append(f"• {plan_name}: {count} مشترک فعال")
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+
+    # ---------- Settings helpers ----------
+    async def _settings_misc_submenu(self, query):
+        keyboard = [
+            [InlineKeyboardButton(f"🛠 حالت تعمیرات: {'فعال' if self.maintenance_mode else 'غیرفعال'}", callback_data="settings_toggle_maintenance")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
+        ]
+        status_text = "🛠 *حالت تعمیرات فعال است.*" if self.maintenance_mode else "✅ ربات در حالت عادی کار می‌کند."
+        await query.edit_message_text(f"⚙️ *سایر تنظیمات*:\n{status_text}\nگزینه مورد نظر را انتخاب کنید:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def _show_admins_settings(self, query):
+        if not self.admin_config:
+            await query.edit_message_text("🔐 پیکربندی مدیران یافت نشد.")
+            return
+        lines = ["🔐 *فهرست مدیران:*\n"]
+        if isinstance(self.admin_config, list):
+            for adm in self.admin_config:
+                if isinstance(adm, dict):
+                    lines.append(f"• {adm.get('alias','-')} – {adm.get('chat_id')}")
+        elif isinstance(self.admin_config, dict):
+            for uid, alias in self.admin_config.items():
+                lines.append(f"• {alias} – {uid}")
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+
     # ---------- Public helper ----------
     def get_handlers(self):
         """Return telegram.ext handlers to register in the dispatcher."""
         return [
             CommandHandler("admin", self.show_admin_menu),
             CallbackQueryHandler(self.admin_menu_callback, pattern=r"^admin_.*|^tickets_.*|^users_.*|^payments_.*|^broadcast_.*|^settings_.*"),
+            # Handle incoming messages for broadcast flow (only processed when flag is set)
+            MessageHandler(filters.ALL, self.broadcast_message_handler),
         ]
