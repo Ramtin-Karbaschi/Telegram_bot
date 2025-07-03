@@ -18,6 +18,26 @@ from telegram.ext import (
 )
 logger = logging.getLogger(__name__)
 
+# --- Patch telegram CallbackQuery.answer to safely ignore "query is too old" / timeout errors ---
+from telegram._callbackquery import CallbackQuery as _CallbackQueryOriginal
+_original_answer = _CallbackQueryOriginal.answer
+
+async def _safe_answer(self, *args, **kwargs):  # type: ignore[override]
+    try:
+        return await _original_answer(self, *args, **kwargs)
+    except BadRequest as e:
+        if any(tok in str(e).lower() for tok in (
+            'query is too old',
+            'response timeout expired',
+            'query id is invalid'
+        )):
+            logger.warning(f"[safe_answer_patch] Ignored BadRequest while answering callback: {e}")
+            return None
+        raise
+
+_CallbackQueryOriginal.answer = _safe_answer
+# ----------------------------------------------------------------------
+
 from datetime import datetime, timedelta
 import uuid
 import os

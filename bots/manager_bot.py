@@ -22,6 +22,7 @@ from utils.helpers import is_user_in_admin_list, get_alias_from_admin_list, admi
 import config # For other config vars like CHANNEL_ID
 from database.models import Database as DBConnection # For DB connection
 from handlers.admin_ticket_handlers import AdminTicketHandler  # Fixed import
+from handlers.admin_menu_handlers import AdminMenuHandler  # Import admin menu handler
 
 # States for ConversationHandler
 
@@ -84,8 +85,9 @@ class ManagerBot:
         Database.init_database() 
         self.main_bot_app = main_bot_app # Store main_bot_app if provided
         
-        # Initialize ticket handler
-        self.ticket_handler = AdminTicketHandler()  # Fixed class name
+        # Initialize ticket and admin menu handlers
+        self.ticket_handler = AdminTicketHandler()
+        self.menu_handler = AdminMenuHandler(admin_config=self.admin_config)
         
         # Setup task handlers
         self.setup_tasks()
@@ -202,8 +204,9 @@ class ManagerBot:
         self.logger.info(f"Admin user {admin_alias} ({user.id}) started the bot.")
         await update.message.reply_text(
             f"سلام {admin_alias}! به ربات مدیریت آکادمی دارایی خوش آمدید.\n"
-            f"برای مشاهده دستورات موجود از /help استفاده کنید."
+            f"از منوی زیر می‌توانید بخش مورد نظر را انتخاب کنید."
         )
+        await self.menu_handler.show_admin_menu(update, context)
 
     @admin_only
     async def view_tickets_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -414,7 +417,7 @@ class ManagerBot:
         except Forbidden as e:
             self.logger.error(f"Error getting administrators for channel '{channel_title}' (ID: {channel_id}) (Forbidden): {e}. Ensure bot has rights to get chat administrators.")
         except Exception as e:
-            self.logger.error(f"Unexpected error getting administrators for channel '{channel_title}' (ID: {channel_id}): {e}", exc_info=True)
+            self.logger.error(f"Unexpected error getting administrators for channel '{current_channel_title}' (ID: {channel_id}): {e}", exc_info=True)
         return admin_ids
 
     async def send_membership_status_notification(self, bot, user_id, reason_message, is_kicked=False):
@@ -440,23 +443,6 @@ class ManagerBot:
         except Exception as e:
             self.logger.error(f"Unexpected error sending membership status notification to {user_id}: {e}", exc_info=True)
     
-            self.logger.info(f"Found {len(expired)} expired subscriptions")
-            
-            # Send expired notifications to each user
-            for subscription in expired:
-                user_id = subscription['user_id']
-                
-                # Send expired notification
-                await send_expired_notification(bot, user_id)
-                
-                # Mark as notified
-                Database.mark_subscription_notified(subscription['subscription_id'])
-                
-                self.logger.info(f"Sent expiration notification to user {user_id}")
-        
-        except Exception as e:
-            self.logger.error(f"Error sending expiration reminders: {e}")
-    
     def setup_handlers(self):
         """Setup command, message, and callback query handlers."""
         # Command Handlers for admin actions
@@ -465,13 +451,15 @@ class ManagerBot:
         self.application.add_handler(CommandHandler("validate_now", self.validate_memberships_now_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
 
-        # Add ticket management handlers from the ticket handler
+        # Add ticket management handlers
         for handler in self.ticket_handler.get_handlers():
+            self.application.add_handler(handler)
+        # Add admin menu handlers
+        for handler in self.menu_handler.get_handlers():
             self.application.add_handler(handler)
 
 
     
-
 
     async def send_new_ticket_notification(self, notif_message: str):
         """

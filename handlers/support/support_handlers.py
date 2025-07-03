@@ -12,12 +12,24 @@ from utils.constants import (
     TICKET_CLOSED_MESSAGE, TICKET_REOPENED_MESSAGE,
     SUPPORT_MENU, NEW_TICKET_SUBJECT, NEW_TICKET_MESSAGE, VIEW_TICKET # Added conversation states
 )
+
+# Suggested ticket subjects (max 5)
+SUGGESTED_TICKET_SUBJECTS = [
+    "مشکل پرداخت",
+    "خطای ورود",
+    "پرسش درباره دوره",
+    "درخواست بازگشت وجه",
+    "مشکل فنی",
+]
 import config
 import logging
 import json
 
 # Configure logger
 logger = logging.getLogger(__name__)
+
+# Placeholder for AI responder (e.g., GPT-based) – currently disabled to avoid NameError
+responder = None
 
 async def start_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start the support process, handling both command and callback query"""
@@ -69,31 +81,42 @@ async def start_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def create_new_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start creating a new ticket"""
-    # Check if from callback query or direct command
+    # Build inline keyboard with suggested subjects (3 per row)
+    keyboard = []
+    row = []
+    for idx, topic in enumerate(SUGGESTED_TICKET_SUBJECTS):
+        row.append(InlineKeyboardButton(text=topic, callback_data=f"subject_{idx}"))
+        if (idx + 1) % 3 == 0:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Send request depending on update type
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        
         await query.message.reply_text(
             NEW_TICKET_SUBJECT_REQUEST,
-            reply_markup=get_back_button()
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
         )
     else:
         await update.message.reply_text(
             NEW_TICKET_SUBJECT_REQUEST,
-            reply_markup=get_back_button()
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
         )
     
     return NEW_TICKET_SUBJECT
 
 async def get_ticket_subject(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Get the subject for a new ticket"""
-    # Store the ticket subject
-    subject = update.message.text
-    
-    if not subject or len(subject) < 5:
+    """Get the subject for a new ticket (user typed custom subject)"""
+    subject = update.message.text.strip() if update.message else ""
+    if not subject:
         await update.message.reply_text(
-            "موضوع تیکت باید حداقل ۵ کاراکتر باشد. لطفاً دوباره وارد کنید:",
+            " لطفاً موضوع تیکت را وارد کنید یا از گزینه‌های پیشنهادی استفاده کنید:",
             reply_markup=get_back_button()
         )
         return NEW_TICKET_SUBJECT
@@ -107,7 +130,6 @@ async def get_ticket_subject(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=get_back_button(),
         parse_mode=ParseMode.HTML
     )
-    
     return NEW_TICKET_MESSAGE
 
 async def get_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -318,8 +340,9 @@ async def send_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
     if success:
-        # Get AI-suggested answer, passing user_id for context-aware response
-        suggested_answer = responder.answer_ticket(ticket['subject'], message_text, user_id=user_id)
+        # Placeholder for AI-suggested answer – integration disabled for now
+        # if responder:
+        #     suggested_answer = responder.answer_ticket(ticket['subject'], message_text, user_id=user_id)
         # View updated ticket
         # Ensure the view_ticket function is called correctly, it might need context or update object if called directly
         # The current structure of view_ticket expects to be a handler, so we pass update and context.
@@ -379,6 +402,29 @@ async def handle_back_to_main_from_support(update: Update, context: ContextTypes
         
     return ConversationHandler.END
 
+
+async def choose_suggested_subject(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback handler when user taps on one of the suggested subject buttons"""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        idx = int(query.data.split('_')[1])
+        subject = SUGGESTED_TICKET_SUBJECTS[idx]
+    except (IndexError, ValueError):
+        await query.message.reply_text("خطا در پردازش موضوع انتخابی. لطفاً دوباره تلاش کنید.")
+        return NEW_TICKET_SUBJECT
+
+    # Save subject
+    context.user_data['ticket_subject'] = subject
+
+    # Ask for ticket message
+    await query.message.edit_text(
+        text=f"لطفاً متن پیام خود را در ارتباط با موضوع <b>{subject}</b> وارد کنید.",
+        reply_markup=get_back_button(),
+        parse_mode=ParseMode.HTML
+    )
+    return NEW_TICKET_MESSAGE
 
 # Callback handler functions for main_bot.py
 

@@ -109,8 +109,13 @@ def admin_only_decorator(func):
                  await update.callback_query.answer("خطای سرور در بررسی دسترسی.", show_alert=True)
             return
 
-        user = update.effective_user
-        if not user or not is_user_in_admin_list(user.id, self.admin_config):
+        # Determine user depending on update type
+        from telegram import CallbackQuery
+        if isinstance(update, CallbackQuery):
+            user = update.from_user  # type: ignore[attr-defined]
+        else:
+            user = getattr(update, 'effective_user', None)
+        if user is None or not is_user_in_admin_list(user.id, self.admin_config):
             if update.effective_message:
                 await update.effective_message.reply_text("پیام های پشتیبانی در این ربات برای شما ارسال می شود.")
             elif update.callback_query:

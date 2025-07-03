@@ -859,6 +859,32 @@ class DatabaseQueries:
         return tickets
 
     @staticmethod
+    def get_all_tickets():
+        """Fetch all tickets regardless of status for admin view."""
+        db = Database()
+        tickets = []
+        if db.connect():
+            try:
+                query = """
+                    SELECT t.id as ticket_id, t.user_id, u.full_name as user_name,
+                           t.subject as subject, t.status, t.created_at
+                    FROM tickets t
+                    JOIN users u ON t.user_id = u.user_id
+                    ORDER BY t.created_at DESC;
+                """
+                db.execute(query)
+                rows = db.fetchall()
+                if rows:
+                    column_names = [desc[0] for desc in db.cursor.description]
+                    for row in rows:
+                        tickets.append(dict(zip(column_names, row)))
+            except sqlite3.Error as e:
+                print(f"SQLite error in get_all_tickets: {e}")
+            finally:
+                db.close()
+        return tickets
+
+    @staticmethod
     def get_ticket_details(ticket_id):
         """Fetch details for a specific ticket, including its messages."""
         db = Database()
