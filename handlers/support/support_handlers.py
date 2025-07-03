@@ -478,6 +478,7 @@ ticket_conversation = ConversationHandler(
             CallbackQueryHandler(view_ticket_handler, pattern="^view_ticket_")
         ],
         NEW_TICKET_SUBJECT: [
+            CallbackQueryHandler(choose_suggested_subject, pattern="^subject_"),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_ticket_subject),
             MessageHandler(filters.TEXT & filters.Regex(f"^🔙 بازگشت$"), support_menu_handler)  # Go back to support menu
         ],

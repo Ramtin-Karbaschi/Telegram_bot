@@ -31,7 +31,7 @@ import nltk  # type: ignore
 from nltk.tokenize import sent_tokenize  # type: ignore
 
 from database.queries import DatabaseQueries
-
+nltk.download('punkt_tab')
 # ---------------------------------------------------------------------------
 # Environment & constants
 # ---------------------------------------------------------------------------
