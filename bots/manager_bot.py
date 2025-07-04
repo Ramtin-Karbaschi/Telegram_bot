@@ -336,14 +336,14 @@ class ManagerBot:
                         if chat_member.status in ['left', 'kicked']:
                             self.logger.warning(f"User {user_id_to_check} has active DB sub but is {chat_member.status} in channel '{current_channel_title}'.")
                     except BadRequest as e:
-                        if "user not found" in str(e).lower():
+                        if "user not found" in str(e).lower() or "participant_id_invalid" in str(e).lower():
                             self.logger.warning(f"User {user_id_to_check} (active DB subscriber) not found in Telegram (for channel '{current_channel_title}').")
                         else:
                             self.logger.error(f"Error checking member {user_id_to_check} in channel '{current_channel_title}' (BadRequest): {e}.")
                     except Forbidden as e:
                         self.logger.error(f"Forbidden to get chat member {user_id_to_check} for channel '{current_channel_title}': {e}.")
                     except Exception as e:
-                        self.logger.error(f"Unexpected error checking member {user_id_to_kick_check} in channel '{current_channel_title}': {e}", exc_info=True)
+                        self.logger.error(f"Unexpected error checking member {user_id_to_check} in channel '{current_channel_title}': {e}", exc_info=True)
                 
                 # Part 2: Identify and kick users in channel with non-active/expired/no DB subscription
                 users_with_non_active_subs_db = DatabaseQueries.get_users_with_non_active_subscription_records()
@@ -381,12 +381,10 @@ class ManagerBot:
                                 await self.send_membership_status_notification(bot, user_id_to_kick_check, reason, is_kicked=True)
                             except Forbidden as kick_err_forbidden:
                                 self.logger.error(f"FORBIDDEN error kicking user {user_id_to_kick_check} from '{current_channel_title}': {kick_err_forbidden}. BOT LACKS BAN PERMISSION?", exc_info=True)
-                            except BadRequest as kick_err_bad_request:
-                                self.logger.error(f"BAD_REQUEST error kicking user {user_id_to_kick_check} from '{current_channel_title}': {kick_err_bad_request}. USER/CHAT NOT FOUND?", exc_info=True)
                             except Exception as kick_err_generic:
                                 self.logger.error(f"Generic error kicking user {user_id_to_kick_check} from '{current_channel_title}': {kick_err_generic}", exc_info=True)
                     except BadRequest as e:
-                        if "user not found" in str(e).lower() or "member not found" in str(e).lower():
+                        if "user not found" in str(e).lower() or "member not found" in str(e).lower() or "participant_id_invalid" in str(e).lower():
                             self.logger.info(f"User {user_id_to_kick_check} (to kick) not found in Telegram for channel '{current_channel_title}'. Skipping kick.")
                         elif "chat not found" in str(e).lower():
                             self.logger.error(f"Channel '{current_channel_title}' (ID: {current_channel_id}) not found by bot. Halting validation FOR THIS CHANNEL.")
