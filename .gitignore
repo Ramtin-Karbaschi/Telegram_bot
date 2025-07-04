@@ -15,6 +15,8 @@ database/data/*.db
 migrate.py
 *.json
 *.docx
+*.pkl
+!database/data/bot_persistence.pkl
 
 # Video files
 *.mp4
@@ -33,7 +35,7 @@ migrate.py
 logs/
 *.log
 bot_activity.log
-bot_persistance.pkl
+
 
 # IDE / Editor specific
 .vscode/

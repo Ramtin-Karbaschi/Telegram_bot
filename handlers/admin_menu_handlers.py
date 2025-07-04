@@ -47,9 +47,13 @@ class AdminMenuHandler:
 
     async def _back_to_main(self, query):
         """Return to main admin panel (used internally)."""
-        await query.edit_message_text("⚡️ *پنل مدیریت*\nیکی از گزینه‌های زیر را انتخاب کنید:", parse_mode="Markdown")
-        # Re-use show_admin_menu keyboard
-        await self.show_admin_menu(query, None)  # type: ignore[arg-type]
+        keyboard = [
+            [InlineKeyboardButton("🎫 مدیریت تیکت‌ها", callback_data=self.TICKETS_MENU), InlineKeyboardButton("👥 مدیریت کاربران", callback_data=self.USERS_MENU)],
+            [InlineKeyboardButton("💳 مدیریت پرداخت‌ها", callback_data=self.PAYMENTS_MENU), InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data=self.BROADCAST_MENU)],
+            [InlineKeyboardButton("⚙️ تنظیمات", callback_data=self.SETTINGS_MENU)],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text("⚡️ *پنل مدیریت*\nیکی از گزینه‌های زیر را انتخاب کنید:", parse_mode="Markdown", reply_markup=reply_markup)
 
     # ---------- Menu callbacks ----------
     @admin_only
@@ -69,6 +73,8 @@ class AdminMenuHandler:
             await self._broadcast_submenu(query)
         elif data == self.SETTINGS_MENU:
             await self._settings_submenu(query)
+        elif data == self.BACK_MAIN:
+            await self._back_to_main(query)
         # ----- Ticket submenu actions -----
         elif data == "tickets_open":
             await self.ticket_handler._show_tickets_inline(query)

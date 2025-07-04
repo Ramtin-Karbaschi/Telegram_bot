@@ -7,7 +7,7 @@ import asyncio
 from database.queries import DatabaseQueries as Database # Added Database import
 import datetime
 from typing import Optional # Added for type hinting
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from typing import Optional, Tuple
 from telegram import ChatMember, ChatMemberUpdated
 from telegram.ext import (
@@ -202,9 +202,18 @@ class ManagerBot:
         user = update.effective_user
         admin_alias = get_alias_from_admin_list(user.id, self.admin_config) or user.first_name
         self.logger.info(f"Admin user {admin_alias} ({user.id}) started the bot.")
+        # Build admin main ReplyKeyboard with 5 options
+        admin_reply_keyboard = ReplyKeyboardMarkup(
+            [
+                [KeyboardButton("🎫 مدیریت تیکت‌ها"), KeyboardButton("👥 مدیریت کاربران")],
+                [KeyboardButton("💳 مدیریت پرداخت‌ها"), KeyboardButton("📢 ارسال پیام همگانی")],
+                [KeyboardButton("⚙️ تنظیمات")]
+            ], resize_keyboard=True, one_time_keyboard=False
+        )
         await update.message.reply_text(
             f"سلام {admin_alias}! به ربات مدیریت آکادمی دارایی خوش آمدید.\n"
-            f"از منوی زیر می‌توانید بخش مورد نظر را انتخاب کنید."
+            f"از منوی زیر می‌توانید بخش مورد نظر را انتخاب کنید.",
+            reply_markup=admin_reply_keyboard,
         )
         await self.menu_handler.show_admin_menu(update, context)
 
@@ -442,7 +451,78 @@ class ManagerBot:
             self.logger.warning(f"Failed to send membership status notification to {user_id} (Forbidden - user may have blocked bot): {e}")
         except Exception as e:
             self.logger.error(f"Unexpected error sending membership status notification to {user_id}: {e}", exc_info=True)
+
+    # ------------------ Ticket notification ------------------
+    async def send_new_ticket_notification(self, notification_text: str):
+        """Forward a newly-created ticket alert to all configured admins."""
+        if not notification_text:
+            return
+        if not self.application or not self.application.bot:
+            self.logger.error("send_new_ticket_notification called but bot application not initialized.")
+            return
+        # Extract admin chat IDs from admin_config (dict or list) or fallback to config.MANAGER_BOT_ADMIN_IDS
+        admin_ids: list[int] = []
+        if isinstance(self.admin_config, dict):
+            admin_ids = [int(k) for k in self.admin_config.keys()]
+        elif isinstance(self.admin_config, list):
+            try:
+                # list of dicts [{'chat_id':123,...}]
+                admin_ids = [int(a.get('chat_id')) for a in self.admin_config if a.get('chat_id')]
+            except Exception:
+                admin_ids = [int(a) for a in self.admin_config if a]
+        if not admin_ids:
+            admin_ids = getattr(config, 'MANAGER_BOT_ADMIN_IDS', []) or []
+        if not admin_ids:
+            self.logger.warning("No admin IDs configured – cannot deliver ticket notification.")
+            return
+        sent_count = 0
+        for adm in admin_ids:
+            try:
+                await self.application.bot.send_message(chat_id=adm, text=notification_text, parse_mode=ParseMode.HTML)
+                sent_count += 1
+            except Exception as e:
+                self.logger.error(f"Failed to send ticket notification to admin {adm}: {e}")
+        self.logger.info(f"Ticket notification delivered to {sent_count}/{len(admin_ids)} admins.")
     
+    async def _admin_reply_keyboard_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle admin reply keyboard button presses by sending a new message with the corresponding inline menu."""
+        message_text = update.message.text
+        user_id = update.message.from_user.id
+
+        # Check if the user is an admin
+        admin_ids = []
+        if isinstance(self.admin_config, list):
+            admin_ids = [admin.get('chat_id') for admin in self.admin_config if isinstance(admin, dict)]
+
+        if user_id not in admin_ids:
+            self.logger.warning(f"Non-admin user {user_id} attempted to use admin reply keyboard.")
+            return
+
+        # Create a dummy query object to pass to submenu methods
+        # This is a bit of a hack, but it allows us to reuse the existing submenu methods
+        # that expect a query object with `edit_message_text`.
+        # We'll use `send_message` instead of `edit_message_text`.
+        class DummyQuery:
+            def __init__(self, message):
+                self.message = message
+
+            async def edit_message_text(self, text, parse_mode, reply_markup):
+                await self.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+        dummy_query = DummyQuery(update.message)
+
+        # Route to the appropriate handler based on the button text
+        if "مدیریت تیکت‌ها" in message_text:
+            await self.menu_handler._tickets_submenu(dummy_query)
+        elif "مدیریت کاربران" in message_text:
+            await self.menu_handler._users_submenu(dummy_query)
+        elif "مدیریت پرداخت‌ها" in message_text:
+            await self.menu_handler._payments_submenu(dummy_query)
+        elif "ارسال پیام همگانی" in message_text:
+            await self.menu_handler._broadcast_submenu(dummy_query)
+        elif "تنظیمات" in message_text:
+            await self.menu_handler._settings_submenu(dummy_query)
+
     def setup_handlers(self):
         """Setup command, message, and callback query handlers."""
         # Command Handlers for admin actions
@@ -450,6 +530,9 @@ class ManagerBot:
         self.application.add_handler(CommandHandler("tickets", self.view_tickets_command))
         self.application.add_handler(CommandHandler("validate_now", self.validate_memberships_now_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
+
+        # ReplyKeyboard text handler for admin buttons (restrict to our icons/keywords)
+        self.application.add_handler(MessageHandler(filters.Regex(r"^(🎫|👥|💳|📢|⚙️).*"), self._admin_reply_keyboard_handler))
 
         # Register admin menu handlers FIRST so their MessageHandler (broadcast flow) has priority
         for handler in self.menu_handler.get_handlers():

@@ -1336,9 +1336,17 @@ class DatabaseQueries:
                 # if they have multiple non-active records.
                 # It also ensures status is not NULL or empty.
                 query = """
-                    SELECT DISTINCT user_id, status 
-                    FROM subscriptions 
-                    WHERE status IS NOT NULL AND status != '' AND status != 'active';
+                    SELECT DISTINCT u.user_id,
+                           COALESCE(s.status, 'no_subscription') AS status
+                    FROM users u
+                    LEFT JOIN subscriptions s
+                          ON s.user_id = u.user_id
+                          AND s.status = 'active'
+                          AND s.end_date > ?
+                    WHERE s.user_id IS NULL          -- user has no active subscription
+                       OR s.status IS NULL           -- safety check
+                       OR s.status != 'active'
+                       OR s.end_date <= ?
                 """
                 # Note: If a user has NO record in the subscriptions table at all,
                 # they won't be caught by this query. This query targets users
@@ -1346,7 +1354,8 @@ class DatabaseQueries:
                 # To catch users in the 'users' table but not in 'subscriptions',
                 # a more complex query (e.g., LEFT JOIN) would be needed.
                 
-                db.execute(query)
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                db.execute(query, (current_time, current_time))
                 records = db.fetchall()
                 for row in records:
                     users.append({'user_id': row[0], 'status': row[1]})
