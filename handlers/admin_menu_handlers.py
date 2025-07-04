@@ -173,6 +173,8 @@ class AdminMenuHandler:
     async def broadcast_message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle dynamic admin inputs based on flow flags (broadcast, user search)."""
         message = update.effective_message
+        # Debug log
+        logger.debug("broadcast_message_handler triggered by user %s. Flags: broadcast=%s, search=%s", message.from_user.id if message else 'N/A', context.user_data.get("awaiting_broadcast_content"), context.user_data.get("awaiting_user_search_query"))
 
         # -------- Broadcast flow --------
         if context.user_data.get("awaiting_broadcast_content"):
@@ -184,11 +186,31 @@ class AdminMenuHandler:
             success = 0
             for u in users:
                 try:
-                    user_id = u[0] if isinstance(u, (list, tuple)) else (u.get('user_id') if isinstance(u, dict) else u)
+                    # Robustly extract user_id from different row structures
+                    user_id = None
+                    if isinstance(u, (list, tuple)):
+                        user_id = u[0]
+                    else:
+                        # Try mapping style access first (works for sqlite3.Row and dict)
+                        try:
+                            user_id = u["user_id"]
+                        except Exception:
+                            user_id = u.get("user_id") if hasattr(u, "get") else None
+
+                    # Fallback to using the raw value if still None
+                    if user_id is None:
+                        user_id = u
+
+                    # Ensure user_id is an int or str representing int
+                    try:
+                        user_id = int(user_id)
+                    except Exception:
+                        logger.debug("Could not convert user_id %s to int; using as-is", user_id)
+
                     await context.bot.copy_message(chat_id=user_id, from_chat_id=message.chat_id, message_id=message.message_id)
                     success += 1
                 except Exception as e:
-                    logger.warning(f"Failed to send broadcast to {user_id}: {e}")
+                    logger.warning("Failed to send broadcast to %s: %s", user_id, e)
                     continue
 
             await message.reply_text(f"✅ ارسال پیام به پایان رسید. موفق: {success}/{total}")
@@ -216,26 +238,9 @@ class AdminMenuHandler:
             context.user_data.pop("awaiting_user_search_query", None)
             return
 
-        # If no flags matched, ignore
-        # Notify admin that sending is in progress
-        await message.reply_text("⏳ در حال ارسال پیام به کاربران، لطفاً صبر کنید...")
-
-        users = DatabaseQueries.get_all_active_subscribers()
-        total = len(users)
-        success = 0
-        for u in users:
-            # Each row may be tuple, dict or sqlite Row; extract telegram user_id safely
-            try:
-                user_id = u[0] if isinstance(u, (list, tuple)) else (u.get('user_id') if isinstance(u, dict) else u)
-                await context.bot.copy_message(chat_id=user_id, from_chat_id=message.chat_id, message_id=message.message_id)
-                success += 1
-            except Exception as e:
-                logger.warning(f"Failed to send broadcast to {user_id}: {e}")
-                continue
-
-        await message.reply_text(f"✅ ارسال پیام به پایان رسید. موفق: {success}/{total}")
-        # Clear flag
-        context.user_data.pop("awaiting_broadcast_content", None)
+        # If no flags matched, simply ignore the message so that other handlers may process it.
+        logger.debug("broadcast_message_handler: No relevant flow flag set – ignoring message.")
+        return
 
     # ---------- Payments helpers ----------
     async def _show_recent_payments(self, query):
@@ -263,8 +268,21 @@ class AdminMenuHandler:
             return
         lines = ["📈 *آمار اشتراک‌های فعال:*\n"]
         for plan in plans:
-            plan_id = plan[0] if isinstance(plan, (list, tuple)) else plan.get('id')
-            plan_name = plan[1] if isinstance(plan, (list, tuple)) else plan.get('name')
+            # Extract fields robustly for tuple/list, dict, or sqlite3.Row
+            if isinstance(plan, (list, tuple)):
+                plan_id, plan_name = plan[0], plan[1]
+            else:
+                # Try mapping access first
+                try:
+                    plan_id = plan["id"]
+                    plan_name = plan["name"]
+                except Exception:
+                    plan_id = getattr(plan, "id", None)
+                    plan_name = getattr(plan, "name", str(plan))
+                    if plan_id is None and hasattr(plan, "get"):
+                        plan_id = plan.get("id")
+                        plan_name = plan.get("name", plan_name)
+
             count = DatabaseQueries.count_total_subs(plan_id)
             lines.append(f"• {plan_name}: {count} مشترک فعال")
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown")

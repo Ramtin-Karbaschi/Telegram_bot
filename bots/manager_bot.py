@@ -451,57 +451,9 @@ class ManagerBot:
         self.application.add_handler(CommandHandler("validate_now", self.validate_memberships_now_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
 
-        # Add ticket management handlers
-        for handler in self.ticket_handler.get_handlers():
-            self.application.add_handler(handler)
-        # Add admin menu handlers
+        # Register admin menu handlers FIRST so their MessageHandler (broadcast flow) has priority
         for handler in self.menu_handler.get_handlers():
             self.application.add_handler(handler)
-
-
-    
-
-    async def send_new_ticket_notification(self, notif_message: str):
-        """
-        Sends a notification message to admins with the 'main_bot_support_staff' role.
-        """
-        try:
-            # First check if we have an admin config
-            if not self.admin_config:
-                self.logger.warning("ManagerBot: Admin config is not loaded. Cannot send support notification.")
-                return
-
-            # Debug log to see what's in admin_config
-            self.logger.info(f"ManagerBot: Admin config contains {len(self.admin_config)} entries.")
-            
-            # Try to send to each admin with the right role
-            notified_count = 0
-            for admin_info in self.admin_config:
-                # Check if admin_info is a dictionary and has the required role and chat_id
-                if isinstance(admin_info, dict):
-                    roles = admin_info.get('roles', [])
-                    chat_id = admin_info.get('chat_id')
-                    
-                    # Debug the roles to see what's available
-                    self.logger.info(f"ManagerBot: Admin {admin_info.get('alias', 'Unknown')} has roles: {roles}")
-                    
-                    if 'main_bot_support_staff' in roles and chat_id:
-                        try:
-                            await self.application.bot.send_message(
-                                chat_id=chat_id,
-                                text=notif_message,
-                                parse_mode=ParseMode.HTML
-                            )
-                            notified_count += 1
-                            self.logger.info(f"ManagerBot: Sent new ticket notification to admin {chat_id} ({admin_info.get('alias', 'Unknown')}).")
-                        except Exception as e:
-                            self.logger.error(f"ManagerBot: Failed to send notification to admin {chat_id}: {e}")
-            
-            # Log the result
-            if notified_count == 0:
-                self.logger.warning("ManagerBot: No admins with 'main_bot_support_staff' role found or notifications failed for all targeted admins.")
-            else:
-                self.logger.info(f"ManagerBot: Successfully sent new ticket notification to {notified_count} support staff admin(s).")
-        
-        except Exception as e:
-            self.logger.error(f"ManagerBot: Error in send_new_ticket_notification: {e}", exc_info=True)
+        # Then ticket management handlers
+        for handler in self.ticket_handler.get_handlers():
+            self.application.add_handler(handler)
