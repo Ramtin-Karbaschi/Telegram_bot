@@ -19,7 +19,7 @@ migrate.py
 # Video files
 *.mp4
 *.avi
-*.mov
+*.MOV
 *.wmv
 *.flv
 *.mkv
