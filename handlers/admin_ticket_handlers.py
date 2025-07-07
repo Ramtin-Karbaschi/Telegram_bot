@@ -1,5 +1,6 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
+from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 from database.queries import DatabaseQueries
 import config
@@ -34,6 +35,7 @@ class AdminTicketHandler:
             
             # Create ticket list with inline keyboard
             keyboard = []
+            row = []
             message_text = "📋 لیست تیکت‌های باز:\n\n"
             
             for ticket in tickets[:10]:  # Show max 10 tickets at once
@@ -51,17 +53,26 @@ class AdminTicketHandler:
                 message_text += f"کاربر: {user_display}\n"
                 message_text += f"موضوع: {subject}\n"
                 message_text += f"تاریخ: {created_at}\n"
-                message_text += "─────────────────\n\n"
+                message_text += "───────────────────\n\n"
                 
-                # Add button for this ticket
-                keyboard.append([
+                # Add button for this ticket to the current row
+                row.append(
                     InlineKeyboardButton(
                         f"مشاهده تیکت #{ticket_id}", 
                         callback_data=f"view_ticket_{ticket_id}"
                     )
-                ])
+                )
+                
+                # If row is full (3 items), add it to the keyboard and start a new row
+                if len(row) == 3:
+                    keyboard.append(row)
+                    row = []
             
-            # Add refresh button
+            # Add any remaining buttons in the last row (if it's not empty)
+            if row:
+                keyboard.append(row)
+
+            # Add refresh button on its own row
             keyboard.append([
                 InlineKeyboardButton("به‌روزرسانی لیست تیکت‌ها", callback_data="refresh_tickets")
             ])
@@ -141,14 +152,14 @@ class AdminTicketHandler:
 
             # Create action buttons
             keyboard = [
-                [
-                    InlineKeyboardButton("ارسال پاسخ به کاربر", callback_data=f"send_answer_{ticket_id}"),
-                    InlineKeyboardButton("ویرایش پاسخ", callback_data=f"edit_answer_{ticket_id}")
+                [ # First row: Send and Edit
+                    InlineKeyboardButton("ارسال پاسخ پیشنهادی", callback_data=f"send_answer_{ticket_id}"),
+                    InlineKeyboardButton("ویرایش و ارسال پاسخ", callback_data=f"edit_answer_{ticket_id}")
                 ],
-                [
+                [ # Second row: Close ticket
                     InlineKeyboardButton("بستن تیکت", callback_data=f"close_ticket_{ticket_id}")
                 ],
-                [
+                [ # Third row: Back to list
                     InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data="refresh_tickets")
                 ]
             ]
@@ -288,21 +299,33 @@ class AdminTicketHandler:
         except Exception as e:
             logger.error(f"Error closing ticket: {e}")
             await query.edit_message_text("خطا در بستن تیکت.")
-    
+
     async def refresh_tickets_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Refresh tickets list"""
+        """Refresh the list of pending tickets."""
         query = update.callback_query
-        await query.answer()
+        await query.answer("در حال به‌روزرسانی...")
+        # We need to simulate a message object for show_tickets_command
+        class DummyMessage:
+            def __init__(self, chat_id, from_user):
+                self.chat_id = chat_id
+                self.from_user = from_user
+            async def reply_text(self, text, reply_markup):
+                await query.edit_message_text(text=text, reply_markup=reply_markup)
         
-        user_id = query.from_user.id
-        
-        # Check if user is admin
-        if not self._is_admin(user_id):
-            await query.edit_message_text("شما دسترسی لازم برای این عملیات را ندارید.")
-            return
-        
-        # Simulate the show_tickets_command but for callback
-        await self._show_tickets_inline(query)
+        dummy_update = Update(update.update_id, message=DummyMessage(query.message.chat_id, query.from_user))
+        await self.show_tickets_command(dummy_update, context)
+
+    def get_handlers(self):
+        """Return all handlers for the ticket management module."""
+        return [
+            CommandHandler("tickets", self.show_tickets_command),
+            CallbackQueryHandler(self.view_ticket_callback, pattern=r'^view_ticket_'),
+            CallbackQueryHandler(self.send_answer_callback, pattern=r'^send_answer_'),
+            CallbackQueryHandler(self.edit_answer_callback, pattern=r'^edit_answer_'),
+            CallbackQueryHandler(self.close_ticket_callback, pattern=r'^close_ticket_'),
+            CallbackQueryHandler(self.refresh_tickets_callback, pattern=r'^refresh_tickets$'),
+            MessageHandler(filters.REPLY & filters.TEXT & (~filters.COMMAND), self.receive_edited_answer),
+        ]
     
     async def _show_tickets_inline(self, query):
         """Show tickets in inline message"""
@@ -335,7 +358,7 @@ class AdminTicketHandler:
                 message_text += f"تاریخ: {created_at}\n"
                 message_text += "─────────────────\n\n"
                 
-                # Add button for this ticket
+                # Build button and group by 3 per row
                 keyboard.append([
                     InlineKeyboardButton(
                         f"مشاهده تیکت #{ticket_id}", 
@@ -594,9 +617,12 @@ class AdminTicketHandler:
             if not tickets:
                 await query.edit_message_text("📋 هیچ تیکتی یافت نشد.")
                 return
+
             keyboard = []
+            row = []
             message_text = "📋 لیست تمام تیکت‌ها:\n\n"
-            for ticket in tickets[:10]:
+
+            for ticket in tickets[:10]: # Limit to 10 for now to prevent message overload
                 ticket = dict(ticket)
                 ticket_id = ticket.get('ticket_id') or ticket.get('id')
                 user_info = self._get_user_info(ticket.get('user_id'))
@@ -606,18 +632,29 @@ class AdminTicketHandler:
                 status = ticket.get('status', '')
                 readable_status = str(status).replace('_', ' ')
                 emoji = self._get_status_emoji(status)
+
                 message_text += f"{emoji} *تیکت #{ticket_id}* ({readable_status})\n"
                 message_text += f"👤 کاربر: {user_display}\n"
                 message_text += f"📝 موضوع: {subject}\n"
                 message_text += f"📅 تاریخ: {created_at}\n"
-                message_text += "─────────────────\n\n"
-                keyboard.append([
-                    InlineKeyboardButton(
-                        f"📋 مشاهده تیکت #{ticket_id}", callback_data=f"view_ticket_{ticket_id}")
-                ])
+                message_text += "───────────────────\n\n"
+
+                row.append(InlineKeyboardButton(
+                    f"📋 مشاهده تیکت #{ticket_id}", callback_data=f"view_ticket_{ticket_id}"
+                ))
+
+                if len(row) == 3:
+                    keyboard.append(row)
+                    row = []
+
+            if row:
+                keyboard.append(row)
+
             keyboard.append([InlineKeyboardButton("به‌روزرسانی", callback_data="refresh_all_tickets")])
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(message_text, reply_markup=reply_markup)
+
+            await query.edit_message_text(message_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+
         except Exception as e:
             import telegram
             if isinstance(e, telegram.error.BadRequest) and "Message is not modified" in str(e):

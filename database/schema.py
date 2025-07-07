@@ -8,13 +8,14 @@ CREATE TABLE IF NOT EXISTS users (
     phone TEXT,
     full_name TEXT,
     age INTEGER,
-    birth_year INTEGER,
+    birth_date TEXT,
     education TEXT,
     occupation TEXT,
     city TEXT,
     email TEXT,
     registration_date TEXT,
-    last_activity TEXT
+    last_activity TEXT,
+    status TEXT DEFAULT 'active' NOT NULL
 )
 '''
 

@@ -28,6 +28,20 @@ from utils.constants import (
     CITY_REQUEST,
 )
 from utils.helpers import is_valid_full_name
+from datetime import datetime
+
+def _is_valid_birth_date(date_str: str) -> bool:
+    """Validate the birth date format (YYYY-MM-DD) and logical range."""
+    try:
+        birth_date = datetime.strptime(date_str, '%Y-%m-%d')
+        today = datetime.today()
+        # Calculate precise age by comparing month and day
+        age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+        if 18 <= age <= 100:
+            return True
+        return False
+    except ValueError:
+        return False
 from utils.keyboards import get_main_reply_keyboard
 from telegram.constants import ParseMode
 import config
@@ -198,44 +212,40 @@ async def get_fullname(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def get_birthyear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Get user's birth year in Shamsi/Persian calendar"""
+    """Get user's full birth date."""
     user = update.effective_user
     user_id = user.id
-    
-    # Check if back button was pressed
+
     if update.message.text == "🔙 بازگشت":
-        return await cancel_registration(update, context)
-    
-    try:
-        birthyear = update.message.text.strip()
-        birth_year_int = int(birthyear)
-        
-        # Basic validation for Shamsi year (adjust min/max years as needed)
-        current_shamsi_year = 1404  # 2025 in Shamsi/Persian calendar
-        if birth_year_int < 1320 or birth_year_int > current_shamsi_year - 10:
-            await update.message.reply_text(
-                "سال تولد وارد شده معتبر نیست. لطفاً یک سال تولد شمسی معتبر وارد کنید (بین ۱۳۲۰ تا ۱۳۹۴)."
-            )
-            return GET_BIRTHYEAR
-        
-        # Calculate age based on Shamsi years
-        age = current_shamsi_year - birth_year_int
-        
-        # Update age and birth_year in database
-        Database.update_user_profile(user_id, age=age, birth_year=birth_year_int)
-        
-        # Move to education step
+        # This should ideally go back to the profile menu, not cancel registration.
+        # For now, we'll keep it simple and assume it cancels this specific sub-conversation.
+        await update.message.reply_text("عملیات لغو شد.", reply_markup=get_main_reply_keyboard(user_id))
+        return ConversationHandler.END
+
+    birth_date_str = update.message.text.strip()
+
+    if not _is_valid_birth_date(birth_date_str):
         await update.message.reply_text(
-            EDUCATION_REQUEST,
-            reply_markup=get_education_keyboard()
-        )
-        
-        return GET_EDUCATION
-    except ValueError:
-        await update.message.reply_text(
-            BIRTHYEAR_REQUEST
+            "فرمت تاریخ تولد نامعتبر است.\n"
+            "لطفاً تاریخ تولد خود را به فرمت میلادی `YYYY-MM-DD` وارد کنید.\n"
+            "مثال: `1995-08-23`"
         )
         return GET_BIRTHYEAR
+
+    # Calculate age
+    birth_date = datetime.strptime(birth_date_str, '%Y-%m-%d')
+    age = datetime.now().year - birth_date.year
+
+    # Update database
+    Database.update_user_profile(user_id, age=age, birth_date=birth_date_str)
+
+    # Move to the next step in the profile completion flow
+    await update.message.reply_text(
+        EDUCATION_REQUEST,
+        reply_markup=get_education_keyboard()
+    )
+
+    return GET_EDUCATION
 
 async def get_education(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Get user's education level"""

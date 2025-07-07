@@ -23,6 +23,7 @@ import config # For other config vars like CHANNEL_ID
 from database.models import Database as DBConnection # For DB connection
 from handlers.admin_ticket_handlers import AdminTicketHandler  # Fixed import
 from handlers.admin_menu_handlers import AdminMenuHandler  # Import admin menu handler
+from handlers.admin_product_handlers import AdminProductHandler  # Import admin product handler
 
 # States for ConversationHandler
 
@@ -85,9 +86,10 @@ class ManagerBot:
         Database.init_database() 
         self.main_bot_app = main_bot_app # Store main_bot_app if provided
         
-        # Initialize ticket and admin menu handlers
+        # Initialize handlers
         self.ticket_handler = AdminTicketHandler()
-        self.menu_handler = AdminMenuHandler(admin_config=self.admin_config)
+        self.product_handler = AdminProductHandler()
+        self.menu_handler = AdminMenuHandler(admin_config=self.admin_config, product_handler=self.product_handler)
         
         # Setup task handlers
         self.setup_tasks()
@@ -167,6 +169,25 @@ class ManagerBot:
                     self.logger.error(f"Failed to kick user {user.id} from {chat.id}: {e}")
             else:
                 self.logger.info(f"User {user.id} is authorized.")
+            # --- Mark one-time invite link as used, if any ---
+        if not was_member and is_member:
+            invite_link_obj = getattr(update.chat_member, 'invite_link', None)
+            if invite_link_obj and invite_link_obj.invite_link:
+                try:
+                    from database import invite_link_queries as ilq
+                    ilq.mark_invite_link_used(invite_link_obj.invite_link)
+                    self.logger.info(f"Marked invite link as used for user {user.id}: {invite_link_obj.invite_link}")
+                except Exception as e:
+                    self.logger.error(f"Failed to mark invite link used for user {user.id}: {e}")
+        elif was_member and not is_member:
+            status = update.chat_member.new_chat_member.status
+            self.logger.info(f"User {user.id} ({user.first_name}) left or was kicked from chat {chat.id} ({chat.title}). New status: {status}")
+            # Update user status in the database to 'kicked' or 'left'
+            try:
+                Database.update_user_single_field(user_id=user.id, field_name='status', field_value=status)
+                self.logger.info(f"Updated status for user {user.id} to '{status}' in the database.")
+            except Exception as e:
+                self.logger.error(f"Failed to update status for user {user.id} in database: {e}")
 
     @staticmethod
     def extract_status_change(chat_member_update: ChatMemberUpdated) -> Optional[Tuple[bool, bool]]:
@@ -377,8 +398,6 @@ class ManagerBot:
                                 await bot.unban_chat_member(chat_id=current_channel_id, user_id=user_id_to_kick_check)
                                 self.logger.info(f"Successfully unbanned user {user_id_to_kick_check} from channel '{current_channel_title}'.")
                                 kicked_count += 1
-                                reason = f"اشتراک شما ({record.get('status', 'نامعتبر')}) برای دسترسی به '{current_channel_title}' به پایان رسیده یا نامعتبر است."
-                                await self.send_membership_status_notification(bot, user_id_to_kick_check, reason, is_kicked=True)
                             except Forbidden as kick_err_forbidden:
                                 self.logger.error(f"FORBIDDEN error kicking user {user_id_to_kick_check} from '{current_channel_title}': {kick_err_forbidden}. BOT LACKS BAN PERMISSION?", exc_info=True)
                             except Exception as kick_err_generic:
@@ -524,17 +543,70 @@ class ManagerBot:
     def setup_handlers(self):
         """Setup command, message, and callback query handlers."""
         # Command Handlers for admin actions
-        self.application.add_handler(CommandHandler("start", self.start_command))
-        self.application.add_handler(CommandHandler("tickets", self.view_tickets_command))
-        self.application.add_handler(CommandHandler("validate_now", self.validate_memberships_now_command))
-        self.application.add_handler(CommandHandler("help", self.help_command))
 
-        # ReplyKeyboard text handler for admin buttons (restrict to our icons/keywords)
-        self.application.add_handler(MessageHandler(filters.Regex(r"^(🎫|👥|💳|📢|⚙️).*"), self._admin_reply_keyboard_handler))
+async def _admin_reply_keyboard_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle admin reply keyboard button presses by sending a new message with the corresponding inline menu."""
+    message_text = update.message.text
+    user_id = update.message.from_user.id
 
-        # Register admin menu handlers FIRST so their MessageHandler (broadcast flow) has priority
-        for handler in self.menu_handler.get_handlers():
-            self.application.add_handler(handler)
-        # Then ticket management handlers
+    # Check if the user is an admin
+    admin_ids = []
+    if isinstance(self.admin_config, list):
+        admin_ids = [admin.get('chat_id') for admin in self.admin_config if isinstance(admin, dict)]
+
+    if user_id not in admin_ids:
+        self.logger.warning(f"Non-admin user {user_id} attempted to use admin reply keyboard.")
+        return
+
+    # Create a dummy query object to pass to submenu methods
+    # This is a bit of a hack, but it allows us to reuse the existing submenu methods
+    # that expect a query object with `edit_message_text`.
+    # We'll use `send_message` instead of `edit_message_text`.
+    class DummyQuery:
+        def __init__(self, message):
+            self.message = message
+
+        async def edit_message_text(self, text, parse_mode, reply_markup):
+            await self.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+    dummy_query = DummyQuery(update.message)
+
+    # Route to the appropriate handler based on the button text
+    if "مدیریت تیکت‌ها" in message_text:
+        await self.menu_handler._tickets_submenu(dummy_query)
+    elif "مدیریت کاربران" in message_text:
+        await self.menu_handler._users_submenu(dummy_query)
+    elif "مدیریت پرداخت‌ها" in message_text:
+        await self.menu_handler._payments_submenu(dummy_query)
+    elif "ارسال پیام همگانی" in message_text:
+        await self.menu_handler._broadcast_submenu(dummy_query)
+    elif "تنظیمات" in message_text:
+        await self.menu_handler._settings_submenu(dummy_query)
+
+    def setup_handlers(self):
+        """Setup command, message, and callback query handlers."""
+        application = self.application
+
+        # Command Handlers for admin actions
+        application.add_handler(CommandHandler("start", self.start_command))
+        application.add_handler(CommandHandler("tickets", self.view_tickets_command))
+        application.add_handler(CommandHandler("validate_now", self.validate_memberships_now_command))
+        application.add_handler(CommandHandler("help", self.help_command))
+
+        # --- Conversation and Callback Handlers ---
+        # IMPORTANT: Order matters here for fallbacks and entry points.
+
+        # Add product management handlers (add/edit conversations)
+        for handler in self.product_handler.get_handlers():
+            application.add_handler(handler)
+
+        # Add ticket management handlers
         for handler in self.ticket_handler.get_handlers():
-            self.application.add_handler(handler)
+            application.add_handler(handler)
+
+        # Add admin menu handlers (e.g., for ban/unban conversation)
+        for handler in self.menu_handler.get_handlers():
+            application.add_handler(handler)
+
+        # Add the handler for the admin reply keyboard as a fallback
+        application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), self._admin_reply_keyboard_handler))

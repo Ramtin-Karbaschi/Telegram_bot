@@ -590,71 +590,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
     )
     return SELECT_PLAN
 
-async def show_qr_code_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the 'show_qr_code' callback to display the USDT wallet QR code."""
-    query = update.callback_query
-    await query.answer()  # Acknowledge the callback
 
-    # crypto_payment_request_db_id = query.data.split('show_qr_code_')[-1] # If ID is needed for logging or other purposes
-    # logger.info(f"User {query.from_user.id} requested QR code for payment request ID: {crypto_payment_request_db_id}")
-
-    wallet_address = config.CRYPTO_WALLET_ADDRESS
-    if not wallet_address:
-        logger.error("CRYPTO_WALLET_ADDRESS is not set in config.")
-        # It's better to reply to the message or edit it, rather than sending a new one if it's an error related to a button press
-        await query.edit_message_text("خطا: آدرس کیف پول برای نمایش QR کد تنظیم نشده است.")
-        return
-
-    try:
-        # Generate QR code
-        qr_img = qrcode.make(wallet_address)
-        
-        # Save QR code to a BytesIO object
-        img_byte_arr = io.BytesIO()
-        qr_img.save(img_byte_arr, format='PNG')
-        img_byte_arr.seek(0) # Go to the beginning of the BytesIO buffer
-
-        usdt_amount_requested = context.user_data.get('usdt_amount_requested', 'N/A')
-        usdt_amount_formatted = f"{usdt_amount_requested:.3f}" if isinstance(usdt_amount_requested, (float, int)) else usdt_amount_requested
-
-        await context.bot.send_photo(
-            chat_id=query.message.chat_id,
-            photo=InputFile(img_byte_arr, filename='usdt_wallet_qr.png'),
-            caption=f"اسکن کنید:\nآدرس کیف پول تتر (TRC20):\n{wallet_address}\n\nمبلغ دقیق برای واریز: {usdt_amount_formatted} USDT",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_to_message_id=query.message.message_id # Reply to the message with the button
-        )
-
-        # Modify the keyboard of the original message
-        current_markup = query.message.reply_markup
-        if current_markup:
-            new_buttons = []
-            for row in current_markup.inline_keyboard:
-                new_row = []
-                for button in row:
-                    if button.callback_data == query.data: # Matched the button that was pressed
-                        new_row.append(InlineKeyboardButton("✔ QR نمایش داده شد", callback_data="qr_code_shown_noop"))
-                    else:
-                        new_row.append(button)
-                if new_row:
-                    new_buttons.append(new_row)
-            
-            if new_buttons:
-                try:
-                    await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_buttons))
-                except Exception as e_edit:
-                    logger.error(f"Error editing message reply markup after showing QR: {e_edit}")
-            # If new_buttons is empty (e.g., only QR button existed and was replaced by nothing), 
-            # it might be better to remove the markup entirely or ensure at least one button remains.
-            # For now, if new_buttons is empty, it will effectively remove the keyboard if it only had the QR button.
-
-    except Exception as e:
-        logger.exception(f"Error generating or sending QR code for wallet {wallet_address}: {e}")
-        # Replying to the original message or editing it is better than sending a new message for an error
-        await query.message.reply_text("خطا در تولید یا ارسال QR کد. لطفاً دوباره تلاش کنید.")
-
-    # This handler does not change the conversation state, so it returns None implicitly
-    return
 
 
 async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -848,6 +784,22 @@ async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TY
                     display_end_date = end_date_dt.strftime("%Y-%m-%d")
                 except ValueError:
                     logger.warning(f"Error parsing end_date from updated_subscription: {updated_subscription.get('end_date')}")
+
+            # -------------------------------------------------------------------
+            # Send unique one-time invite links for the configured channels/groups
+            # -------------------------------------------------------------------
+            try:
+                from utils.invite_link_manager import InviteLinkManager
+                links = await InviteLinkManager.ensure_one_time_links(context.bot, telegram_id)
+                if links:
+                    for link in links:
+                        await context.bot.send_message(
+                            chat_id=telegram_id,
+                            text=f"لینک ورود شما به کانال/گروه:\n{link}"
+                        )
+                    logger.info("Sent %d invite links to user %s after subscription activation", len(links), telegram_id)
+            except Exception as send_link_err:
+                logger.error("Failed to generate or send invite links to user %s: %s", telegram_id, send_link_err)
 
         else:
             UserAction.log_user_action(
