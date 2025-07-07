@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timedelta
 import config
 import logging
+from typing import Optional
 from database.models import Database
 from database.schema import ALL_TABLES
 from utils.helpers import get_current_time  # ensure Tehran-tz aware now
@@ -24,6 +25,88 @@ class DatabaseQueries:
             return result
         return False
     
+    # -----------------------------------
+    # Product Management
+    # -----------------------------------
+    @staticmethod
+    def add_plan(name: str, price: float, duration_days: int, description: str = None):
+        """Add a new plan (subscription plan) to the database."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute(
+                    "INSERT INTO plans (name, price, duration_days, description) VALUES (?, ?, ?, ?)",
+                    (name, price, duration_days, description)
+                )
+                db.commit()
+                return db.cursor.lastrowid
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in add_plan: {e}")
+            finally:
+                db.close()
+        return None
+
+    @staticmethod
+    def get_all_plans():
+        """Retrieve all plans from the database."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT id, name, price, duration_days, description FROM plans ORDER BY id")
+                return db.fetchall()
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in get_all_plans: {e}")
+            finally:
+                db.close()
+        return []
+
+    @staticmethod
+    def get_plan_by_id(plan_id: int):
+        """Retrieve a single plan by its ID."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT id, name, price, duration_days, description FROM plans WHERE id = ?", (plan_id,))
+                return db.fetchone()
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in get_plan_by_id: {e}")
+            finally:
+                db.close()
+        return None
+
+    @staticmethod
+    def update_plan(plan_id: int, name: str, price: float, duration_days: int, description: str = None):
+        """Update an existing plan."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute(
+                    "UPDATE plans SET name = ?, price = ?, duration_days = ?, description = ? WHERE id = ?",
+                    (name, price, duration_days, description, plan_id)
+                )
+                db.commit()
+                return db.cursor.rowcount > 0
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in update_plan: {e}")
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def delete_plan(plan_id: int):
+        """Delete a plan from the database."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("DELETE FROM plans WHERE id = ?", (plan_id,))
+                db.commit()
+                return db.cursor.rowcount > 0
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in delete_plan: {e}")
+            finally:
+                db.close()
+        return False
+
     # -----------------------------------
     # User search helper
     # -----------------------------------
@@ -197,7 +280,7 @@ class DatabaseQueries:
         return None
     
     @staticmethod
-    def update_user_profile(user_id, full_name=None, phone=None, email=None, education=None, city=None, age=None, occupation=None, birth_year=None):
+    def update_user_profile(user_id, full_name=None, phone=None, email=None, education=None, city=None, age=None, occupation=None, birth_date=None):
         """Update user profile information"""
         db = Database()
         if db.connect():
@@ -225,9 +308,9 @@ class DatabaseQueries:
             if occupation is not None:
                 updates.append("occupation = ?")
                 params.append(occupation)
-            if birth_year is not None:
-                updates.append("birth_year = ?")
-                params.append(birth_year)
+            if birth_date is not None:
+                updates.append("birth_date = ?")
+                params.append(birth_date)
             
             if updates:
                 query = f"UPDATE users SET {', '.join(updates)} WHERE user_id = ?"
@@ -245,7 +328,7 @@ class DatabaseQueries:
         if db.connect():
             # Ensure field_name is a valid column name to prevent SQL injection
             # A whitelist of editable fields is a good practice
-            allowed_fields = ['full_name', 'phone', 'email', 'education', 'city', 'age', 'occupation', 'birth_year']
+            allowed_fields = ['full_name', 'phone', 'email', 'education', 'city', 'age', 'occupation', 'birth_date']
             if field_name not in allowed_fields:
                 db.close()
                 # Optionally log this attempt or raise an error
@@ -280,7 +363,7 @@ class DatabaseQueries:
                 return True
             except sqlite3.Error as e:
                 print(f"SQLite error when adding user activity log: {e}") # Basic error logging
-                # Consider more robust logging for production
+                # Consider more robust logging for planion
                 return False
             finally:
                 db.close()
@@ -588,6 +671,63 @@ class DatabaseQueries:
             finally:
                 db.close()
         return 0
+
+    # -----------------------------------
+    # Additional subscription helpers
+    # -----------------------------------
+    @staticmethod
+    def get_user_active_subscription(user_id: int):
+        """Return the currently active subscription row for a user, or None."""
+        db = Database()
+        if db.connect():
+            try:
+                query = """
+                    SELECT * FROM subscriptions
+                     WHERE user_id = ? AND status = 'active'
+                  ORDER BY end_date DESC LIMIT 1
+                """
+                db.execute(query, (user_id,))
+                return db.fetchone()
+            except sqlite3.Error as exc:
+                logging.error("SQLite error in get_user_active_subscription: %s", exc)
+            finally:
+                db.close()
+        return None
+
+    @staticmethod
+    def get_all_active_subscribers():
+        """Return list of users that have at least one active subscription."""
+        db = Database()
+        if db.connect():
+            try:
+                query = """
+                    SELECT DISTINCT u.user_id, u.full_name, u.username
+                      FROM users u
+                      JOIN subscriptions s ON u.user_id = s.user_id
+                     WHERE s.status = 'active' AND datetime(s.end_date) > datetime('now')
+                """
+                if db.execute(query):
+                    return db.fetchall()
+            except sqlite3.Error as exc:
+                logging.error("SQLite error in get_all_active_subscribers: %s", exc)
+            finally:
+                db.close()
+        return []
+
+    @staticmethod
+    def get_active_plans():
+        """Return list of plans that are marked active."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "SELECT id, name FROM plans WHERE is_active = 1 ORDER BY display_order"
+                if db.execute(query):
+                    return db.fetchall()
+            except sqlite3.Error as exc:
+                logging.error("SQLite error in get_active_plans: %s", exc)
+            finally:
+                db.close()
+        return []
 
     @staticmethod
     def add_subscription(user_id: int, plan_id: int, payment_id: int, 
@@ -1459,6 +1599,43 @@ class DatabaseQueries:
                 db.close()
         return False
 
+    # NEW METHODS FOR DISCOUNT CRUD
+    @staticmethod
+    def update_discount(discount_id: int, **kwargs) -> bool:
+        """Update fields of a discount. Pass column=value pairs via kwargs."""
+        if not kwargs:
+            return False
+        db = Database()
+        if db.connect():
+            try:
+                set_clause = ", ".join([f"{col} = ?" for col in kwargs.keys()])
+                params = list(kwargs.values()) + [discount_id]
+                query = f"UPDATE discounts SET {set_clause} WHERE id = ?"
+                if db.execute(query, params):
+                    db.commit()
+                    return True
+            except sqlite3.Error as e:
+                print(f"SQLite error in update_discount: {e}")
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def delete_discount(discount_id: int) -> bool:
+        """Deletes a discount and its plan associations."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("DELETE FROM discounts WHERE id = ?", (discount_id,))
+                db.execute("DELETE FROM plan_discounts WHERE discount_id = ?", (discount_id,))
+                db.commit()
+                return True
+            except sqlite3.Error as e:
+                print(f"SQLite error in delete_discount: {e}")
+            finally:
+                db.close()
+        return False
+
     @staticmethod
     def assign_discount_to_plan(discount_id: int, plan_id: int) -> bool:
         """Assigns a discount to a specific plan."""
@@ -1552,3 +1729,34 @@ class DatabaseQueries:
             db.close()
             return result
         return None
+
+    @staticmethod
+    def get_user_status(user_id: int) -> Optional[str]:
+        """Get the status of a user (e.g., 'active', 'banned')."""
+        sql = "SELECT status FROM users WHERE user_id = ?"
+        try:
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql, (user_id,))
+                result = cursor.fetchone()
+                return result[0] if result else None
+        except sqlite3.Error as e:
+            logger.error(f"Database error in get_user_status for user {user_id}: {e}")
+            return None
+
+    @staticmethod
+    def set_user_status(user_id: int, status: str) -> bool:
+        """Set the status of a user (e.g., 'active', 'banned')."""
+        if status not in ['active', 'banned']:
+            logger.warning(f"Invalid status '{status}' provided for set_user_status.")
+            return False
+        sql = "UPDATE users SET status = ? WHERE user_id = ?"
+        try:
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql, (status, user_id))
+                conn.commit()
+                return cursor.rowcount > 0
+        except sqlite3.Error as e:
+            logger.error(f"Database error in set_user_status for user {user_id}: {e}")
+            return False
