@@ -16,7 +16,7 @@ migrate.py
 *.json
 *.docx
 *.pkl
-!database/data/bot_persistence.pkl
+
 
 # Video files
 *.mp4
