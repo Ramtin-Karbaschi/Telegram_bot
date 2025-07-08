@@ -191,7 +191,7 @@ async def get_fullname(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id,
         full_name=full_name,
         age=None,
-        birth_year=None,
+        birth_date=None,
         education=None,
         occupation=None,
         city=None,
