@@ -11,6 +11,8 @@ import json
 from bots import MainBot, ManagerBot
 from database.models import Database
 from database.queries import DatabaseQueries
+# Patch DatabaseQueries with static aliases so legacy calls without an instance work
+import database.compat_aliases  # noqa: E402, performs side-effects
 import config
 from dotenv import load_dotenv
 
@@ -48,8 +50,9 @@ async def main():
     os.makedirs(os.path.dirname(config.DATABASE_NAME), exist_ok=True)
     
     # Initialize database
-    db = Database(config.DATABASE_NAME)
-    DatabaseQueries.init_database()  # Changed from initialize_database to init_database
+    db_instance = Database()
+    db_queries = DatabaseQueries(db_instance)
+    db_queries.init_database()
     logger.info("Database initialized")
     
     # Create bot instances
