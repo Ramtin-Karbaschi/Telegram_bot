@@ -294,9 +294,12 @@ class MainBot:
             "my_chat_member"
         ]
         
-        # Initialize database
+        # Initialize database connection and ensure tables exist
         self.db = DBConnection(config.DATABASE_NAME)
-        Database.init_database()  # Changed from initialize_database to init_database
+        
+        # Create a DatabaseQueries instance bound to this connection and initialize schema
+        self.db_queries = DatabaseQueries(self.db)
+        self.db_queries.init_database()
         
         # Setup handlers
         self.setup_handlers()
