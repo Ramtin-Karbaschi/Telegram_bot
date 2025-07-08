@@ -85,11 +85,18 @@ class InviteLinkManager:
             # `get_all_active_invite_links`.
             # For now, we will regenerate links to ensure the user gets all of them.
 
+        # Resolve user identifier for readability (prefer @username)
+        try:
+            user_chat = await bot.get_chat(user_id)
+            username_part = f"@{user_chat.username}" if getattr(user_chat, "username", None) else str(user_id)
+        except TelegramError:
+            username_part = str(user_id)
+
         # Generate fresh links for every configured channel / group
-        generation_tasks = []
+        generation_tasks: List[asyncio.Task] = []
         for chat_info in config.TELEGRAM_CHANNELS_INFO:
             chat_id = chat_info["id"]
-            link_title = f"one-time link for {user_id} – {chat_info['title']}"
+            link_title = f"one-time link for {username_part} – {chat_info['title']}"
             generation_tasks.append(
                 InviteLinkManager._create_one_time_link(bot, chat_id, link_title)
             )
@@ -120,4 +127,11 @@ class InviteLinkManager:
             # We still return the links so the user can join.
 
         logger.info("Successfully created and persisted %d links for user %s", len(title_to_link), user_id)
-        return title_to_link
+
+        # Produce ordered list of invite links to return
+        ordered_links = [
+            title_to_link[chat_info["title"]]
+            for chat_info in config.TELEGRAM_CHANNELS_INFO
+            if chat_info["title"] in title_to_link
+        ]
+        return ordered_links
