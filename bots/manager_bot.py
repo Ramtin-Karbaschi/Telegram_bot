@@ -24,6 +24,7 @@ from database.models import Database as DBConnection # For DB connection
 from handlers.admin_ticket_handlers import AdminTicketHandler  # Fixed import
 from handlers.admin_menu_handlers import AdminMenuHandler  # Import admin menu handler
 from handlers.admin_product_handlers import AdminProductHandler  # Import admin product handler
+from utils.invite_link_manager import InviteLinkManager  # Import InviteLinkManager
 
 # States for ConversationHandler
 
@@ -63,6 +64,34 @@ async def manager_bot_error_handler(update: object, context: ContextTypes.DEFAUL
     else:
         logger.warning("MANAGER_BOT_ERROR_CONTACT_IDS is not set in config. Cannot send error notifications for ManagerBot.")
 
+
+class DummyQuery:
+    """
+    A dummy class to simulate a CallbackQuery object from a Message update.
+    This allows reusing handlers that expect a CallbackQuery.
+    """
+    def __init__(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self.message = update.message
+        self.data = None  # Reply keyboard messages don't have callback_data
+        self.context = context
+
+    async def answer(self, *args, **kwargs):
+        """A no-op for a dummy query, as there's nothing to 'answer'."""
+        pass
+
+    async def edit_message_text(self, text, parse_mode=None, reply_markup=None, **kwargs):
+        """
+        Reply keyboard messages can't be edited.
+        This sends a new message instead.
+        """
+        await self.message.reply_text(
+            text=text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup
+        )
+        return None
+
+
 class ManagerBot:
     """Manager Telegram bot for Daraei Academy"""
     
@@ -81,16 +110,19 @@ class ManagerBot:
         ]
         self.logger.info(f"Application allowed_updates explicitly set to: {self.application.allowed_updates}")
         
-        # Initialize database
-        self.db = DBConnection(db_name) # Use db_name from parameters
-        Database.init_database() 
-        self.main_bot_app = main_bot_app # Store main_bot_app if provided
+        # Initialize database connection and queries
+        self.db = DBConnection(db_name)
+        self.db_queries = DatabaseQueries(self.db)
+        self.db_queries.init_database()
+        self.main_bot_app = main_bot_app  # Store main_bot_app if provided
         
         # Initialize handlers
         self.ticket_handler = AdminTicketHandler()
-        self.product_handler = AdminProductHandler()
-        self.menu_handler = AdminMenuHandler(admin_config=self.admin_config, product_handler=self.product_handler)
-        
+        self.product_handler = AdminProductHandler(self.db_queries, admin_config=self.admin_config)
+        self.menu_handler = AdminMenuHandler(self.db_queries, InviteLinkManager, admin_config=self.admin_config)
+
+
+
         # Setup task handlers
         self.setup_tasks()
         # Setup command and message handlers
@@ -219,24 +251,23 @@ class ManagerBot:
     # --- Command Handlers ---
     @admin_only
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle the /start command for admin users."""
+        """Handle the /start command for admin users and serves as the main menu."""
         user = update.effective_user
         admin_alias = get_alias_from_admin_list(user.id, self.admin_config) or user.first_name
-        self.logger.info(f"Admin user {admin_alias} ({user.id}) started the bot.")
-        # Build admin main ReplyKeyboard with 5 options
-        admin_reply_keyboard = ReplyKeyboardMarkup(
-            [
-                [KeyboardButton("🎫 مدیریت تیکت‌ها"), KeyboardButton("👥 مدیریت کاربران")],
-                [KeyboardButton("💳 مدیریت پرداخت‌ها"), KeyboardButton("📢 ارسال پیام همگانی")],
-                [KeyboardButton("⚙️ تنظیمات")]
-            ], resize_keyboard=True, one_time_keyboard=False
+        self.logger.info(f"Admin user {admin_alias} ({user.id}) accessed the main menu.")
+
+        keyboard = [
+            [KeyboardButton(self.menu_handler.button_texts['users']), KeyboardButton(self.menu_handler.button_texts['products'])],
+            [KeyboardButton(self.menu_handler.button_texts['tickets']), KeyboardButton(self.menu_handler.button_texts['payments'])],
+            [KeyboardButton(self.menu_handler.button_texts['broadcast']), KeyboardButton(self.menu_handler.button_texts['stats'])],
+            [KeyboardButton(self.menu_handler.button_texts['settings']), KeyboardButton(self.menu_handler.button_texts['back_to_main'])],
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+        await update.effective_message.reply_text(
+            'پنل مدیریت در اختیار شماست. لطفا گزینه مورد نظر را انتخاب کنید:',
+            reply_markup=reply_markup
         )
-        await update.message.reply_text(
-            f"سلام {admin_alias}! به ربات مدیریت آکادمی دارایی خوش آمدید.\n"
-            f"از منوی زیر می‌توانید بخش مورد نظر را انتخاب کنید.",
-            reply_markup=admin_reply_keyboard,
-        )
-        await self.menu_handler.show_admin_menu(update, context)
 
     @admin_only
     async def view_tickets_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -394,14 +425,16 @@ class ManagerBot:
                             self.logger.info(f"User {user_id_to_kick_check} (DB status: {record.get('status', 'N/A')}) is in channel '{current_channel_title}' (TG status: {chat_member.status}). Attempting kick.")
                             try:
                                 await bot.ban_chat_member(chat_id=current_channel_id, user_id=user_id_to_kick_check, until_date=None)
-                                self.logger.info(f"Successfully banned user {user_id_to_kick_check} from channel '{current_channel_title}'.")
                                 await bot.unban_chat_member(chat_id=current_channel_id, user_id=user_id_to_kick_check)
-                                self.logger.info(f"Successfully unbanned user {user_id_to_kick_check} from channel '{current_channel_title}'.")
                                 kicked_count += 1
-                            except Forbidden as kick_err_forbidden:
-                                self.logger.error(f"FORBIDDEN error kicking user {user_id_to_kick_check} from '{current_channel_title}': {kick_err_forbidden}. BOT LACKS BAN PERMISSION?", exc_info=True)
-                            except Exception as kick_err_generic:
-                                self.logger.error(f"Generic error kicking user {user_id_to_kick_check} from '{current_channel_title}': {kick_err_generic}", exc_info=True)
+                                self.logger.info(f"User {user_id_to_kick_check} kicked from '{current_channel_title}'.")
+                            except BadRequest as e:
+                                if "Not enough rights" in e.message:
+                                    self.logger.warning(f"Could not kick {user_id_to_kick_check} from {current_channel_title}: Insufficient permissions. Please ensure the bot is an admin with ban rights.")
+                                else:
+                                    self.logger.error(f"BadRequest error kicking user {user_id_to_kick_check} from '{current_channel_title}': {e}")
+                            except Exception as e:
+                                self.logger.error(f"Generic error kicking user {user_id_to_kick_check} from '{current_channel_title}': {e}")
                     except BadRequest as e:
                         if "user not found" in str(e).lower() or "member not found" in str(e).lower() or "participant_id_invalid" in str(e).lower():
                             self.logger.info(f"User {user_id_to_kick_check} (to kick) not found in Telegram for channel '{current_channel_title}'. Skipping kick.")
@@ -441,9 +474,9 @@ class ManagerBot:
         except BadRequest as e:
             self.logger.error(f"Error getting administrators for channel '{channel_title}' (ID: {channel_id}) (BadRequest): {e}. Ensure channel ID is correct and bot is admin.")
         except Forbidden as e:
-            self.logger.error(f"Error getting administrators for channel '{channel_title}' (ID: {channel_id}) (Forbidden): {e}. Ensure bot has rights to get chat administrators.")
+            self.logger.error(f"Error getting administrators for channel '{current_channel_title}' (ID: {channel_id}) (Forbidden): {e}. Ensure bot has rights to get chat administrators.")
         except Exception as e:
-            self.logger.error(f"Unexpected error getting administrators for channel '{current_channel_title}' (ID: {channel_id}): {e}", exc_info=True)
+            self.logger.error(f"Unexpected error getting administrators for channel '{channel_title}' (ID: {channel_id}): {e}", exc_info=True)
         return admin_ids
 
     async def send_membership_status_notification(self, bot, user_id, reason_message, is_kicked=False):
@@ -502,86 +535,30 @@ class ManagerBot:
         self.logger.info(f"Ticket notification delivered to {sent_count}/{len(admin_ids)} admins.")
     
     async def _admin_reply_keyboard_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self.logger.info(f"Admin reply keyboard handler triggered with text: {update.message.text} from user {update.effective_user.id}")
         """Handle admin reply keyboard button presses by sending a new message with the corresponding inline menu."""
         message_text = update.message.text
         user_id = update.message.from_user.id
 
         # Check if the user is an admin
         admin_ids = []
-        if isinstance(self.admin_config, list):
-            admin_ids = [admin.get('chat_id') for admin in self.admin_config if isinstance(admin, dict)]
-
-        if user_id not in admin_ids:
-            self.logger.warning(f"Non-admin user {user_id} attempted to use admin reply keyboard.")
-            return
-
-        # Create a dummy query object to pass to submenu methods
-        # This is a bit of a hack, but it allows us to reuse the existing submenu methods
-        # that expect a query object with `edit_message_text`.
-        # We'll use `send_message` instead of `edit_message_text`.
-        class DummyQuery:
-            def __init__(self, message):
-                self.message = message
-
-            async def edit_message_text(self, text, parse_mode, reply_markup):
-                await self.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-
-        dummy_query = DummyQuery(update.message)
-
-        # Route to the appropriate handler based on the button text
-        if "مدیریت تیکت‌ها" in message_text:
-            await self.menu_handler._tickets_submenu(dummy_query)
-        elif "مدیریت کاربران" in message_text:
-            await self.menu_handler._users_submenu(dummy_query)
-        elif "مدیریت پرداخت‌ها" in message_text:
-            await self.menu_handler._payments_submenu(dummy_query)
-        elif "ارسال پیام همگانی" in message_text:
-            await self.menu_handler._broadcast_submenu(dummy_query)
-        elif "تنظیمات" in message_text:
-            await self.menu_handler._settings_submenu(dummy_query)
-
-    def setup_handlers(self):
-        """Setup command, message, and callback query handlers."""
-        # Command Handlers for admin actions
-
-async def _admin_reply_keyboard_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle admin reply keyboard button presses by sending a new message with the corresponding inline menu."""
-    message_text = update.message.text
-    user_id = update.message.from_user.id
-
-    # Check if the user is an admin
-    admin_ids = []
-    if isinstance(self.admin_config, list):
+    
         admin_ids = [admin.get('chat_id') for admin in self.admin_config if isinstance(admin, dict)]
 
-    if user_id not in admin_ids:
-        self.logger.warning(f"Non-admin user {user_id} attempted to use admin reply keyboard.")
-        return
-
-    # Create a dummy query object to pass to submenu methods
-    # This is a bit of a hack, but it allows us to reuse the existing submenu methods
-    # that expect a query object with `edit_message_text`.
-    # We'll use `send_message` instead of `edit_message_text`.
-    class DummyQuery:
-        def __init__(self, message):
-            self.message = message
-
-        async def edit_message_text(self, text, parse_mode, reply_markup):
-            await self.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-
-    dummy_query = DummyQuery(update.message)
-
-    # Route to the appropriate handler based on the button text
-    if "مدیریت تیکت‌ها" in message_text:
-        await self.menu_handler._tickets_submenu(dummy_query)
-    elif "مدیریت کاربران" in message_text:
-        await self.menu_handler._users_submenu(dummy_query)
-    elif "مدیریت پرداخت‌ها" in message_text:
-        await self.menu_handler._payments_submenu(dummy_query)
-    elif "ارسال پیام همگانی" in message_text:
-        await self.menu_handler._broadcast_submenu(dummy_query)
-    elif "تنظیمات" in message_text:
-        await self.menu_handler._settings_submenu(dummy_query)
+        handler_coro = self.admin_buttons_map.get(message_text)
+        if handler_coro:
+            # If the handler is start_command, it's the back button. Call it directly.
+            if handler_coro == self.start_command:
+                await handler_coro(update, context)
+            else:
+                # Other handlers expect a query-like object.
+                dummy_query = DummyQuery(update, context)
+                await handler_coro(dummy_query)
+            return
+        else:
+            # If the text doesn't match any button, we can either ignore it or handle it as a generic message.
+            # For now, we ignore it, as another handler will pick it up.
+            self.logger.debug(f"No admin button matched text: '{message_text}'")
 
     def setup_handlers(self):
         """Setup command, message, and callback query handlers."""
@@ -594,19 +571,176 @@ async def _admin_reply_keyboard_handler(self, update: Update, context: ContextTy
         application.add_handler(CommandHandler("help", self.help_command))
 
         # --- Conversation and Callback Handlers ---
-        # IMPORTANT: Order matters here for fallbacks and entry points.
-
-        # Add product management handlers (add/edit conversations)
-        for handler in self.product_handler.get_handlers():
+        # Add conversation handlers from different modules
+        for handler in self.product_handler.get_product_conv_handlers():
             application.add_handler(handler)
-
-        # Add ticket management handlers
-        for handler in self.ticket_handler.get_handlers():
-            application.add_handler(handler)
-
-        # Add admin menu handlers (e.g., for ban/unban conversation)
+        application.add_handler(self.ticket_handler.get_ticket_conversation_handler())
+        # Add all handlers from the menu handler, including conversation handlers
         for handler in self.menu_handler.get_handlers():
             application.add_handler(handler)
 
-        # Add the handler for the admin reply keyboard as a fallback
-        application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), self._admin_reply_keyboard_handler))
+
+        # --- Message Handlers for Admin Private Chat ---
+        # This handler is specifically for the admin's main menu, which uses ReplyKeyboardMarkup.
+        admin_button_filter = filters.Text(list(self.menu_handler.admin_buttons_map.keys()))
+        application.add_handler(MessageHandler(
+            admin_button_filter & filters.ChatType.PRIVATE, self.menu_handler.route_admin_command
+        ), group=0)
+
+        # This is a general message handler for admins, which can be used for features like search.
+        # It should not handle commands or the main menu buttons.
+        # This is a general message handler for admins, which can be used for features like search.
+        # It should not handle commands or the main menu buttons.
+        application.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE & ~admin_button_filter,
+            self.menu_handler.message_handler
+        ), group=1)
+
+        # Generic UpdateHandler for logging (must have low priority)
+        application.add_handler(TypeHandler(Update, self.log_all_updates), group=10)
+
+async def _get_channel_members(self, bot, channel_id: int, channel_title: str):
+    """
+    Get admin members from the specified channel.
+    """
+    admin_ids = []
+    try:
+        self.logger.info(f"Attempting to get administrators for channel: '{channel_title}' (ID: {channel_id})")
+        if not isinstance(channel_id, int):
+            self.logger.error(f"Channel ID provided is not a valid integer: {channel_id} for channel '{channel_title}'. Cannot fetch admins.")
+            return admin_ids
+
+        administrators = await bot.get_chat_administrators(chat_id=channel_id, read_timeout=20, connect_timeout=10)
+        admin_ids = [admin.user.id for admin in administrators]
+        self.logger.info(f"Found {len(admin_ids)} administrators for channel '{channel_title}' (ID: {channel_id}): {admin_ids}")
+    except BadRequest as e:
+        self.logger.error(f"Error getting administrators for channel '{channel_title}' (ID: {channel_id}) (BadRequest): {e}. Ensure channel ID is correct and bot is admin.")
+    except Forbidden as e:
+        self.logger.error(f"Error getting administrators for channel '{current_channel_title}' (ID: {channel_id}) (Forbidden): {e}. Ensure bot has rights to get chat administrators.")
+    except Exception as e:
+        self.logger.error(f"Unexpected error getting administrators for channel '{channel_title}' (ID: {channel_id}): {e}", exc_info=True)
+    return admin_ids
+
+async def send_membership_status_notification(self, bot, user_id, reason_message, is_kicked=False):
+    """
+    Sends a notification to the user about their membership status (e.g., kicked).
+    """
+    action_taken = "از کانال حذف شدید" if is_kicked else "وضعیت عضویت شما تغییر کرده است"
+    message = (
+        f"کاربر گرامی،\n\n"
+        f"به اطلاع می‌رسانیم که شما {action_taken}.\n"
+        f"دلیل: {html.escape(reason_message)}\n\n"
+        f"در صورت نیاز به پشتیبانی یا داشتن سوال، لطفاً با ادمین‌های ما در ارتباط باشید.\n\n"
+        f"با احترام،\nآکادمی دارایی"
+    )
+    try:
+        await bot.send_message(chat_id=user_id, text=message, parse_mode=ParseMode.HTML) # Ensure ParseMode is imported
+        self.logger.info(f"Sent membership status notification to user {user_id}.")
+    except BadRequest as e:
+        self.logger.error(f"Failed to send membership status notification to {user_id} (BadRequest): {e}")
+    except Forbidden as e:
+        # This can happen if the user has blocked the bot
+        self.logger.warning(f"Failed to send membership status notification to {user_id} (Forbidden - user may have blocked bot): {e}")
+    except Exception as e:
+        self.logger.error(f"Unexpected error sending membership status notification to {user_id}: {e}", exc_info=True)
+
+# ------------------ Ticket notification ------------------
+async def send_new_ticket_notification(self, notification_text: str):
+    """Forward a newly-created ticket alert to all configured admins."""
+    if not notification_text:
+        return
+    if not self.application or not self.application.bot:
+        self.logger.error("send_new_ticket_notification called but bot application not initialized.")
+        return
+    # Extract admin chat IDs from admin_config (dict or list) or fallback to config.MANAGER_BOT_ADMIN_IDS
+    admin_ids: list[int] = []
+    if isinstance(self.admin_config, dict):
+        admin_ids = [int(k) for k in self.admin_config.keys()]
+    elif isinstance(self.admin_config, list):
+        try:
+            # list of dicts [{'chat_id':123,...}]
+            admin_ids = [int(a.get('chat_id')) for a in self.admin_config if a.get('chat_id')]
+        except Exception:
+            admin_ids = [int(a) for a in self.admin_config if a]
+    if not admin_ids:
+        admin_ids = getattr(config, 'MANAGER_BOT_ADMIN_IDS', []) or []
+    if not admin_ids:
+        self.logger.warning("No admin IDs configured – cannot deliver ticket notification.")
+        return
+    sent_count = 0
+    for adm in admin_ids:
+        try:
+            await self.application.bot.send_message(chat_id=adm, text=notification_text, parse_mode=ParseMode.HTML)
+            sent_count += 1
+        except Exception as e:
+            self.logger.error(f"Failed to send ticket notification to admin {adm}: {e}")
+    self.logger.info(f"Ticket notification delivered to {sent_count}/{len(admin_ids)} admins.")
+    
+async def _admin_reply_keyboard_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    self.logger.info(f"Admin reply keyboard handler triggered with text: {update.message.text} from user {update.effective_user.id}")
+    """Handle admin reply keyboard button presses by sending a new message with the corresponding inline menu."""
+    message_text = update.message.text
+    user_id = update.message.from_user.id
+
+    # Check if the user is an admin
+    admin_ids = []
+    
+    admin_ids = [admin.get('chat_id') for admin in self.admin_config if isinstance(admin, dict)]
+
+    handler_coro = self.admin_buttons_map.get(message_text)
+    if handler_coro:
+        # If the handler is start_command, it's the back button. Call it directly.
+        if handler_coro == self.start_command:
+            await handler_coro(update, context)
+        else:
+            # Other handlers expect a query-like object.
+            dummy_query = DummyQuery(update, context)
+            await handler_coro(dummy_query)
+        return
+    else:
+        # If the text doesn't match any button, we can either ignore it or handle it as a generic message.
+        # For now, we ignore it, as another handler will pick it up.
+        self.logger.debug(f"No admin button matched text: '{message_text}'")
+
+def setup_handlers(self):
+    """Setup command, message, and callback query handlers."""
+    application = self.application
+
+    # Command Handlers for admin actions
+    application.add_handler(CommandHandler("start", self.start_command))
+    application.add_handler(CommandHandler("tickets", self.view_tickets_command))
+    application.add_handler(CommandHandler("validate_now", self.validate_memberships_now_command))
+    application.add_handler(CommandHandler("help", self.help_command))
+
+    # --- Conversation and Callback Handlers ---
+    # Add conversation handlers from different modules
+    for handler in self.product_handler.get_product_conv_handlers():
+        application.add_handler(handler)
+    for handler in self.product_handler.get_static_product_handlers():
+        application.add_handler(handler)
+    application.add_handler(self.ticket_handler.get_ticket_conversation_handler())
+    application.add_handler(self.menu_handler.get_invite_link_conv_handler())
+    application.add_handler(self.menu_handler.get_ban_unban_conv_handler())
+    application.add_handler(self.menu_handler.get_broadcast_conv_handler())
+
+    # --- CallbackQuery Handlers for static menus ---
+    # This handles callbacks from non-conversation inline keyboards, like the main settings menu.
+    application.add_handler(CallbackQueryHandler(self.menu_handler.callback_query_handler))
+
+    # --- Message Handlers for Admin Private Chat (Group 0) ---
+    # This handler is specifically for the admin's main menu, which uses ReplyKeyboardMarkup.
+    admin_button_filter = filters.Text(list(self.admin_buttons_map.keys()))
+    application.add_handler(MessageHandler(
+        admin_button_filter & filters.ChatType.PRIVATE,
+        self._admin_reply_keyboard_handler
+    ))
+
+    # This is a general message handler for admins, which can be used for features like search.
+    # It should not handle commands or the main menu buttons.
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE & ~admin_button_filter,
+        self.menu_handler.message_handler
+    ))
+
+    # Generic UpdateHandler for logging (Group 100)
+    application.add_handler(TypeHandler(Update, self.log_all_updates), group=100)
