@@ -599,7 +599,8 @@ class AdminMenuHandler:
         if not payments:
             await query.edit_message_text("📄 پرداختی یافت نشد.")
             return
-        lines = ["💰 *۲۰ تراکنش اخیر:*\n"]
+        from telegram.helpers import escape_markdown
+        lines = [escape_markdown("💰 ۲۰ تراکنش اخیر:", version=2) + "\n"]
         for p in payments:
             try:
                 payment_id = p[0] if isinstance(p, (list, tuple)) else p.get('id')
@@ -607,17 +608,19 @@ class AdminMenuHandler:
                 amount = p[2] if isinstance(p, (list, tuple)) else p.get('amount')
                 status = p[5] if isinstance(p, (list, tuple)) else p.get('status')
                 created_at = p[6] if isinstance(p, (list, tuple)) else p.get('created_at')
-                lines.append(f"• #{payment_id} – {amount} ریال – {status} – {created_at} – UID:{user_id}")
+                escaped_status = escape_markdown(str(status), version=2)
+                lines.append(escape_markdown(f"• #{payment_id} – {amount} ریال – {escaped_status} – {created_at} – UID:{user_id}", version=2))
             except Exception:
                 lines.append(str(p))
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+        await query.edit_message_text("\n".join(lines), parse_mode="MarkdownV2")
 
     async def _show_payments_stats(self, query):
         plans = DatabaseQueries.get_active_plans()
         if not plans:
             await query.edit_message_text("📊 هیچ پلن فعالی یافت نشد.")
             return
-        lines = ["📈 *آمار اشتراک‌های فعال:*\n"]
+        from telegram.helpers import escape_markdown
+        lines = [escape_markdown("📈 آمار اشتراک‌های فعال:", version=2) + "\n"]
         for plan in plans:
             # Extract fields robustly for tuple/list, dict, or sqlite3.Row
             if isinstance(plan, (list, tuple)):
@@ -635,8 +638,9 @@ class AdminMenuHandler:
                         plan_name = plan.get("name", plan_name)
 
             count = DatabaseQueries.count_total_subs(plan_id)
-            lines.append(f"• {plan_name}: {count} مشترک فعال")
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+            escaped_name = escape_markdown(str(plan_name), version=2)
+            lines.append(f"• {escaped_name}: {count} مشترک فعال")
+        await query.edit_message_text("\n".join(lines), parse_mode="MarkdownV2")
 
     # ---------- Settings helpers ----------
     async def _settings_misc_submenu(self, query):
@@ -659,7 +663,7 @@ class AdminMenuHandler:
         elif isinstance(self.admin_config, dict):
             for uid, alias in self.admin_config.items():
                 lines.append(f"• {alias} – {uid}")
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+        await query.edit_message_text("\n".join(lines), parse_mode="MarkdownV2")
 
     # ---------- Public helper ----------
     # ---------- Invite Link Conversation Handlers ----------
