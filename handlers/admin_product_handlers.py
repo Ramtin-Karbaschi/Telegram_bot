@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from utils.decorators import admin_only
-from database.db_queries import DatabaseQueries
+from utils.helpers import admin_only_decorator as admin_only
+from database.queries import DatabaseQueries
 import logging
 
 logger = logging.getLogger(__name__)
@@ -12,13 +12,26 @@ from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, fi
 (EDIT_NAME, EDIT_PRICE, EDIT_DURATION, EDIT_DESCRIPTION, EDIT_CONFIRMATION) = range(5, 10)
 
 class AdminProductHandler:
-    def __init__(self, admin_config=None):
+    def __init__(self, db_queries: DatabaseQueries, admin_config=None):
+        """Handler for managing product plans.
+
+        Parameters
+        ----------
+        db_queries : DatabaseQueries
+            An already-initialized DatabaseQueries instance bound to the shared
+            database connection. This avoids creating multiple connections and
+            matches new constructor signature of DatabaseQueries.
+        admin_config : optional
+            Optional admin configuration dict if additional settings are
+            required.
+        """
+        self.db_queries = db_queries
         self.admin_config = admin_config
-        self.db_queries = DatabaseQueries()
 
     async def _show_all_plans(self, query):
-        """Displays a list of all plans with edit and delete buttons."""
+        """Displays a list of all plans with their status to admins."""
         try:
+            # Fetch all plans, including inactive/private ones, for admin view
             all_plans = self.db_queries.get_all_plans()
             if not all_plans:
                 await query.edit_message_text("هیچ پلنی یافت نشد.")
@@ -29,14 +42,17 @@ class AdminProductHandler:
                 plan = dict(plan)
                 plan_id = plan['id']
                 plan_name = plan['name']
-                # Create a button for each plan
-                keyboard.append([InlineKeyboardButton(f"{plan_name}", callback_data=f"view_plan_{plan_id}")])
+                status_emoji = "✅" if plan.get('is_active', False) else "❌"
+                visibility_emoji = "🌍" if plan.get('is_public', False) else "🔒"
+                
+                button_text = f"{plan_name} [{status_emoji} فعال, {visibility_emoji} عمومی]"
+                keyboard.append([InlineKeyboardButton(button_text, callback_data=f"view_plan_{plan_id}")])
 
             keyboard.append([InlineKeyboardButton("➕ افزودن پلن جدید", callback_data="products_add")])
             keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back_main")])
 
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text("📜 *لیست پلن‌ها*:", parse_mode="Markdown", reply_markup=reply_markup)
+            await query.edit_message_text("📜 *مدیریت پلن‌ها*:", parse_mode="Markdown", reply_markup=reply_markup)
 
         except Exception as e:
             logger.error(f"Error showing all plans: {e}")
@@ -78,24 +94,44 @@ class AdminProductHandler:
         return ADD_CONFIRMATION
 
     async def save_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
         plan_data = context.user_data
-        self.db_queries.add_plan(
-            name=plan_data['new_plan_name'],
+        name = plan_data['new_plan_name']
+        
+        # By default, plans are active and public
+        is_active = True
+        is_public = True
+        
+        # Special case for 'free_30d' plan to be private by default
+        if name == 'free_30d':
+            is_public = False
+
+        plan_id = self.db_queries.add_plan(
+            name=name,
             price=plan_data['new_plan_price'],
             duration_days=plan_data['new_plan_duration'],
-            description=plan_data['new_plan_description']
+            description=plan_data['new_plan_description'],
+            is_active=is_active,
+            is_public=is_public
         )
-        await query.edit_message_text("پلن با موفقیت اضافه شد.")
-        # End conversation
+        query = update.callback_query
+        await query.answer("پلن با موفقیت افزوده شد.")
+        await self._show_all_plans(query)
         context.user_data.clear()
-        # Show the updated list of plans
-        await self._show_all_plans(query, is_new_message=False)
         return ConversationHandler.END
 
+    async def handle_show_all_plans(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        await self._show_all_plans(query)
+
+    async def handle_view_single_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        plan_id = int(query.data.split('_')[-1])
+        await query.answer()
+        await self._show_single_plan(query, plan_id)
+
     async def _show_single_plan(self, query: Update.callback_query, plan_id: int):
-        """Shows details for a single plan with action buttons."""
+        """Shows details for a single plan with enhanced action buttons."""
         try:
             plan = self.db_queries.get_plan_by_id(plan_id)
             if not plan:
@@ -103,49 +139,76 @@ class AdminProductHandler:
                 return
 
             plan = dict(plan)
-            status_text = "فعال 🟢" if plan['is_active'] else "غیرفعال 🔴"
-            toggle_button_text = "🔴 غیرفعال کردن" if plan['is_active'] else "🟢 فعال کردن"
+            is_active = plan.get('is_active', False)
+            is_public = plan.get('is_public', False)
+
+            status_text = "فعال" if is_active else "غیرفعال"
+            public_text = "عمومی" if is_public else "خصوصی (فقط ادمین)"
 
             text = (
-                f"جزئیات پلن: {plan['name']}\n\n"
-                f"شناسه: {plan['id']}\n"
-                f"قیمت: {plan['price']} تومان\n"
-                f"مدت: {plan['duration_days']} روز\n"
-                f"وضعیت: {status_text}\n"
-                f"توضیحات: {plan.get('description', 'ندارد')}"
+                f"*جزئیات پلن: {plan['name']}*\n\n"
+                f"*قیمت:* {plan['price']} تومان\n"
+                f"*مدت:* {plan['duration_days']} روز\n"
+                f"*توضیحات:* {plan.get('description', 'ندارد')}\n"
+                f"*وضعیت:* {status_text}\n"
+                f"*نمایش:* {public_text}"
             )
 
+            toggle_active_text = " غیرفعال کردن" if is_active else "✅ فعال کردن"
+            toggle_public_text = "🔒 خصوصی کردن" if is_public else "🌍 عمومی کردن"
+
             keyboard = [
-                [InlineKeyboardButton(toggle_button_text, callback_data=f"toggle_plan_{plan_id}")],
-                [
-                    InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_plan_{plan_id}"),
-                    InlineKeyboardButton("✏️ ویرایش", callback_data=f"edit_plan_{plan_id}")
-                ],
-                [InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="products_list")]
+                [InlineKeyboardButton(f"✏️ ویرایش", callback_data=f"edit_plan_{plan_id}"),
+                 InlineKeyboardButton(f"🗑 حذف", callback_data=f"delete_plan_confirm_{plan_id}")],
+                [InlineKeyboardButton(toggle_active_text, callback_data=f"toggle_plan_active_{plan_id}")],
+                [InlineKeyboardButton(toggle_public_text, callback_data=f"toggle_plan_public_{plan_id}")],
+                [InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="products_show_all")]
             ]
+
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(text, reply_markup=reply_markup)
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
         except Exception as e:
             logger.error(f"Error showing single plan {plan_id}: {e}")
             await query.edit_message_text("خطا در نمایش جزئیات پلن.")
 
+    async def handle_toggle_plan_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        plan_id = int(query.data.split('_')[-1])
+        await self.toggle_plan_status(query, plan_id)
+
     async def toggle_plan_status(self, query: Update.callback_query, plan_id: int):
         """Toggles the is_active status of a plan."""
         try:
-            plan = self.db_queries.get_plan_by_id(plan_id)
-            if not plan:
-                await query.edit_message_text("پلن مورد نظر یافت نشد.")
+            success = self.db_queries.set_plan_activation(plan_id)
+            if not success:
+                await query.answer("خطا: پلن یافت نشد یا وضعیت تغییر نکرد.", show_alert=True)
                 return
 
-            new_status = not plan['is_active']
-            self.db_queries.update_plan(plan_id, is_active=new_status)
-            await query.answer(f"وضعیت پلن به {'فعال' if new_status else 'غیرفعال'} تغییر یافت.")
-            # Refresh the view
-            await self._show_single_plan(query, plan_id)
+            await query.answer("وضعیت فعال‌سازی پلن با موفقیت تغییر کرد.")
+            await self._show_single_plan(query, plan_id) # Refresh the view
         except Exception as e:
-            logger.error(f"Error toggling status for plan {plan_id}: {e}")
+            logger.error(f"Error toggling plan status for {plan_id}: {e}")
             await query.edit_message_text("خطا در تغییر وضعیت پلن.")
+
+    async def handle_toggle_plan_visibility(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        plan_id = int(query.data.split('_')[-1])
+        await self.toggle_plan_visibility(query, plan_id)
+
+    async def toggle_plan_visibility(self, query: Update.callback_query, plan_id: int):
+        """Toggles the is_public status of a plan."""
+        try:
+            success = self.db_queries.set_plan_visibility(plan_id)
+            if not success:
+                await query.answer("خطا: پلن یافت نشد یا وضعیت تغییر نکرد.", show_alert=True)
+                return
+
+            await query.answer("وضعیت نمایش پلن با موفقیت تغییر کرد.")
+            await self._show_single_plan(query, plan_id) # Refresh the view
+        except Exception as e:
+            logger.error(f"Error toggling plan visibility for {plan_id}: {e}")
+            await query.edit_message_text("خطا در تغییر وضعیت نمایش پلن.")
 
     async def delete_plan_confirmation(self, query: Update.callback_query, plan_id: int):
         """Asks for confirmation before deleting a plan."""
@@ -257,7 +320,17 @@ class AdminProductHandler:
         context.user_data.clear()
         return ConversationHandler.END
 
-    def get_handlers(self):
+    def get_static_product_handlers(self):
+        return [
+            CallbackQueryHandler(self.handle_show_all_plans, pattern='^products_show_all$'),
+            CallbackQueryHandler(self.handle_view_single_plan, pattern='^view_plan_'),
+            CallbackQueryHandler(self.handle_toggle_plan_status, pattern='^toggle_plan_active_'),
+            CallbackQueryHandler(self.handle_toggle_plan_visibility, pattern='^toggle_plan_public_'),
+            CallbackQueryHandler(self.delete_plan_confirmation, pattern='^delete_plan_confirm_'),
+            CallbackQueryHandler(self.delete_plan, pattern='^delete_plan_execute_')
+        ]
+
+    def get_product_conv_handlers(self):
         add_plan_handler = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.add_plan_start, pattern='^products_add$')],
             states={
