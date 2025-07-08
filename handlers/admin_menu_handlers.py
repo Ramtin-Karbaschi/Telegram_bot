@@ -11,11 +11,11 @@ from utils.helpers import admin_only_decorator as admin_only
 from utils.invite_link_manager import InviteLinkManager
 from database.free_plan_helper import ensure_free_plan
 from utils.db_backup import export_database
-from .admin_ticket_handlers import AdminTicketHandler
+
 from .admin_product_handlers import AdminProductHandler
-from ..utils.invite_link_manager import InviteLinkManager
-from ..database.free_plan_helper import ensure_free_plan
-from ..database.queries import DatabaseQueries
+
+
+from database.queries import DatabaseQueries
 
 logger = logging.getLogger(__name__)
 
@@ -25,14 +25,105 @@ AWAIT_USER_ID_FOR_BAN, AWAIT_BAN_CHOICE = range(2)
 class AdminMenuHandler:
     """Show an interactive admin panel and dispatch to feature modules."""
 
-    def __init__(self, admin_config=None):
+    def __init__(self, db_queries: DatabaseQueries, invite_link_manager=None, admin_config=None):
+        # Store shared DatabaseQueries instance
+        self.db_queries = db_queries
+
+        # Store invite link manager class or instance
+        self.invite_link_manager = invite_link_manager
+
         # Save admin configuration for permission checks used by @admin_only decorator
         self.admin_config = admin_config
-        # Re-use ticket handler to show lists inside this menu
+
+        # Re-use ticket handler to show lists inside this menu (no DB object required here)
+        from .admin_ticket_handlers import AdminTicketHandler
         self.ticket_handler = AdminTicketHandler()
-        self.product_handler = AdminProductHandler() # Create an instance
+
+        # Product handler needs DB access as well as optional admin config
+        self.product_handler = AdminProductHandler(self.db_queries, admin_config=self.admin_config)
         # Simple flag for maintenance mode toggle in misc settings
         self.maintenance_mode = False
+        self.search_flag = None
+        self.broadcast_flag = None
+
+        self.button_texts = {
+            'users': '👥 مدیریت کاربران',
+            'products': '📦 مدیریت محصولات',
+            'tickets': '🎫 مدیریت تیکت‌ها',
+            'payments': '💳 مدیریت پرداخت‌ها',
+            'broadcast': '📢 ارسال پیام همگانی',
+            'stats': '📊 آمار کلی',
+            'settings': '⚙️ تنظیمات',
+            'back_to_main': '🔙 بازگشت به منوی اصلی',
+        }
+
+        self.admin_buttons_map = {
+            self.button_texts['users']: self._users_submenu,
+            self.button_texts['products']: self._products_submenu,
+            self.button_texts['tickets']: self._tickets_submenu,
+            self.button_texts['payments']: self._payments_submenu,
+            self.button_texts['broadcast']: self._broadcast_submenu,
+            self.button_texts['stats']: self._show_stats_handler,
+            self.button_texts['settings']: self._settings_submenu,
+            self.button_texts['back_to_main']: self.show_admin_menu,
+        }
+
+    @admin_only
+    async def route_admin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Routes admin commands from ReplyKeyboardMarkup clicks."""
+        command_text = update.message.text
+        function_to_call = self.admin_buttons_map.get(command_text)
+
+        if not function_to_call:
+            return
+
+        # Handlers like _users_submenu expect a 'query' object.
+        # Handlers like show_admin_menu expect 'update' and 'context'.
+        # We create a dummy query object to bridge this gap.
+        class DummyQuery:
+            def __init__(self, message):
+                self.message = message
+
+            async def answer(self):
+                pass  # No-op
+
+            async def edit_message_text(self, *args, **kwargs):
+                # For reply keyboards, we send a new message instead of editing.
+                await self.message.reply_text(*args, **kwargs)
+
+        # Check the function signature to decide how to call it.
+        import inspect
+        sig = inspect.signature(function_to_call)
+        if len(sig.parameters) > 1: # Assumes (self, update, context)
+            await function_to_call(update, context)
+        else: # Assumes (self, query)
+            await function_to_call(DummyQuery(update.message))
+
+    async def _show_stats_handler(self, query):
+        """
+        Handles showing stats, designed to be called from a reply keyboard.
+        It uses query.message.reply_text instead of query.edit_message_text.
+        """
+        stats = DatabaseQueries.get_subscription_stats()
+        message_text = ""
+        if stats:
+            stats = dict(stats)  # Ensure it's a dict
+            message_text = (
+                f"📊 *آمار اشتراک‌ها:*\n\n"
+                f"کل کاربران: {stats.get('total_users', 'N/A')}\n"
+                f"کاربران فعال: {stats.get('active_subscribers', 'N/A')}\n"
+                f"درآمد کل (تتر): {stats.get('total_revenue_usdt', 0):.2f} USDT\n"
+                f"درآمد کل (ریال): {stats.get('total_revenue_irr', 0):,} IRR"
+            )
+        else:
+            message_text = "آماری برای نمایش وجود ندارد."
+
+        # DummyQuery has `message` attribute from the original update
+        if hasattr(query, 'message') and query.message:
+            await query.message.reply_text(message_text, parse_mode="Markdown")
+        else:
+            # Fallback, though it shouldn't be needed
+            logger.warning("Could not send stats reply, query object lacks 'message'.")
     """Show an interactive admin panel and dispatch to feature modules."""
 
     # Callback data constants
@@ -42,10 +133,13 @@ class AdminMenuHandler:
     CREATE_INVITE_LINK = "users_create_invite_link"
     PAYMENTS_MENU = "admin_payments_menu"
     BROADCAST_MENU = "admin_broadcast_menu"
+    BROADCAST_ACTIVE = "broadcast_active"
+    BROADCAST_ALL = "broadcast_all"
     SETTINGS_MENU = "admin_settings_menu"
     PRODUCTS_MENU = "admin_products_menu"
     BACKUP_CALLBACK = "settings_backup"
     BACK_MAIN = "admin_back_main"
+    MAIN_MENU_CALLBACK = BACK_MAIN
     BAN_UNBAN_USER = "users_ban_unban"
 
     # Conversation states
@@ -69,11 +163,6 @@ class AdminMenuHandler:
         else:
             await update.message.reply_text("⚡️ *پنل مدیریت*\nیکی از گزینه‌های زیر را انتخاب کنید:", parse_mode="Markdown", reply_markup=reply_markup)
 
-    async def _back_to_main(self, query):
-        """Return to main admin panel (used internally)."""
-        # This now simply calls the main menu function with the query's message
-        await self.show_admin_menu(query, None) # type: ignore
-
     # ---------- Menu callbacks ----------
     @admin_only
     async def admin_menu_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -90,6 +179,8 @@ class AdminMenuHandler:
             await self._payments_submenu(query)
         elif data == self.BROADCAST_MENU:
             await self._broadcast_submenu(query)
+        elif data == "users_list_active":
+            await self._show_active_users(query)
         elif data == self.SETTINGS_MENU:
             await self._settings_submenu(query)
         elif data == self.PRODUCTS_MENU:
@@ -97,12 +188,17 @@ class AdminMenuHandler:
         # ----- Product submenu actions -----
         elif data == "products_list":
             await self.product_handler._show_all_plans(query)
+        elif data == "products_show_all":
+            await self.product_handler._show_all_plans(query)
         elif data.startswith("view_plan_"):
             plan_id = int(data.split("_")[2])
             await self.product_handler._show_single_plan(query, plan_id)
-        elif data.startswith("toggle_plan_"):
-            plan_id = int(data.split("_")[2])
+        elif data.startswith("toggle_plan_active_"):
+            plan_id = int(data.rsplit("_", 1)[1])
             await self.product_handler.toggle_plan_status(query, plan_id)
+        elif data.startswith("toggle_plan_public_"):
+            plan_id = int(data.rsplit("_", 1)[1])
+            await self.product_handler.toggle_plan_visibility(query, plan_id)
         elif data.startswith("delete_plan_"):
             plan_id = int(data.split("_")[2])
             await self.product_handler.delete_plan_confirmation(query, plan_id)
@@ -110,7 +206,7 @@ class AdminMenuHandler:
             plan_id = int(data.split("_")[3])
             await self.product_handler.delete_plan(query, plan_id)
         elif data == self.BACK_MAIN:
-            await self._back_to_main(query)
+            await self.show_admin_menu(update, context)
         # ----- Ticket submenu actions -----
         elif data == "tickets_open":
             await self.ticket_handler._show_tickets_inline(query)
@@ -175,14 +271,15 @@ class AdminMenuHandler:
             await query.answer("به‌روزرسانی شد")
             await self._settings_misc_submenu(query)
         # ----- Broadcast submenu actions -----
-        elif data == "broadcast_send":
-            # Initiate broadcast flow – ask admin to send the content
-            await query.edit_message_text("✉️ لطفاً پیام مورد نظر خود را ارسال کنید. پس از ارسال، پیام به‌صورت خودکار برای تمامی کاربران فعال فوروارد خواهد شد.")
-            # Flag the admin's user_data so the next incoming message will be treated as broadcast content
+        elif data in (self.BROADCAST_ACTIVE, self.BROADCAST_ALL):
+            # Set broadcast target and ask for content
+            target_label = "کاربران فعال" if data == self.BROADCAST_ACTIVE else "تمامی کاربران ثبت‌نام‌شده"
+            context.user_data["broadcast_target"] = "active" if data == self.BROADCAST_ACTIVE else "all"
+            await query.edit_message_text(f"✉️ لطفاً پیام مورد نظر خود را ارسال کنید. پس از ارسال، پیام به‌صورت خودکار برای {target_label} فوروارد خواهد شد.")
             context.user_data["awaiting_broadcast_content"] = True
         elif data == self.BACK_MAIN:
-            # Just recreate the main menu
-            await self.show_admin_menu(query, context)  # type: ignore[arg-type]
+            # Just recreate the main admin menu correctly
+            await self.show_admin_menu(update, context)
         else:
             await query.answer("دستور ناشناخته!", show_alert=True)
 
@@ -354,20 +451,35 @@ class AdminMenuHandler:
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
+    async def _broadcast_submenu(self, query):
+        """Display broadcast options (active users vs all users)."""
+        keyboard = [
+            [InlineKeyboardButton("🟢 کاربران فعال", callback_data=self.BROADCAST_ACTIVE)],
+            [InlineKeyboardButton("👥 تمامی اعضا", callback_data=self.BROADCAST_ALL)],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
+        ]
+        await query.edit_message_text(
+            "📢 *ارسال پیام همگانی*:\nیکی از گزینه‌های زیر را انتخاب کنید:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
     # ---------- Broadcast content handler ----------
     @admin_only
     async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle dynamic admin inputs based on flow flags (broadcast, user search)."""
+        logger.info("Admin message_handler triggered with text: %s | broadcast_flag=%s | search_flag=%s", update.effective_message.text if update.effective_message else "<no message>", context.user_data.get("awaiting_broadcast_content"), context.user_data.get("awaiting_user_search_query"))
         message = update.effective_message
-        # Debug log
-        logger.debug("broadcast_message_handler triggered by user %s. Flags: broadcast=%s, search=%s", message.from_user.id if message else 'N/A', context.user_data.get("awaiting_broadcast_content"), context.user_data.get("awaiting_user_search_query"))
-
         # -------- Broadcast flow --------
         if context.user_data.get("awaiting_broadcast_content"):
-            # Notify admin that sending is in progress
+            # Determine target users
+            target = context.user_data.get("broadcast_target", "active")
             await message.reply_text("⏳ در حال ارسال پیام به کاربران، لطفاً صبر کنید...")
 
-            users = DatabaseQueries.get_all_active_subscribers()
+            if target == "all":
+                users = DatabaseQueries.get_all_registered_users()
+            else:
+                users = DatabaseQueries.get_all_active_subscribers()
             total = len(users)
             success = 0
             for u in users:
@@ -400,7 +512,9 @@ class AdminMenuHandler:
                     continue
 
             await message.reply_text(f"✅ ارسال پیام به پایان رسید. موفق: {success}/{total}")
+            # Reset flags
             context.user_data.pop("awaiting_broadcast_content", None)
+            context.user_data.pop("broadcast_target", None)
             return
 
         # --- User Search Flow ---
@@ -456,7 +570,7 @@ class AdminMenuHandler:
             await update.message.reply_text(f"✅ اشتراک ۳۰ روزه رایگان برای کاربر `{target_user_id}` با موفقیت فعال شد. در حال ایجاد و ارسال لینک دعوت...", parse_mode="Markdown")
 
             # Generate and send invite links
-            links = await self.invite_link_manager.ensure_one_time_links(target_user_id)
+            links = await self.invite_link_manager.ensure_one_time_links(context.bot, target_user_id)
             if not links:
                 await update.message.reply_text("❌ خطا در ایجاد لینک‌های دعوت. اشتراک فعال شد اما لینک ارسال نشد.")
                 return
@@ -753,8 +867,6 @@ class AdminMenuHandler:
         """Return telegram.ext handlers to register in the dispatcher."""
         handlers = [
             CommandHandler("admin", self.show_admin_menu),
-            # Handle incoming messages for various flows (only processed when a flag is set)
-            MessageHandler(filters.TEXT & (~filters.COMMAND), self.message_handler),
         ]
 
         # Conversation handler for creating invite links
