@@ -35,32 +35,53 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Failed to delete message {message_id} from chat {chat_id}: {e}")
 
+from utils.invite_link_manager import InviteLinkManager
+
 async def send_channel_links_and_confirmation(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_name: str):
     """Sends a confirmation message with channel links and schedules it for deletion."""
     message_text = f"✅ اشتراک پلن «{plan_name}» برای شما با موفقیت فعال شد.\n\n🎉 اکنون می‌توانید از طریق لینک‌های زیر به کانال‌ها و گروه‌های ویژه دسترسی داشته باشید:"
     
+    # ------------------------------------------------------------------
+    # Create / fetch one-time invite links for this user
+    try:
+        invite_links = await InviteLinkManager.ensure_one_time_links(context.bot, telegram_id)
+    except Exception as exc:
+        logger.exception("Failed to generate invite links for user %s – %s", telegram_id, exc)
+        invite_links = None
+
     keyboard = []
+    channels_info = []
+    # Parse TELEGRAM_CHANNELS_INFO into list of dicts with 'title'
     if hasattr(config, 'TELEGRAM_CHANNELS_INFO') and config.TELEGRAM_CHANNELS_INFO:
-        # config.TELEGRAM_CHANNELS_INFO may already be a list (parsed in config.py) or a raw JSON string
         try:
-            if isinstance(config.TELEGRAM_CHANNELS_INFO, str):
-                channels_info = json.loads(config.TELEGRAM_CHANNELS_INFO)
-            else:
-                channels_info = config.TELEGRAM_CHANNELS_INFO
+            channels_info = (
+                json.loads(config.TELEGRAM_CHANNELS_INFO)
+                if isinstance(config.TELEGRAM_CHANNELS_INFO, str)
+                else config.TELEGRAM_CHANNELS_INFO
+            )
         except json.JSONDecodeError as e:
-            logger.error(f"Could not parse TELEGRAM_CHANNELS_INFO JSON: {e}")
+            logger.error("Could not parse TELEGRAM_CHANNELS_INFO JSON: %s", e)
             channels_info = []
 
+    # Build buttons with invite links if we have successfully generated them
+    if invite_links and channels_info and len(invite_links) == len(channels_info):
         first_row = []
-        for channel in channels_info:
-            if isinstance(channel, dict) and 'title' in channel and 'link' in channel:
-                first_row.append(InlineKeyboardButton(channel['title'], url=channel['link']))
-        
-        # Only add rows if there are actual buttons to add
+        for chat_info, link in zip(channels_info, invite_links):
+            first_row.append(InlineKeyboardButton(chat_info['title'], url=link))
         if first_row:
             keyboard.append(first_row)
-            # Add the back to main menu button in a new row, only if there are channels
-            keyboard.append([InlineKeyboardButton("بازگشت به پروفایل کاربری", callback_data="back_to_main_menu")])
+    else:
+        # Fallback to any static links provided (legacy behaviour)
+        if channels_info:
+            first_row = []
+            for channel in channels_info:
+                if isinstance(channel, dict) and 'title' in channel and 'link' in channel:
+                    first_row.append(InlineKeyboardButton(channel['title'], url=channel['link']))
+            if first_row:
+                keyboard.append(first_row)
+
+    # Back to main menu row
+    keyboard.append([InlineKeyboardButton("بازگشت به پروفایل کاربری", callback_data="back_to_main_menu")])
     
     if not keyboard:
         logger.warning(f"TELEGRAM_CHANNELS_INFO is not configured correctly for user {telegram_id}.")
