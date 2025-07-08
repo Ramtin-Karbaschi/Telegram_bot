@@ -25,6 +25,7 @@ from handlers.admin_ticket_handlers import AdminTicketHandler  # Fixed import
 from handlers.admin_menu_handlers import AdminMenuHandler  # Import admin menu handler
 from handlers.admin_product_handlers import AdminProductHandler  # Import admin product handler
 from utils.invite_link_manager import InviteLinkManager  # Import InviteLinkManager
+from database.invite_link_queries import get_active_invite_link, mark_invite_link_used  # Invite link DB helpers
 
 # States for ConversationHandler
 
@@ -190,27 +191,60 @@ class ManagerBot:
         chat = update.chat_member.chat
 
         if not was_member and is_member:
-            self.logger.info(f"User {user.id} ({user.first_name}) joined chat {chat.id} ({chat.title}). Checking authorization...")
-            if not self.is_user_authorized(user.id):
-                self.logger.warning(f"User {user.id} is NOT authorized. Kicking from {chat.id}.")
+            self.logger.info(
+                f"User {user.id} ({user.first_name}) joined chat {chat.id} ({chat.title}). Checking authorization..."
+            )
+
+            is_authorized = self.is_user_authorized(user.id)
+            if not is_authorized:
+                # Check database for an unused invite link issued to this user
+                active_link = None
+                try:
+                    active_link = get_active_invite_link(user.id)
+                except Exception as e:
+                    self.logger.error(f"Error while checking active invite link for user {user.id}: {e}")
+
+                if active_link:
+                    self.logger.info(
+                        f"User {user.id} has a valid one-time invite link in DB. Marking it as used and allowing join."
+                    )
+                    try:
+                        mark_invite_link_used(active_link)
+                    except Exception as e:
+                        self.logger.error(
+                            f"Failed to mark invite link as used for user {user.id}: {e}")
+                    is_authorized = True
+                else:
+                    # Fallback: use invite_link info available in the update object (if bot created link but not stored for some reason)
+                    invite_link_obj = getattr(update.chat_member, 'invite_link', None)
+                    raw_link = getattr(invite_link_obj, 'invite_link', None) if invite_link_obj else None
+                    if raw_link:
+                        self.logger.info(
+                            f"Invite link object present in update for user {user.id}. Treating as valid, marking as used in DB."
+                        )
+                        try:
+                            mark_invite_link_used(raw_link)
+                        except Exception as e:
+                            self.logger.error(
+                                f"Failed to mark invite link from update as used for user {user.id}: {e}")
+                        is_authorized = True
+
+            if not is_authorized:
+                self.logger.warning(
+                    f"User {user.id} is NOT authorized and has no valid invite link. Kicking from {chat.id}."
+                )
                 try:
                     await context.bot.ban_chat_member(chat_id=chat.id, user_id=user.id)
                     await context.bot.unban_chat_member(chat_id=chat.id, user_id=user.id)
-                    self.logger.info(f"Successfully kicked unauthorized user {user.id} from {chat.id}")
+                    self.logger.info(
+                        f"Successfully kicked unauthorized user {user.id} from {chat.id}")
                 except Exception as e:
-                    self.logger.error(f"Failed to kick user {user.id} from {chat.id}: {e}")
+                    self.logger.error(
+                        f"Failed to kick user {user.id} from {chat.id}: {e}")
             else:
-                self.logger.info(f"User {user.id} is authorized.")
-            # --- Mark one-time invite link as used, if any ---
-        if not was_member and is_member:
-            invite_link_obj = getattr(update.chat_member, 'invite_link', None)
-            if invite_link_obj and invite_link_obj.invite_link:
-                try:
-                    from database import invite_link_queries as ilq
-                    ilq.mark_invite_link_used(invite_link_obj.invite_link)
-                    self.logger.info(f"Marked invite link as used for user {user.id}: {invite_link_obj.invite_link}")
-                except Exception as e:
-                    self.logger.error(f"Failed to mark invite link used for user {user.id}: {e}")
+                self.logger.info(
+                    f"User {user.id} is authorized (subscription) or has a valid invite link – allowed to stay.")
+        
         elif was_member and not is_member:
             status = update.chat_member.new_chat_member.status
             self.logger.info(f"User {user.id} ({user.first_name}) left or was kicked from chat {chat.id} ({chat.title}). New status: {status}")
