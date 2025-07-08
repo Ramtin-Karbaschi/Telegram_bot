@@ -1,10 +1,21 @@
 import logging
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
 from telegram.constants import ParseMode
-from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, MessageHandler, filters
+from telegram.ext import (
+    ContextTypes,
+    ConversationHandler,
+    CallbackQueryHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
+
 from database.queries import DatabaseQueries
 import config
+from utils.helpers import is_admin
 from utils.helpers import admin_only_decorator as admin_only
+
 import json
 from ai.model import responder
 import html  # For escaping HTML entities
@@ -15,6 +26,29 @@ logger = logging.getLogger(__name__)
 
 class AdminTicketHandler:
     """Handle ticket management for admins"""
+    
+    def __init__(self):
+        # self.db_queries = DatabaseQueries() # This instance is not strictly needed if all calls are static
+        pass
+    
+    def get_ticket_conversation_handler(self):
+        """Get the conversation handler for ticket management"""
+        return ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(self.show_tickets_command, pattern="^show_tickets$"),
+                CallbackQueryHandler(self.view_ticket_callback, pattern="^view_ticket_\d+$"),
+                CallbackQueryHandler(self.edit_answer_callback, pattern="^edit_answer_\d+$"),
+                CallbackQueryHandler(self.send_answer_callback, pattern="^send_answer_\d+$"),
+                CallbackQueryHandler(self.close_ticket_callback, pattern="^close_ticket_\d+$")
+            ],
+            states={
+                # Add states as needed
+            },
+            fallbacks=[
+                CallbackQueryHandler(self.show_tickets_command, pattern="^refresh_tickets$")
+            ],
+            per_message=False
+        )
     
     def __init__(self):
         # self.db_queries = DatabaseQueries() # This instance is not strictly needed if all calls are static
