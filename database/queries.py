@@ -4,6 +4,7 @@ Database queries for the Daraei Academy Telegram bot
 
 import sqlite3
 from datetime import datetime, timedelta
+from .models import Database
 import config
 import logging
 from typing import Optional
@@ -13,146 +14,177 @@ from utils.helpers import get_current_time  # ensure Tehran-tz aware now
 
 class DatabaseQueries:
     """Class for handling database operations"""
-    
-    @staticmethod
-    def init_database():
-        """Initialize the database and create tables if they don't exist"""
-        db = Database()
-        if db.connect():
-            result = db.create_tables(ALL_TABLES)
-            db.commit()
-            db.close()
+    def __init__(self, db: Database):
+        self.db = db
+
+    def init_database(self):
+        """Initialize the database and create tables if they don't exist."""
+        if self.db.connect():
+            # Add is_active and is_public to plans table if they don't exist
+            try:
+                self.db.execute("PRAGMA table_info(plans)")
+                columns = [column['name'] for column in self.db.fetchall()]
+
+                # Add duration_days column if missing
+                if 'duration_days' not in columns:
+                    self.db.execute("ALTER TABLE plans ADD COLUMN duration_days INTEGER")
+                    # If legacy 'days' column exists, copy data across
+                    if 'days' in columns:
+                        try:
+                            self.db.execute("UPDATE plans SET duration_days = days WHERE duration_days IS NULL OR duration_days = 0")
+                        except sqlite3.Error as copy_err:
+                            logging.error(f"Error migrating days to duration_days: {copy_err}")
+
+                # Ensure is_active / is_public columns exist
+                if 'is_active' not in columns:
+                    self.db.execute("ALTER TABLE plans ADD COLUMN is_active BOOLEAN DEFAULT 1")
+                if 'is_public' not in columns:
+                    self.db.execute("ALTER TABLE plans ADD COLUMN is_public BOOLEAN DEFAULT 1")
+                self.db.commit()
+            except sqlite3.Error as e:
+                logging.error(f"Error checking/adding columns to plans table: {e}")
+
+            result = self.db.create_tables(ALL_TABLES)
+            self.db.commit()
             return result
         return False
-    
+
     # -----------------------------------
     # Product Management
     # -----------------------------------
-    @staticmethod
-    def add_plan(name: str, price: float, duration_days: int, description: str = None):
-        """Add a new plan (subscription plan) to the database."""
-        db = Database()
-        if db.connect():
-            try:
-                db.execute(
-                    "INSERT INTO plans (name, price, duration_days, description) VALUES (?, ?, ?, ?)",
-                    (name, price, duration_days, description)
-                )
-                db.commit()
-                return db.cursor.lastrowid
-            except sqlite3.Error as e:
-                logging.error(f"SQLite error in add_plan: {e}")
-            finally:
-                db.close()
-        return None
+    def add_plan(self, name: str, price: float, duration_days: int, description: str | None = None, *, is_active: bool = True, is_public: bool = True):
+        """Add a new plan to the database with active and public status."""
+        try:
+            # Determine if legacy 'days' column exists
+            self.db.execute("PRAGMA table_info(plans)")
+            columns = [col['name'] for col in self.db.fetchall()]
+            if 'days' in columns:
+                sql = "INSERT INTO plans (name, price, duration_days, days, description, is_active, is_public) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                params = (name, price, duration_days, duration_days, description, is_active, is_public)
+            else:
+                sql = "INSERT INTO plans (name, price, duration_days, description, is_active, is_public) VALUES (?, ?, ?, ?, ?, ?)"
+                params = (name, price, duration_days, description, is_active, is_public)
+            self.db.execute(sql, params)
+            self.db.commit()
+            return self.db.cursor.lastrowid
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error in add_plan: {e}")
+            return None
 
-    @staticmethod
-    def get_all_plans():
-        """Retrieve all plans from the database."""
-        db = Database()
-        if db.connect():
-            try:
-                db.execute("SELECT id, name, price, duration_days, description FROM plans ORDER BY id")
-                return db.fetchall()
-            except sqlite3.Error as e:
-                logging.error(f"SQLite error in get_all_plans: {e}")
-            finally:
-                db.close()
-        return []
+    def get_all_plans(self, public_only=False):
+        """Retrieve plans from the database. Can filter for public-only plans."""
+        query = "SELECT id, name, price, duration_days, description, is_active, is_public FROM plans ORDER BY id"
+        params = ()
+        if public_only:
+            query = "SELECT id, name, price, duration_days, description, is_active, is_public FROM plans WHERE is_public = ? AND is_active = ? ORDER BY id"
+            params = (True, True)
+        try:
+            self.db.execute(query, params)
+            return self.db.fetchall()
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error in get_all_plans: {e}")
+            return []
 
-    @staticmethod
-    def get_plan_by_id(plan_id: int):
+    def get_plan_by_id(self, plan_id: int):
         """Retrieve a single plan by its ID."""
-        db = Database()
-        if db.connect():
-            try:
-                db.execute("SELECT id, name, price, duration_days, description FROM plans WHERE id = ?", (plan_id,))
-                return db.fetchone()
-            except sqlite3.Error as e:
-                logging.error(f"SQLite error in get_plan_by_id: {e}")
-            finally:
-                db.close()
-        return None
+        try:
+            self.db.execute("SELECT * FROM plans WHERE id = ?", (plan_id,))
+            return self.db.fetchone()
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error in get_plan_by_id: {e}")
+            return None
 
-    @staticmethod
-    def update_plan(plan_id: int, name: str, price: float, duration_days: int, description: str = None):
-        """Update an existing plan."""
-        db = Database()
-        if db.connect():
-            try:
-                db.execute(
-                    "UPDATE plans SET name = ?, price = ?, duration_days = ?, description = ? WHERE id = ?",
-                    (name, price, duration_days, description, plan_id)
-                )
-                db.commit()
-                return db.cursor.rowcount > 0
-            except sqlite3.Error as e:
-                logging.error(f"SQLite error in update_plan: {e}")
-            finally:
-                db.close()
-        return False
+    def update_plan(self, plan_id: int, name: str, price: float, duration_days: int, description: str):
+        """Update an existing plan's details."""
+        try:
+            # Ensure both duration_days and legacy days are updated if applicable
+            self.db.execute("PRAGMA table_info(plans)")
+            cols = [c['name'] for c in self.db.fetchall()]
+            if 'days' in cols:
+                sql = "UPDATE plans SET name = ?, price = ?, duration_days = ?, days = ?, description = ? WHERE id = ?"
+                params = (name, price, duration_days, duration_days, description, plan_id)
+            else:
+                sql = "UPDATE plans SET name = ?, price = ?, duration_days = ?, description = ? WHERE id = ?"
+                params = (name, price, duration_days, description, plan_id)
+            self.db.execute(sql, params)
+            self.db.commit()
+            return self.db.cursor.rowcount > 0
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error in update_plan: {e}")
+            return False
 
-    @staticmethod
-    def delete_plan(plan_id: int):
+    def set_plan_visibility(self, plan_id: int, is_public: bool | None = None):
+        """Set the public visibility of a plan."""
+        try:
+            # If is_public is None, toggle the current value
+            if is_public is None:
+                self.db.execute("SELECT is_public FROM plans WHERE id = ?", (plan_id,))
+                row = self.db.fetchone()
+                if row is None:
+                    return False
+                is_public = not bool(row[0] if isinstance(row, tuple) else row['is_public'])
+            self.db.execute("UPDATE plans SET is_public = ? WHERE id = ?", (is_public, plan_id))
+            self.db.commit()
+            return self.db.cursor.rowcount > 0
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error in set_plan_visibility: {e}")
+            return False
+
+    def set_plan_activation(self, plan_id: int, is_active: bool | None = None):
+        """Set the activation status of a plan."""
+        try:
+            # If is_active is None, toggle the current value
+            if is_active is None:
+                self.db.execute("SELECT is_active FROM plans WHERE id = ?", (plan_id,))
+                row = self.db.fetchone()
+                if row is None:
+                    return False
+                is_active = not bool(row[0] if isinstance(row, tuple) else row['is_active'])
+            self.db.execute("UPDATE plans SET is_active = ? WHERE id = ?", (is_active, plan_id))
+            self.db.commit()
+            return self.db.cursor.rowcount > 0
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error in set_plan_activation: {e}")
+            return False
+
+    def delete_plan(self, plan_id: int):
         """Delete a plan from the database."""
-        db = Database()
-        if db.connect():
-            try:
-                db.execute("DELETE FROM plans WHERE id = ?", (plan_id,))
-                db.commit()
-                return db.cursor.rowcount > 0
-            except sqlite3.Error as e:
-                logging.error(f"SQLite error in delete_plan: {e}")
-            finally:
-                db.close()
-        return False
+        try:
+            self.db.execute("DELETE FROM plans WHERE id = ?", (plan_id,))
+            self.db.commit()
+            return self.db.cursor.rowcount > 0
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error in delete_plan: {e}")
+            return False
 
-    # -----------------------------------
-    # User search helper
-    # -----------------------------------
-    @staticmethod
-    def search_users(term: str):
-        """Search users by user_id numeric, username or part of full_name (case-insensitive). Returns list of rows."""
-        db = Database()
+    # ... (rest of the methods converted similarly) ...
+
+    def search_users(self, term: str):
+        """Search users by user_id, username, or full_name."""
         results = []
-        if db.connect():
-            try:
-                if term.isdigit():
-                    db.execute("SELECT user_id, full_name, username FROM users WHERE user_id = ?", (int(term),))
-                else:
-                    like_term = f"%{term}%"
-                    db.execute("SELECT user_id, full_name, username FROM users WHERE username LIKE ? OR full_name LIKE ?", (like_term, like_term))
-                results = db.fetchall()
-            except sqlite3.Error as e:
-                logging.error(f"SQLite error in search_users: {e}")
-            finally:
-                db.close()
+        try:
+            if term.isdigit():
+                self.db.execute("SELECT user_id, full_name, username FROM users WHERE user_id = ?", (int(term),))
+            else:
+                like_term = f"%{term}%"
+                self.db.execute("SELECT user_id, full_name, username FROM users WHERE username LIKE ? OR full_name LIKE ?", (like_term, like_term))
+            results = self.db.fetchall()
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error in search_users: {e}")
         return results
 
-    # -----------------------------------
-    # Payments helpers
-    # -----------------------------------
-    @staticmethod
-    def get_recent_payments(limit: int = 20):
-        """Return recent payment records ordered by created_at DESC."""
-        db = Database()
+    def get_recent_payments(self, limit: int = 20):
+        """Return recent payment records."""
         payments = []
-        if db.connect():
-            try:
-                db.execute("SELECT id, user_id, amount, payment_method, plan_id, status, created_at FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
-                payments = db.fetchall()
-            except sqlite3.Error as e:
-                logging.error(f"SQLite error in get_recent_payments: {e}")
-            finally:
-                db.close()
+        try:
+            self.db.execute("SELECT id, user_id, amount, payment_method, plan_id, status, created_at FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
+            payments = self.db.fetchall()
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error in get_recent_payments: {e}")
         return payments
 
-    # -----------------------------------
-    # Video file caching
-    # -----------------------------------
-    @staticmethod
-    def _ensure_video_table(db):
-        """Ensure the video_files table exists."""
+    def _ensure_video_table(self):
+        """Ensure the video_files table exists and has the correct schema."""
         create_sql = """
             CREATE TABLE IF NOT EXISTS video_files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,272 +192,228 @@ class DatabaseQueries:
                 telegram_file_id TEXT
             );
         """
-        # Create table if it doesn't exist
-        db.execute(create_sql)
-
-        # ------------------------------------------------------------------
-        # Lightweight schema-migration guard: make sure crucial columns exist
-        # ------------------------------------------------------------------
-        # Older versions of the bot may have created the table without the
-        # telegram_file_id column or UNIQUE constraint. We inspect the table
-        # schema at runtime and patch it if required so that inserts do not
-        # fail silently.
+        self.db.execute(create_sql)
         try:
-            db.execute("PRAGMA table_info(video_files)")
-            columns_info = db.fetchall()  # list[sqlite3.Row]
-            existing_columns = {row[1] for row in columns_info}
-
-            # Add telegram_file_id column if it's missing
+            self.db.execute("PRAGMA table_info(video_files)")
+            columns_info = self.db.fetchall()
+            existing_columns = {row['name'] for row in columns_info}
             if "telegram_file_id" not in existing_columns:
-                db.execute("ALTER TABLE video_files ADD COLUMN telegram_file_id TEXT")
+                self.db.execute("ALTER TABLE video_files ADD COLUMN telegram_file_id TEXT")
+            self.db.commit()
+        except sqlite3.Error as e:
+            logging.error(f"Error ensuring video table schema: {e}")
 
-            # Ensure file_name column is UNIQUE – if the column already exists
-            # but is not UNIQUE we cannot alter easily; in that rare case we
-            # leave it as-is because INSERT OR REPLACE will still work, but may
-            # store duplicates. A full migration would require copying data to a
-            # new table which is out of scope for a runtime patch.
-        finally:
-            # Persist any DDL changes before continuing
-            db.commit()
+    def get_video_file_id(self, file_name: str):
+        """Return cached telegram_file_id for a video filename."""
+        try:
+            self._ensure_video_table()
+            self.db.execute("SELECT telegram_file_id FROM video_files WHERE file_name = ?", (file_name,))
+            row = self.db.fetchone()
+            return row[0] if row else None
+        except sqlite3.Error as e:
+            logging.error(f"Error getting video file id: {e}")
+            return None
+
+    def save_video_file_id(self, file_name: str, file_id: str):
+        """Upsert telegram_file_id for a video filename."""
+        try:
+            self._ensure_video_table()
+            self.db.execute(
+                "INSERT OR REPLACE INTO video_files (file_name, telegram_file_id) VALUES (?, ?)",
+                (file_name, file_id),
+            )
+            self.db.commit()
+            return True
+        except sqlite3.Error as e:
+            logging.error(f"Error saving video file_id for {file_name}: {e}")
+            return False
+
+    # ------------------------------------------------------------------
+    # User existence / registration helpers (instance + static versions)
+    # ------------------------------------------------------------------
+    def user_exists(self, user_id):
+        """Instance method: check if a user exists."""
+        try:
+            self.db.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
+            return self.db.fetchone() is not None
+        except sqlite3.Error as e:
+            logging.error(f"Error checking if user exists: {e}")
+            return False
 
     @staticmethod
-    def get_video_file_id(file_name: str):
-        """Return cached telegram_file_id for a local video filename, or None."""
+    def user_exists_static(user_id):
+        """Static helper so that code can call DatabaseQueries.user_exists(user_id)."""
         db = Database()
         if db.connect():
             try:
-                DatabaseQueries._ensure_video_table(db)
-                db.execute("SELECT telegram_file_id FROM video_files WHERE file_name = ?", (file_name,))
-                row = db.fetchone()
-                return row[0] if row else None
-            finally:
-                db.close()
-        return None
-
-    @staticmethod
-    def save_video_file_id(file_name: str, file_id: str):
-        """Upsert telegram_file_id for a given video filename."""
-        db = Database()
-        if db.connect():
-            try:
-                DatabaseQueries._ensure_video_table(db)
-                # Use INSERT OR REPLACE for wider SQLite compatibility (<3.24 does not support ON CONFLICT ... DO UPDATE)
-                db.execute(
-                    "INSERT OR REPLACE INTO video_files (file_name, telegram_file_id) VALUES (?, ?)",
-                    (file_name, file_id),
-                )
-                db.commit()
-                return True
-            except Exception as e:
-                logging.error(f"Error saving video file_id for {file_name}: {e}")
+                db.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
+                return db.fetchone() is not None
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in user_exists_static: {e}")
             finally:
                 db.close()
         return False
 
-    # -----------------------------------
-    # User-related queries
-    @staticmethod
-    def user_exists(user_id):
-        """Check if a user exists in the database"""
-        db = Database()
-        if db.connect():
-            db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-            result = db.fetchone() is not None
-            db.close()
-            return result
-        return False
-    
-    @staticmethod
-    def add_user(user_id, username=None):
-        """Add a new user to the database"""
-        db = Database()
-        if db.connect():
+
+    def add_user(self, user_id, username=None):
+        """Add a new user."""
+        try:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            db.execute(
+            self.db.execute(
                 "INSERT INTO users (user_id, username, registration_date, last_activity) VALUES (?, ?, ?, ?)",
                 (user_id, username, now, now)
             )
-            db.commit()
-            db.close()
+            self.db.commit()
             return True
-        return False
-    
-    @staticmethod
-    def update_user_activity(user_id):
-        """Update user's last activity timestamp"""
-        db = Database()
-        if db.connect():
+        except sqlite3.Error as e:
+            logging.error(f"Error adding user: {e}")
+            return False
+
+    def update_user_activity(self, user_id):
+        """Update user's last activity timestamp."""
+        try:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            db.execute(
+            self.db.execute(
                 "UPDATE users SET last_activity = ? WHERE user_id = ?",
                 (now, user_id)
             )
-            db.commit()
-            db.close()
+            self.db.commit()
             return True
-        return False
-    
-    @staticmethod
-    def get_user_details(user_id):
-        """Get user details from database"""
-        db = Database()
-        if db.connect():
-            db.execute(
-                "SELECT * FROM users WHERE user_id = ?",
-                (user_id,)
+        except sqlite3.Error as e:
+            logging.error(f"Error updating user activity: {e}")
+            return False
+
+    def get_user_details(self, user_id):
+        """Get user details."""
+        try:
+            self.db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+            return self.db.fetchone()
+        except sqlite3.Error as e:
+            logging.error(f"Error getting user details: {e}")
+            return None
+
+    def update_user_profile(self, user_id, **kwargs):
+        """Update user profile information."""
+        allowed_fields = ['full_name', 'phone', 'email', 'education', 'city', 'age', 'occupation', 'birth_date']
+        updates = []
+        params = []
+        for key, value in kwargs.items():
+            if key in allowed_fields and value is not None:
+                updates.append(f"{key} = ?")
+                params.append(value)
+        
+        if not updates:
+            return False
+
+        query = f"UPDATE users SET {', '.join(updates)} WHERE user_id = ?"
+        params.append(user_id)
+        try:
+            self.db.execute(query, tuple(params))
+            self.db.commit()
+            return True
+        except sqlite3.Error as e:
+            logging.error(f"Error updating user profile: {e}")
+            return False
+
+    def update_user_single_field(self, user_id: int, field_name: str, value):
+        """Update a single field for a user."""
+        allowed_fields = ['full_name', 'phone', 'email', 'education', 'city', 'age', 'occupation', 'birth_date']
+        if field_name not in allowed_fields:
+            return False
+        
+        query = f"UPDATE users SET {field_name} = ? WHERE user_id = ?"
+        try:
+            self.db.execute(query, (value, user_id))
+            self.db.commit()
+            return True
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error when updating single field {field_name}: {e}")
+            return False
+
+    def add_user_activity_log(self, telegram_id: int, action_type: str, details: str = None, user_id: int = None):
+        """Add a user activity log."""
+        now = datetime.now().isoformat()
+        try:
+            self.db.execute(
+                "INSERT INTO user_activity_logs (user_id, telegram_id, action_type, timestamp, details) VALUES (?, ?, ?, ?, ?)",
+                (user_id, telegram_id, action_type, now, details)
             )
-            result = db.fetchone()
-            db.close()
-            return result
-        return None
-    
-    @staticmethod
-    def update_user_profile(user_id, full_name=None, phone=None, email=None, education=None, city=None, age=None, occupation=None, birth_date=None):
-        """Update user profile information"""
-        db = Database()
-        if db.connect():
-            updates = []
-            params = []
-            
-            if full_name is not None:
-                updates.append("full_name = ?")
-                params.append(full_name)
-            if phone is not None:
-                updates.append("phone = ?")
-                params.append(phone)
-            if email is not None:
-                updates.append("email = ?")
-                params.append(email)
-            if education is not None:
-                updates.append("education = ?")
-                params.append(education)
-            if city is not None:
-                updates.append("city = ?")
-                params.append(city)
-            if age is not None:
-                updates.append("age = ?")
-                params.append(age)
-            if occupation is not None:
-                updates.append("occupation = ?")
-                params.append(occupation)
-            if birth_date is not None:
-                updates.append("birth_date = ?")
-                params.append(birth_date)
-            
-            if updates:
-                query = f"UPDATE users SET {', '.join(updates)} WHERE user_id = ?"
-                params.append(user_id)
-                db.execute(query, tuple(params))
-                db.commit()
-                db.close()
-                return True
+            self.db.commit()
+            return True
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error when adding user activity log: {e}")
+            return False
+
+    def is_registered(self, user_id):
+        """Instance method: check if a user has completed registration."""
+        try:
+            self.db.execute("SELECT full_name, phone FROM users WHERE user_id = ?", (user_id,))
+            result = self.db.fetchone()
+            if result:
+                full_name_present = result['full_name'] is not None and str(result['full_name']).strip() != ""
+                phone_present = result['phone'] is not None and str(result['phone']).strip() != ""
+                return full_name_present and phone_present
+        except (sqlite3.Error, IndexError, KeyError) as e:
+            logging.error(f"Error checking registration status for user {user_id}: {e}")
         return False
 
     @staticmethod
-    def update_user_single_field(user_id: int, field_name: str, value):
-        """Update a single field for a user in the database."""
+    def is_registered_static(user_id):
+        """Static helper so that code can call DatabaseQueries.is_registered(user_id)."""
         db = Database()
         if db.connect():
-            # Ensure field_name is a valid column name to prevent SQL injection
-            # A whitelist of editable fields is a good practice
-            allowed_fields = ['full_name', 'phone', 'email', 'education', 'city', 'age', 'occupation', 'birth_date']
-            if field_name not in allowed_fields:
-                db.close()
-                # Optionally log this attempt or raise an error
-                return False
-            
-            query = f"UPDATE users SET {field_name} = ? WHERE user_id = ?"
             try:
-                db.execute(query, (value, user_id))
-                db.commit()
-                return True
-            except sqlite3.Error as e:
-                # Log the error e
-                print(f"SQLite error when updating single field {field_name}: {e}")
-                return False
-            finally:
-                db.close()
-        return False
-    
-    # User Activity Log queries
-    @staticmethod
-    def add_user_activity_log(telegram_id: int, action_type: str, details: str = None, user_id: int = None):
-        """Add a new user activity log to the database."""
-        db = Database()
-        if db.connect():
-            now = datetime.now().isoformat()
-            try:
-                db.execute(
-                    "INSERT INTO user_activity_logs (user_id, telegram_id, action_type, timestamp, details) VALUES (?, ?, ?, ?, ?)",
-                    (user_id, telegram_id, action_type, now, details)
-                )
-                db.commit()
-                return True
-            except sqlite3.Error as e:
-                print(f"SQLite error when adding user activity log: {e}") # Basic error logging
-                # Consider more robust logging for planion
-                return False
-            finally:
-                db.close()
-        return False
-
-    # Registration-related queries
-    @staticmethod
-    def is_registered(user_id):
-        """Check if a user has completed registration"""
-        db = Database()
-        if db.connect():
-            db.execute(
-                "SELECT full_name, phone FROM users WHERE user_id = ?",
-                (user_id,)
-            )
-            result = db.fetchone() # result is a sqlite3.Row object or None
-            db.close()
-            
-            if result: # Check if a row was returned
-                # Check if 'full_name' and 'phone' fields are present and not None/empty
-                # Assuming column names are 'full_name' and 'phone'
-                try:
-                    # Access by column name for sqlite3.Row
+                db.execute("SELECT full_name, phone FROM users WHERE user_id = ?", (user_id,))
+                result = db.fetchone()
+                if result:
                     full_name_present = result['full_name'] is not None and str(result['full_name']).strip() != ""
                     phone_present = result['phone'] is not None and str(result['phone']).strip() != ""
                     return full_name_present and phone_present
-                except (IndexError, KeyError):
-                    # Handle cases where columns might not exist, though schema should ensure this
-                    return False 
+            except (sqlite3.Error, IndexError, KeyError) as e:
+                logging.error(f"SQLite error in is_registered_static for user {user_id}: {e}")
+            finally:
+                db.close()
         return False
 
     @staticmethod
-    def create_crypto_payment_request(user_id: int, rial_amount: float, usdt_amount_requested: float = None, wallet_address: str = None, expires_at: datetime = None):
-        """
-        Creates a preliminary crypto payment request in the database.
-        'usdt_amount_requested' can be None initially and updated later.
-        Assumes 'payments' table has: user_id, amount (for rial), usdt_amount_requested,
-        payment_method, status, description, wallet_address, expires_at, created_at, updated_at.
+    def create_crypto_payment_request(user_id: int, rial_amount: float, usdt_amount_requested: float = None, wallet_address: str = None, expires_at: datetime = None, description: str = "Crypto payment"):
+        """Creates a preliminary crypto payment request.
+
+        Args:
+            user_id: The ID of the user making the payment
+            rial_amount: Amount in Rials
+            usdt_amount_requested: Optional amount in USDT
+            wallet_address: Wallet address for the crypto payment
+            expires_at: When this payment request expires
+            description: Optional payment description
+
+        Returns:
+            Integer payment_id if successful, None otherwise
         """
         db = Database()
         if db.connect():
             now_iso = datetime.now().isoformat()
-            expires_at_iso = expires_at.isoformat() if expires_at else None
+            # Set default expiration to 24 hours if not provided
+            expires_at_iso = expires_at.isoformat() if expires_at else (datetime.now() + timedelta(hours=24)).isoformat()
             
-            description = f"Crypto payment for user ID {user_id}"
-
             try:
+                # The multi-line string should not have extra indentation
                 db.execute(
                     """INSERT INTO payments (user_id, amount, usdt_amount_requested, payment_method, status, description, wallet_address, expires_at, created_at, updated_at)
                        VALUES (?, ?, ?, 'crypto', 'pending', ?, ?, ?, ?, ?)""",
                     (user_id, rial_amount, usdt_amount_requested, description, wallet_address, expires_at_iso, now_iso, now_iso)
                 )
-                payment_id = db.cursor.lastrowid # Corrected: Use cursor.lastrowid
+                payment_id = db.cursor.lastrowid
                 db.commit()
                 return payment_id
             except sqlite3.Error as e:
-                config.logger.error(f"SQLite error in create_crypto_payment_request: {e}") # Use logger
+                # Use the configured logger
+                config.logger.error(f"SQLite error in create_crypto_payment_request: {e}")
                 return None
             finally:
                 db.close()
         return None
-
+    
     @staticmethod
     def update_crypto_payment_request_with_amount(payment_request_id: int, usdt_amount: float):
         """
@@ -587,6 +575,64 @@ class DatabaseQueries:
             result = db.fetchall()
             db.close()
             return result
+        return []
+
+    @staticmethod
+    def get_subscription_stats():
+        """Calculates and returns subscription statistics."""
+        db = Database()
+        cursor = db.cursor
+
+        # Total registered users
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0]
+
+        # Active subscribers
+        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM subscriptions WHERE status = 'active'")
+        active_subscribers = cursor.fetchone()[0]
+
+        # Expired subscribers
+        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM subscriptions WHERE status != 'active'")
+        expired_subscribers = cursor.fetchone()[0]
+
+        # Total revenue
+        total_revenue_usdt = 0
+        total_revenue_irr = 0
+        try:
+            cursor.execute("SELECT SUM(usdt_amount_received) FROM crypto_payments WHERE status = 'paid'")
+            result = cursor.fetchone()[0]
+            total_revenue_usdt = result if result is not None else 0
+            
+            cursor.execute("SELECT SUM(amount) FROM payments WHERE status = 'paid' AND currency = 'IRR'")
+            result = cursor.fetchone()[0]
+            total_revenue_irr = result if result is not None else 0
+        except sqlite3.OperationalError:
+            pass
+
+        return {
+            "total_users": total_users,
+            "active_subscribers": active_subscribers,
+            "expired_subscribers": expired_subscribers,
+            "total_revenue_usdt": total_revenue_usdt,
+            "total_revenue_irr": total_revenue_irr,
+        }
+
+    @staticmethod
+    def get_all_registered_users():
+        """Fetch all users that have ever registered (row exists in users table). Returns list of rows with at least user_id column."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT user_id FROM users")
+                result = db.fetchall()
+                db.close()
+                return result
+            except sqlite3.Error as exc:
+                logging.error("SQLite error in get_all_registered_users: %s", exc)
+                if db.conn:
+                    db.conn.rollback()
+                db.close()
+                return []
         return []
 
     @staticmethod
@@ -903,7 +949,9 @@ class DatabaseQueries:
         if db.connect():
             try:
                 db.execute("SELECT * FROM plans WHERE id = ?", (plan_id,))
-                return db.fetchone()
+                result = db.fetchone()
+                db.close()
+                return result
             except sqlite3.Error as e:
                 logging.error(f"SQLite error in get_plan_by_id: {e}")
                 return None
@@ -911,12 +959,10 @@ class DatabaseQueries:
                 db.close()
         return None
 
-    # Backwards compatibility alias
     @staticmethod
     def get_plan(plan_id: int):
         return DatabaseQueries.get_plan_by_id(plan_id)
 
-    @staticmethod
     # ---- User Subscription Summary Helpers ----
     @staticmethod
     def _ensure_user_summary_columns():
@@ -1710,7 +1756,7 @@ class DatabaseQueries:
         db = Database()
         if db.connect():
             try:
-                query = "SELECT id, name, price FROM plans ORDER BY display_order"
+                query = "SELECT id, name, price, is_active, is_public FROM plans ORDER BY display_order"
                 if db.execute(query):
                     return db.fetchall()
             except sqlite3.Error as e:
