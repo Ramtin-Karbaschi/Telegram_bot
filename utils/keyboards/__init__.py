@@ -115,6 +115,10 @@ def get_subscription_plans_keyboard(telegram_id=None): # Added telegram_id as op
     active_plans = []
     for plan in all_active_plans:
         # sqlite3.Row objects are accessed by index or key, not with .get()
+        # Skip plans that are marked as private (is_public = 0)
+        if ('is_public' in plan.keys() and not plan['is_public']):
+            continue
+
         capacity = plan['capacity'] if 'capacity' in plan.keys() else None
         if capacity is not None:
             # Correctly count active subscriptions for the plan
