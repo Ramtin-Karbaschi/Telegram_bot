@@ -64,7 +64,7 @@ def is_admin(user_id: int, admin_ids_list: list[int]) -> bool:
     # So, a simple 'in' check is sufficient and more efficient.
     return user_id in admin_ids_list
 
-# --- Admin User Helper Functions ---
+# --- Admin & Support User Helper Functions ---
 
 def is_user_in_admin_list(user_id: int, admin_config: list | dict) -> bool:
     """
@@ -93,6 +93,36 @@ def get_alias_from_admin_list(user_id: int, admin_config: list | dict) -> str | 
         return admin_config.get(user_id)
     return None
 
+
+def staff_only_decorator(func):
+    """Decorator to allow access for admins *or* support staff."""
+    @wraps(func)
+    async def wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        from database.queries import DatabaseQueries
+        from telegram import CallbackQuery
+
+        if isinstance(update, CallbackQuery):
+            user = update.from_user
+        else:
+            user = getattr(update, 'effective_user', None)
+
+        user_id = user.id if user else None
+        is_admin_flag = False
+        if hasattr(self, 'admin_config'):
+            from utils.helpers import is_user_in_admin_list
+            is_admin_flag = user_id is not None and is_user_in_admin_list(user_id, self.admin_config)
+        is_support_flag = user_id is not None and DatabaseQueries.is_support_user(user_id)
+
+        if not (is_admin_flag or is_support_flag):
+            if update.effective_message:
+                await update.effective_message.reply_text("دسترسی محدود است.")
+            elif update.callback_query:
+                await update.callback_query.answer("شما اجازه دسترسی به این عمل را ندارید.", show_alert=True)
+            return
+        return await func(self, update, context, *args, **kwargs)
+    return wrapper
+
+# existing admin_only_decorator remains below
 
 def admin_only_decorator(func):
     """Decorator to restrict access to admins only. Assumes it's used on methods of a class
@@ -133,7 +163,7 @@ def is_user_registered(user_id: int) -> bool:
         print(f"Error checking user registration: {e}")
         return False
 
-# --- End of Admin User Helper Functions ---
+
 
 # --- Other Helper Functions ---
 
