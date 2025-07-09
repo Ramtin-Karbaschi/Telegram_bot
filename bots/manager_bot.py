@@ -17,8 +17,15 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, Forbidden
 import html
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
+from utils.expiration_reminder import (
+    get_expiring_subscriptions,
+    was_reminder_sent_today,
+    log_reminder_sent,
+)
 from database.queries import DatabaseQueries
-from utils.helpers import is_user_in_admin_list, get_alias_from_admin_list, admin_only_decorator as admin_only
+from utils.helpers import is_user_in_admin_list, get_alias_from_admin_list, admin_only_decorator as admin_only, staff_only_decorator as staff_only
 import config # For other config vars like CHANNEL_ID
 from database.models import Database as DBConnection # For DB connection
 from handlers.admin_ticket_handlers import AdminTicketHandler  # Fixed import
@@ -126,6 +133,16 @@ class ManagerBot:
 
         # Setup task handlers
         self.setup_tasks()
+        # Schedule expiration reminder task
+        self.logger.info("Scheduling daily expiration reminder job at 10:00 Asia/Tehran")
+        tz_tehran = ZoneInfo("Asia/Tehran")
+        self.application.job_queue.run_daily(
+            self.send_expiration_reminders,
+            time=time(10, 0, tzinfo=tz_tehran),
+            name="daily_expiration_reminders",
+        )
+        # Also run once 30s after startup to cover downtime
+        self.application.job_queue.run_once(self.send_expiration_reminders, when=30)
         # Setup command and message handlers
         self.setup_handlers()
 
@@ -271,6 +288,37 @@ class ManagerBot:
 
         return was_member, is_member
 
+    async def send_expiration_reminders(self, context: ContextTypes.DEFAULT_TYPE | None = None):
+        """Send daily reminders for subscriptions expiring within 5 days."""
+        bot = context.bot if context else self.application.bot
+        tz_tehran = ZoneInfo("Asia/Tehran")
+        today = datetime.now(tz_tehran).date()
+        subs = get_expiring_subscriptions(days=5)
+        for sub in subs:
+            end_date = datetime.fromisoformat(sub["end_date"]).date()
+            days_left = (end_date - today).days
+            if days_left < 0 or days_left > 5:
+                continue
+            user_id = sub["user_id"]
+            if was_reminder_sent_today(user_id, days_left):
+                self.logger.info(
+                    f"Skipping reminder for user {user_id}, already sent today for {days_left} days left."
+                )
+                continue
+            message = (
+                "اشتراک شما امروز به پایان می‌رسد! 🎯" if days_left == 0 else f"تنها {days_left} روز تا پایان اشتراک شما باقی‌ست ⏰"
+            )
+            try:
+                await bot.send_message(chat_id=user_id, text=message)
+                log_reminder_sent(user_id, days_left)
+                self.logger.info(
+                    f"Sent expiration reminder to user {user_id} (days left: {days_left})"
+                )
+            except Forbidden:
+                self.logger.warning(f"Cannot send reminder to user {user_id} (bot blocked or user privacy).")
+            except Exception as exc:
+                self.logger.error(f"Error sending reminder to {user_id}: {exc}")
+
     async def stop(self):
         """Stop the bot"""
         self.logger.info("Stopping Manager Bot")
@@ -283,19 +331,26 @@ class ManagerBot:
 
 
     # --- Command Handlers ---
-    @admin_only
+    @staff_only
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle the /start command for admin users and serves as the main menu."""
         user = update.effective_user
         admin_alias = get_alias_from_admin_list(user.id, self.admin_config) or user.first_name
         self.logger.info(f"Admin user {admin_alias} ({user.id}) accessed the main menu.")
 
-        keyboard = [
-            [KeyboardButton(self.menu_handler.button_texts['users']), KeyboardButton(self.menu_handler.button_texts['products'])],
-            [KeyboardButton(self.menu_handler.button_texts['tickets']), KeyboardButton(self.menu_handler.button_texts['payments'])],
-            [KeyboardButton(self.menu_handler.button_texts['broadcast']), KeyboardButton(self.menu_handler.button_texts['stats'])],
-            [KeyboardButton(self.menu_handler.button_texts['settings']), KeyboardButton(self.menu_handler.button_texts['back_to_main'])],
-        ]
+        is_admin_flag = is_user_in_admin_list(user.id, self.admin_config)
+        if is_admin_flag:
+            keyboard = [
+                [KeyboardButton(self.menu_handler.button_texts['users']), KeyboardButton(self.menu_handler.button_texts['products'])],
+                [KeyboardButton(self.menu_handler.button_texts['tickets']), KeyboardButton(self.menu_handler.button_texts['payments'])],
+                [KeyboardButton(self.menu_handler.button_texts['broadcast']), KeyboardButton(self.menu_handler.button_texts['stats'])],
+                [KeyboardButton(self.menu_handler.button_texts['settings']), KeyboardButton(self.menu_handler.button_texts['back_to_main'])],
+            ]
+        else:
+            keyboard = [
+                [KeyboardButton(self.menu_handler.button_texts['tickets']), KeyboardButton(self.menu_handler.button_texts['payments'])],
+                [KeyboardButton(self.menu_handler.button_texts['back_to_main'])],
+            ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
         await update.effective_message.reply_text(
@@ -303,7 +358,7 @@ class ManagerBot:
             reply_markup=reply_markup
         )
 
-    @admin_only
+    @staff_only
     async def view_tickets_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Display open tickets to admins."""
         user = update.effective_user
@@ -335,7 +390,7 @@ class ManagerBot:
             
             keyboard = []
             for ticket in open_tickets:
-                keyboard.append([InlineKeyboardButton(f"مشاهده تیکت {ticket['id']} ({ticket['subject']})", callback_data=f"view_ticket_{ticket['id']}")])
+                keyboard.append([InlineKeyboardButton(f"تیکت{ticket['id']} ({ticket['subject']})", callback_data=f"view_ticket_{ticket['id']}")])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(response_message, reply_markup=reply_markup)
