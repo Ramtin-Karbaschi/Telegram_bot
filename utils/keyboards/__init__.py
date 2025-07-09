@@ -63,9 +63,11 @@ def get_main_menu_keyboard(user_id=None, is_admin=False, is_registered=False):
     return InlineKeyboardMarkup(keyboard_buttons)
 
 
-def get_back_button(text="↩ بازگشت"):
-    """Get a single back button"""
+def get_back_button(text="↩ بازگشت", include_cancel: bool = False):
+    """Return a ReplyKeyboardMarkup with a back button and optional cancel button."""
     keyboard = [[KeyboardButton(text)]]
+    if include_cancel:
+        keyboard.append([KeyboardButton("❌ لغو")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_contact_button():
@@ -174,29 +176,16 @@ def get_back_to_payment_methods_button():
     """Get a button to go back to payment methods"""
     return InlineKeyboardButton("↩ بازگشت به روش‌های پرداخت", callback_data="back_to_payment_methods")
 
-def get_support_menu_keyboard(tickets=None):
-    """Get keyboard for support menu"""
-    keyboard = []
-    
-    # Add open tickets if available
-    if tickets:
-        for ticket in tickets[:5]:  # Show max 5 tickets
-            ticket_id = ticket['id']
-            subject = ticket['subject']
-            # Truncate subject if too long
-            if len(subject) > 20:
-                subject = subject[:18] + "..."
-            keyboard.append([
-                InlineKeyboardButton(f"#{ticket_id}: {subject}", callback_data=f"view_ticket_{ticket_id}")
-            ])
-    
-    # Add new ticket button
-    keyboard.append([InlineKeyboardButton("🎫 تیکت جدید", callback_data="new_ticket")])
-    
-    # Add back button
-    keyboard.append([InlineKeyboardButton("↩ بازگشت به منوی اصلی", callback_data="back_to_main")])
-    
+def get_support_menu_keyboard(_tickets=None):
+    """Return support menu keyboard with only new ticket, history and back buttons."""
+    keyboard = [
+        [InlineKeyboardButton("🎫 تیکت جدید", callback_data="new_ticket"),
+         InlineKeyboardButton("📜 تاریخچه تیکت‌ها", callback_data="ticket_history")],
+        [InlineKeyboardButton("↩ بازگشت به منوی اصلی", callback_data="back_to_main")]
+    ]
     return InlineKeyboardMarkup(keyboard)
+    
+
 
 def get_profile_edit_menu_keyboard(user_id):
     """Get keyboard for profile editing field selection."""
@@ -215,7 +204,7 @@ def get_profile_edit_menu_keyboard(user_id):
     # The field names ('full_name', 'birth_year', etc.) are based on the callback constants.
     keyboard = [
         [InlineKeyboardButton(get_button_text('full_name', "نام و نام خانوادگی"), callback_data=constants.CALLBACK_PROFILE_EDIT_FULLNAME)],
-        [InlineKeyboardButton(get_button_text('birth_year', "سال تولد"), callback_data=constants.CALLBACK_PROFILE_EDIT_BIRTHYEAR)],
+        [InlineKeyboardButton(get_button_text('birth_date', "تاریخ تولد"), callback_data=constants.CALLBACK_PROFILE_EDIT_BIRTHYEAR)],
         [InlineKeyboardButton(get_button_text('education', "میزان تحصیلات"), callback_data=constants.CALLBACK_PROFILE_EDIT_EDUCATION)],
         [InlineKeyboardButton(get_button_text('occupation', "حیطه فعالیت"), callback_data=constants.CALLBACK_PROFILE_EDIT_OCCUPATION)],
         [InlineKeyboardButton(get_button_text('phone', "شماره همراه"), callback_data=constants.CALLBACK_PROFILE_EDIT_PHONE)],
