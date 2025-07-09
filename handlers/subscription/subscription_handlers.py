@@ -264,50 +264,40 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
 
     # Initialize with defaults
     full_name = 'ثبت نشده'
-    birth_year_str = None
+    birth_date_str = None
     education = 'ثبت نشده'
     occupation = 'ثبت نشده'
     phone = 'ثبت نشده'
 
-    if user_details: 
-        try:
-            _full_name = user_details['full_name']
-            full_name = _full_name if _full_name else 'ثبت نشده'
-        except KeyError:
-            full_name = 'ثبت نشده'
+    if user_details:
+        user_dict = dict(user_details)
 
-        try:
-            birth_year_str = user_details['birth_year']
-            if not birth_year_str: # Handles None or empty string from DB
-                birth_year_str = None
-        except KeyError:
-            birth_year_str = None
+        _full_name = user_dict.get('full_name')
+        full_name = _full_name if _full_name else 'ثبت نشده'
 
-        try:
-            _education = user_details['education']
-            education = _education if _education else 'ثبت نشده'
-        except KeyError:
-            education = 'ثبت نشده'
+        birth_date_str = user_dict.get('birth_date') or None  # Handles missing, None, or empty string
 
-        try:
-            _occupation = user_details['occupation']
-            occupation = _occupation if _occupation else 'ثبت نشده'
-        except KeyError:
-            occupation = 'ثبت نشده'
+        _education = user_dict.get('education')
+        education = _education if _education else 'ثبت نشده'
 
-        try:
-            _phone = user_details['phone']
-            phone = _phone if _phone else 'ثبت نشده'
-        except KeyError:
-            phone = 'ثبت نشده'
+        _occupation = user_dict.get('occupation')
+        occupation = _occupation if _occupation else 'ثبت نشده'
+
+        _phone = user_dict.get('phone')
+        phone = _phone if _phone else 'ثبت نشده'
 
     age_str = "ثبت نشده"
-    if birth_year_str:
+    if birth_date_str:
         try:
-            current_year = jdatetime.datetime.now().year
-            age = current_year - int(birth_year_str)
-            age_str = f"{age} سال"
-        except ValueError:
+            import re
+            parts = re.split(r"[/-]", birth_date_str)
+            if len(parts) == 3:
+                year, month, day = map(int, parts)
+                birth_jdate = jdatetime.date(year, month, day)
+                today_jdate = jdatetime.date.today()
+                age = today_jdate.year - birth_jdate.year - ((today_jdate.month, today_jdate.day) < (birth_jdate.month, birth_jdate.day))
+                age_str = f"{age} سال"
+        except Exception:
             age_str = "خطا در محاسبه"
 
     profile_info_parts = [
