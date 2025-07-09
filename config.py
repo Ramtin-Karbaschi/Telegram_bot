@@ -115,6 +115,12 @@ NOBITEX_API_KEY = os.getenv("NOBITEX_API_KEY", "") # API key for Nobitex
 if not NOBITEX_API_KEY:
     logger.info("NOBITEX_API_KEY not set or empty in .env. Price fetching from Nobitex might fail if API key is required.")
 
+# Aban Tether API (for USDT price)
+ABANTETHER_API_BASE_URL = os.getenv("ABANTETHER_API_BASE_URL", "https://abantether.com/api/v1")
+ABANTETHER_API_KEY = os.getenv("ABANTETHER_API_KEY", "")  # API key for Aban Tether
+if not ABANTETHER_API_KEY:
+    logger.info("ABANTETHER_API_KEY not set or empty in .env. Price fetching from AbanTether might fail if API key is required.")
+
 # Crypto payment settings
 TETHER_WALLET_ADDRESS = os.getenv("TETHER_WALLET_ADDRESS")
 if not TETHER_WALLET_ADDRESS:
