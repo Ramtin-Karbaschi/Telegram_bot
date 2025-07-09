@@ -136,7 +136,7 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
             live_usdt_price = convert_irr_to_usdt(final_price, usdt_rate/10)
             context.user_data['live_usdt_price'] = live_usdt_price
 
-    plan_price_usdt_formatted = f"{live_usdt_price:.4f}" if live_usdt_price is not None else "N/A"
+    plan_price_usdt_formatted = f"{live_usdt_price:.5f}" if live_usdt_price is not None else "N/A"
     message_text = PAYMENT_METHOD_MESSAGE.format(
         plan_name=selected_plan.get('name', 'N/A'),
         plan_price=plan_price_irr_formatted,
@@ -570,7 +570,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
         payment_info_text = CRYPTO_PAYMENT_UNIQUE_AMOUNT_MESSAGE.format(
             wallet_address=CRYPTO_WALLET_ADDRESS,
-            usdt_amount=f"{usdt_amount_requested:.4f}",
+            usdt_amount=f"{usdt_amount_requested:.5f}",
             timeout_minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES
         )
 
@@ -903,7 +903,7 @@ async def show_qr_code_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_photo(
             chat_id=telegram_id,
             photo=qr_image_bytes,
-            caption=f"آدرس کیف پول (TRC20):\n`{wallet_address}`\n\nمبلغ: `{usdt_amount:.6f}` USDT (در صورت نمایش در QR)\n\nاسکن کنید:"
+            caption=f"آدرس کیف پول (TRC20):\n`{wallet_address}`\n\nمبلغ: `{usdt_amount:.5f}` USDT (در صورت نمایش در QR)\n\nاسکن کنید:"
         )
         UserAction.log_user_action(telegram_id, action_type='qr_code_displayed', details={'crypto_payment_request_id': crypto_payment_request_db_id})
     except Exception as e:
@@ -1066,14 +1066,15 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
     if rial_price:
         usdt_rate = await get_usdt_to_irr_rate() # Fetches live rate from Nobitex/Coingecko
         if usdt_rate:
-            live_usdt_price = convert_irr_to_usdt(rial_price, usdt_rate)
+            # نرخ دریافتی از get_usdt_to_irr_rate به ریال است؛ برای تبدیل به تومان باید تقسیم بر ۱۰ شود.
+            live_usdt_price = convert_irr_to_usdt(rial_price, usdt_rate/10)
             context.user_data['live_usdt_price'] = live_usdt_price # Store for crypto payment step
         else:
             logger.warning(f"User {update.effective_user.id}: Could not fetch USDT rate in back_to_payment_methods_handler.")
     else:
         logger.warning(f"User {update.effective_user.id}: Rial price missing for plan {selected_plan.get('id')} in back_to_payment_methods_handler.")
 
-    plan_price_usdt_formatted = f"{live_usdt_price:.4f}" if live_usdt_price is not None else "N/A"
+    plan_price_usdt_formatted = f"{live_usdt_price:.5f}" if live_usdt_price is not None else "N/A"
     message_text = PAYMENT_METHOD_MESSAGE.format(
         plan_name=selected_plan.get('name', 'N/A'),
         plan_price=plan_price_irr_formatted,
@@ -1209,6 +1210,44 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
     return SELECT_PAYMENT_METHOD
 
 
+
+# ================= Crypto Transaction Verification =================
+async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Verifies USDT (TRC20) payment via TronGrid when user presses the corresponding button."""
+    query = update.callback_query
+    await query.answer()
+    telegram_id = update.effective_user.id
+
+    crypto_payment_id = context.user_data.get('crypto_payment_id')
+    if not crypto_payment_id:
+        await query.message.reply_text("خطا: پرداختی برای بررسی یافت نشد.")
+        return VERIFY_PAYMENT
+
+    payment_record = Database.get_payment_by_id(crypto_payment_id)
+    if not payment_record:
+        await query.message.reply_text("خطا: اطلاعات پرداخت در پایگاه‌داده یافت نشد.")
+        return VERIFY_PAYMENT
+
+    expected_usdt = payment_record['usdt_amount_requested']
+    wallet_address = payment_record.get('wallet_address') or config.CRYPTO_WALLET_ADDRESS
+    created_at_str = payment_record['created_at']
+    created_at = datetime.fromisoformat(created_at_str) if isinstance(created_at_str, str) else created_at_str
+
+    verified, tx_hash = CryptoPaymentService.verify_payment(expected_usdt, created_at, wallet_address)
+    if verified:
+        # Update DB status
+        Database.update_crypto_payment_on_success(payment_record['payment_id'], tx_hash, expected_usdt)
+        # TODO: Activate the purchased plan here, similar to Rial flow
+        await query.message.edit_text(
+            text=f"✅ تراکنش شما تأیید شد.\nشناسه تراکنش:\n<code>{tx_hash}</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_main_menu_keyboard(telegram_id)
+        )
+        return ConversationHandler.END
+    else:
+        await query.message.reply_text("هنوز تراکنشی با مبلغ مورد نظر یافت نشده است. چند دقیقه دیگر دوباره امتحان کنید.")
+        return VERIFY_PAYMENT
+
 payment_conversation = ConversationHandler(
     entry_points=[
         CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'),
@@ -1234,6 +1273,7 @@ payment_conversation = ConversationHandler(
         ],
         VERIFY_PAYMENT: [
             CallbackQueryHandler(verify_payment_status, pattern='^payment_verify$'),
+            CallbackQueryHandler(payment_verify_crypto_handler, pattern='^payment_verify_crypto$'),
             CallbackQueryHandler(payment_verify_zarinpal_handler, pattern=f'^{VERIFY_ZARINPAL_PAYMENT_CALLBACK}$'),
             CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$'),
             MessageHandler(filters.Regex(r"^(🎫 خرید محصولات)$"), start_subscription_flow),
