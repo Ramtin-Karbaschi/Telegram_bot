@@ -15,7 +15,7 @@ from telegram.ext import (
 from database.queries import DatabaseQueries
 from utils import constants
 from utils import keyboards
-from utils.validators import is_valid_persian_birth_year
+from utils.validators import is_valid_persian_birth_date, parse_persian_birth_date
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Explicitly set level for this specific logger
@@ -26,7 +26,7 @@ async def _update_profile_field(user_id: int, field_name_key: str, new_value, co
     if field_name_key == constants.EDIT_FULL_NAME:
         actual_field_name_in_db = 'full_name'
     elif field_name_key == constants.EDIT_BIRTH_YEAR:
-        actual_field_name_in_db = 'birth_year'
+        actual_field_name_in_db = 'birth_date'
     elif field_name_key == constants.EDIT_EDUCATION:
         actual_field_name_in_db = 'education'
     elif field_name_key == constants.EDIT_OCCUPATION:
@@ -157,7 +157,7 @@ async def ask_edit_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return constants.EDIT_PHONE
 
 async def _handle_text_or_contact_input(update: Update, context: ContextTypes.DEFAULT_TYPE, 
-                                        is_valid_value_func=None, error_message=None, 
+                                        is_valid_value_func=None, error_message=None, transform_value_func=None,
                                         success_field_name_override=None) -> str:
     user_id = update.effective_user.id
     message = update.message
@@ -176,6 +176,15 @@ async def _handle_text_or_contact_input(update: Update, context: ContextTypes.DE
         await message.reply_text("یک خطای داخلی رخ داده است. لطفاً مجدداً تلاش کنید.", reply_markup=keyboards.get_main_menu_keyboard())
         context.user_data.clear()
         return ConversationHandler.END
+
+    # Apply optional transform BEFORE validation if provided
+    if transform_value_func:
+        transformed = transform_value_func(new_value)
+        # If transform returned None consider invalid
+        if transformed is None:
+            new_value = new_value  # keep original for error msg
+        else:
+            new_value = transformed
 
     if is_valid_value_func and not is_valid_value_func(new_value):
         current_state_reply_markup = keyboards.get_edit_field_action_keyboard()
@@ -236,9 +245,10 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_birthyear_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     return await _handle_text_or_contact_input(update, context, 
-                                             is_valid_value_func=is_valid_persian_birth_year, 
+                                             is_valid_value_func=is_valid_persian_birth_date,
+                                             transform_value_func=parse_persian_birth_date,
                                              error_message=constants.PROFILE_INVALID_BIRTHYEAR,
-                                             success_field_name_override="سال تولد")
+                                             success_field_name_override="تاریخ تولد")
 
 async def _handle_callback_query_input(update: Update, context: ContextTypes.DEFAULT_TYPE, data_prefix: str, success_field_name_override=None) -> str:
     query = update.callback_query
