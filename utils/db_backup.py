@@ -51,6 +51,7 @@ import json
 import logging
 import sqlite3
 from io import BytesIO
+import pandas as pd
 from typing import Dict, List, Any
 
 from database.models import Database
@@ -94,5 +95,55 @@ def export_database() -> BytesIO | None:
                 data[table] = []
         json_bytes = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
         return BytesIO(json_bytes)
+    finally:
+        db.close()
+
+
+def export_database_excel() -> BytesIO | None:
+    if pd is None:  # pandas missing
+        logger.error("pandas package is required for Excel backup. Install with 'pip install pandas xlsxwriter'.")
+        return None
+    """Export all DB tables to an Excel (.xlsx) workbook using pandas.
+Each table is written to a separate sheet for easier analysis."""
+    db = Database()
+    if not db.connect():
+        return None
+
+    try:
+        db.conn.row_factory = sqlite3.Row  # type: ignore[attr-defined]
+        cursor = db.cursor
+
+        # Choose Excel writer engine dynamically
+        try:
+            import xlsxwriter  # noqa: F401
+            engine_name = "xlsxwriter"
+        except ImportError:
+            try:
+                import openpyxl  # noqa: F401
+                engine_name = "openpyxl"
+            except ImportError:
+                logger.error("Neither 'xlsxwriter' nor 'openpyxl' is installed. Install one of them to enable Excel backup.")
+                return None
+        bio = BytesIO()
+        with pd.ExcelWriter(bio, engine=engine_name) as writer:
+            for create_sql in ALL_TABLES:
+                table = _table_name_from_sql(create_sql)
+                try:
+                    cursor.execute(f"SELECT * FROM {table}")
+                    rows = cursor.fetchall()
+                except sqlite3.Error as exc:
+                    logger.error("Failed to read table %s: %s", table, exc)
+                    rows = []
+
+                if rows:
+                    df = pd.DataFrame([dict(r) for r in rows])
+                else:
+                    # create empty df with no rows but keep columns if possible
+                    df = pd.DataFrame()
+                df.to_excel(writer, sheet_name=table[:31], index=False)
+
+        bio.name = "db_backup.xlsx"
+        bio.seek(0)
+        return bio
     finally:
         db.close()
