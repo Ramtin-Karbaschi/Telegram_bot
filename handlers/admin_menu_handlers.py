@@ -12,7 +12,7 @@ from utils.helpers import staff_only_decorator as staff_only
 from utils.helpers import is_user_in_admin_list
 from utils.invite_link_manager import InviteLinkManager
 from database.free_plan_helper import ensure_free_plan
-from utils.db_backup import export_database
+from utils.db_backup import export_database, export_database_excel
 
 from .admin_product_handlers import AdminProductHandler
 from .admin_support_handlers import SupportUserManager
@@ -76,7 +76,8 @@ class AdminMenuHandler:
     @staff_only
     async def route_admin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Routes admin commands from ReplyKeyboardMarkup clicks."""
-        command_text = update.message.text
+        from utils.locale_utils import fa_to_en_digits  # localized digit support
+        command_text = fa_to_en_digits(update.message.text)
         user_id = update.effective_user.id if update.effective_user else None
         is_admin_flag = user_id is not None and is_user_in_admin_list(user_id, self.admin_config)
         support_allowed_labels = {self.button_texts['tickets'], self.button_texts['payments'], self.button_texts['back_to_main']}
@@ -148,7 +149,8 @@ class AdminMenuHandler:
     BROADCAST_ALL = "broadcast_all"
     SETTINGS_MENU = "admin_settings_menu"
     PRODUCTS_MENU = "admin_products_menu"
-    BACKUP_CALLBACK = "settings_backup"
+    BACKUP_CALLBACK = "settings_backup_json"
+    BACKUP_XLSX_CALLBACK = "settings_backup_xlsx"
     SUPPORT_MENU = "settings_support_users"
     SUPPORT_ADD = "settings_support_add"
     SUPPORT_LIST = "settings_support_list"
@@ -265,6 +267,13 @@ class AdminMenuHandler:
             await self.ban_unban_start(update, context)
         # ----- Payments submenu actions -----
         elif data == "payments_recent":
+                await self._show_recent_payments_inline(query)
+        elif data.startswith("payment_info_"):
+            pid = data.split("_", 2)[2]
+            await self._show_payment_details(query, pid)
+        elif data == "payments_search":
+            await query.edit_message_text("🔎 لطفاً شناسه پرداخت یا هش تراکنش را ارسال کنید:")
+            context.user_data["awaiting_payment_search"] = True
             await self._show_recent_payments(query)
         elif data == "payments_stats":
             await self._show_payments_stats(query)
@@ -308,14 +317,22 @@ class AdminMenuHandler:
         elif data == "settings_admins":
             await self._show_admins_settings(query)
         elif data == self.BACKUP_CALLBACK:
-            # generate and send db backup JSON
+            # generate and send JSON backup
             bio = export_database()
             if bio:
                 bio.seek(0)
                 await context.bot.send_document(chat_id=query.from_user.id, document=bio, filename="db_backup.json")
-                await query.answer("📤 بکاپ ارسال شد")
+                await query.answer("📤 بکاپ JSON ارسال شد")
             else:
-                await query.answer("❌ خطا در تهیه بکاپ", show_alert=True)
+                await query.answer("❌ خطا در تهیه بکاپ JSON", show_alert=True)
+        elif data == self.BACKUP_XLSX_CALLBACK:
+            bio = export_database_excel()
+            if bio:
+                bio.seek(0)
+                await context.bot.send_document(chat_id=query.from_user.id, document=bio, filename="db_backup.xlsx")
+                await query.answer("📤 بکاپ اکسل ارسال شد")
+            else:
+                await query.answer("❌ خطا در تهیه بکاپ اکسل", show_alert=True)
         elif data == self.SUPPORT_MENU:
             await self._settings_support_submenu(query)
         elif data == self.SUPPORT_ADD:
@@ -389,9 +406,10 @@ class AdminMenuHandler:
 
     async def _payments_submenu(self, query):
         keyboard = [
-            [InlineKeyboardButton("💰 تراکنش‌های اخیر", callback_data="payments_recent"), InlineKeyboardButton("📈 آمار اشتراک‌ها", callback_data="payments_stats")],
-            [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
-        ]
+             [InlineKeyboardButton("💰 تراکنش‌های اخیر", callback_data="payments_recent")],
+             [InlineKeyboardButton("🔍 جستجوی پرداخت", callback_data="payments_search"), InlineKeyboardButton("📈 آمار اشتراک‌ها", callback_data="payments_stats")],
+             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
+         ]
         await query.edit_message_text("💳 *مدیریت پرداخت‌ها*:\nچه کاری می‌خواهید انجام دهید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _broadcast_submenu(self, query):
@@ -567,7 +585,7 @@ class AdminMenuHandler:
             [InlineKeyboardButton("🔐 تنظیم مدیران", callback_data="settings_admins"), InlineKeyboardButton("⚙️ سایر تنظیمات", callback_data="settings_misc")],
             [InlineKeyboardButton("👥 مدیریت پشتیبان‌ها", callback_data=self.SUPPORT_MENU)],
             [InlineKeyboardButton("💸 مدیریت کدهای تخفیف", callback_data="discounts_menu")],
-            [InlineKeyboardButton("💾 بکاپ JSON دیتابیس", callback_data=self.BACKUP_CALLBACK)],
+                        [InlineKeyboardButton("💾 بکاپ JSON دیتابیس", callback_data=self.BACKUP_CALLBACK), InlineKeyboardButton("📊 بکاپ Excel دیتابیس", callback_data=self.BACKUP_XLSX_CALLBACK)],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text("⚙️ *تنظیمات ربات*:\nکدام بخش را می‌خواهید مدیریت کنید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -865,6 +883,41 @@ class AdminMenuHandler:
         return
 
     # ---------- Payments helpers ----------
+    async def _show_recent_payments_inline(self, query):
+        """Show recent payments with inline buttons for quick details."""
+        payments = DatabaseQueries.get_recent_payments(20)
+        if not payments:
+            await query.edit_message_text("📄 پرداختی یافت نشد.")
+            return
+        keyboard = []
+        for p in payments:
+            pid = p[0] if isinstance(p, (list, tuple)) else p.get('id')
+            amount = p[2] if isinstance(p, (list, tuple)) else p.get('amount_rial')
+            status = p[6] if isinstance(p, (list, tuple)) else p.get('status')
+            created_at = p[7] if isinstance(p, (list, tuple)) else p.get('created_at')
+            text = f"#{pid} | {amount:,} | {status} | {str(created_at)[:10]}"
+            keyboard.append([InlineKeyboardButton(text, callback_data=f"payment_info_{pid}")])
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data=self.PAYMENTS_MENU)])
+        await query.edit_message_text("💰 *۲۰ تراکنش اخیر:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def _show_payment_details(self, query, payment_id: str):
+        """Display details and history of a single payment."""
+        db = DatabaseQueries()
+        rec = db.get_payment(payment_id) or db.get_crypto_payment_by_payment_id(payment_id)
+        if not rec:
+            await query.edit_message_text("❌ پرداختی با این شناسه یافت نشد.")
+            return
+        # Build message
+        lines = [f"🧾 *جزئیات پرداخت* #{payment_id}"]
+        for k, v in dict(rec).items():
+            lines.append(f"• {k}: {v}")
+        history = db.get_payment_status_history(payment_id)
+        if history:
+            lines.append("\n📜 *تاریخچه وضعیت:*")
+            for h in history:
+                lines.append(f"→ {h['changed_at']} | {h['old_status']} ➜ {h['new_status']} | {h['note'] or ''}")
+        keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="payments_recent")]]
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
     async def _show_recent_payments(self, query):
         payments = DatabaseQueries.get_recent_payments(20)
         if not payments:
