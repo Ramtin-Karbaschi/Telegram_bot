@@ -124,7 +124,7 @@ class AdminMenuHandler:
                 f"کل کاربران: {stats.get('total_users', 'N/A')}\n"
                 f"کاربران فعال: {stats.get('active_subscribers', 'N/A')}\n"
                 f"درآمد کل (تتر): {stats.get('total_revenue_usdt', 0):.2f} USDT\n"
-                f"درآمد کل (ریال): {stats.get('total_revenue_irr', 0):,} IRR"
+                f"درآمد کل (ریال): {int(stats.get('total_revenue_irr', 0)):,} ریال"
             )
         else:
             message_text = "آماری برای نمایش وجود ندارد."
