@@ -143,8 +143,25 @@ class Database:
             return payment_id
         return None
 
+    def log_payment_status_change(self, payment_id: str, old_status: str | None, new_status: str, note: str | None = None, changed_by: str = 'bot'):
+        """Insert a status change row into payment_status_history table."""
+        query = """
+            INSERT INTO payment_status_history (payment_id, old_status, new_status, changed_by, note)
+            VALUES (?, ?, ?, ?, ?)
+        """
+        params = (payment_id, old_status, new_status, changed_by, note)
+        if self.execute(query, params):
+            self.commit()
+            return True
+        return False
+
     def update_crypto_payment_on_success(self, payment_id, transaction_id, usdt_amount_received):
         """Updates a crypto payment record upon successful confirmation."""
+        # --- Fetch current status for audit ---
+        self.execute("SELECT status FROM crypto_payments WHERE payment_id = ?", (payment_id,))
+        row = self.fetchone()
+        old_status = row['status'] if row else None
+
         query = """
             UPDATE crypto_payments 
             SET transaction_id = ?, usdt_amount_received = ?, status = 'paid', updated_at = ?
@@ -153,7 +170,11 @@ class Database:
         params = (transaction_id, usdt_amount_received, datetime.now(), payment_id)
         if self.execute(query, params):
             self.commit()
-            return self.cursor.rowcount > 0
+            rows = self.cursor.rowcount
+            if rows:
+                # log status change
+                self.log_payment_status_change(payment_id, old_status, 'paid', note=f'Tx {transaction_id}')
+            return rows > 0
         return False
 
     def get_crypto_payment_by_payment_id(self, payment_id):
@@ -180,6 +201,13 @@ class Database:
         if self.execute(query, (user_id, usdt_amount_requested, datetime.now())):
             return self.fetchone()
         return None
+
+    def get_payment_status_history(self, payment_id: str):
+        """Return chronological status history rows for a payment_id."""
+        query = "SELECT * FROM payment_status_history WHERE payment_id = ? ORDER BY changed_at"
+        if self.execute(query, (payment_id,)):
+            return self.fetchall()
+        return []
 
     def get_expired_pending_payments(self):
         """Retrieves all pending crypto payments that have passed their expiration time."""
