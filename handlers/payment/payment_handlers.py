@@ -364,6 +364,27 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['selected_plan_details'] = selected_plan
     plan_name = selected_plan['name']
 
+    # --- Handle free plans or plans discounted to zero ---
+    if price_irr is None or price_irr <= 0:
+        logger.info(f"Plan {plan_id} has zero price ({price_irr}). Activating for user {telegram_id} without payment.")
+        success, msg = await activate_or_extend_subscription(
+            user_id=user_db_id,
+            telegram_id=telegram_id,
+            plan_id=plan_id,
+            plan_name=plan_name,
+            payment_amount=0,
+            payment_method='free_plan',
+            transaction_id=f"FREE-{uuid.uuid4().hex[:6]}",
+            context=context,
+            payment_table_id=None
+        )
+        if success:
+            await query.message.edit_text(f"✅ پلن «{plan_name}» به صورت رایگان برای شما فعال شد.", reply_markup=get_main_menu_keyboard(telegram_id))
+        else:
+            await query.message.edit_text(f"❌ {msg}", reply_markup=get_main_menu_keyboard(telegram_id))
+        UserAction.log_user_action(telegram_id, 'free_plan_activated', {'plan_id': plan_id})
+        return ConversationHandler.END
+
     if payment_method == 'rial':
         transaction_id = str(uuid.uuid4())[:8].upper()
         context.user_data['transaction_id'] = transaction_id
