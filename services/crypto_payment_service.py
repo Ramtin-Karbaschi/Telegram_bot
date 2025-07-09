@@ -14,6 +14,87 @@ logger = logging.getLogger(__name__)
 USDT_DECIMALS = 6 
 
 class CryptoPaymentService:
+    """Utility functions for handling TRC-20 (USDT) crypto payments using TronGrid.
+
+    The verification flow is:
+        1. Bot creates a payment request (recorded in DB) and shows the exact USDT amount.
+        2. User sends the exact amount to our TRC20 wallet.
+        3. When user clicks "payment_verify_crypto", handler fetches the DB record and
+           invokes ``CryptoPaymentService.verify_payment``.
+        4. ``verify_payment`` queries TronGrid for token transfers **to** our wallet
+           starting from the request creation time, filters by:
+              • contract = USDT_TRC20_CONTRACT_ADDRESS
+              • to_address = our wallet
+              • amount == expected_amount (string exact match up to 6 decimals)
+              • transaction *confirmed*
+        5. On success returns the transaction hash & block timestamp so handler can
+           mark DB row paid and activate subscription.
+
+    All network operations have 10 s timeout & proper error handling/logging.
+    """
+
+    TRONGRID_ENDPOINT = "https://api.trongrid.io"  # Mainnet; change for testnet if needed
+
+    @staticmethod
+    def _fetch_trc20_transfers(wallet_address: str, contract_address: str, min_timestamp: int, api_key: str, limit: int = 200):
+        """Query TronGrid for TRC-20 transfers **to** *wallet_address* since *min_timestamp* (unix ms).
+
+        Returns list[dict] (raw transfers). Uses pagination if more results exist.
+        """
+        headers = {"TRON-PRO-API-KEY": api_key} if api_key else {}
+        transfers = []
+        url = (
+            f"{CryptoPaymentService.TRONGRID_ENDPOINT}/v1/accounts/{wallet_address}/transactions/trc20"
+            f"?only_confirmed=true&limit={limit}&contract_address={contract_address}"
+        )
+        while url:
+            try:
+                resp = requests.get(url, headers=headers, timeout=10)
+                resp.raise_for_status()
+                data = resp.json()
+                batch = data.get("data", [])
+                # Filter by timestamp >= min_timestamp (TronGrid timestamp is in ms)
+                batch = [t for t in batch if t.get("block_timestamp", 0) >= min_timestamp]
+                transfers.extend(batch)
+                # TronGrid pagination
+                url = data.get("next")
+            except requests.RequestException as e:
+                logger.error("TronGrid request failed: %s", e)
+                break
+            except ValueError as e:
+                logger.error("Error parsing TronGrid JSON: %s", e)
+                break
+        return transfers
+
+    @staticmethod
+    def verify_payment(expected_amount: float, request_created_at: datetime, wallet_address: str) -> tuple[bool, str | None]:
+        """Verify if an on-chain transfer matching *expected_amount* USDT was received.
+
+        Returns (True, tx_hash) on success, otherwise (False, None).
+        """
+        api_key = config.TRONGRID_API_KEY
+        contract = config.USDT_TRC20_CONTRACT_ADDRESS
+        if not (api_key and contract and wallet_address):
+            logger.error("Missing TronGrid configuration; verification aborted.")
+            return False, None
+
+        # TronGrid uses 6 decimals for USDT values; convert float to int string with 6 decimals
+        int_amount = int(round(expected_amount * (10 ** USDT_DECIMALS)))
+        amount_hex = hex(int_amount)
+
+        min_ts = int(request_created_at.timestamp() * 1000)  # ms
+        transfers = CryptoPaymentService._fetch_trc20_transfers(wallet_address, contract, min_ts, api_key)
+        for tr in transfers:
+            # Ensure it is *to* our wallet and *value* matches
+            if tr.get("to") != wallet_address:
+                continue
+            # `value` is hex of integer amount
+            if tr.get("value") == amount_hex:
+                txid = tr.get("transaction_id")
+                logger.info("Matched USDT payment tx %s for amount %.6f", txid, expected_amount)
+                return True, txid
+        logger.info("No matching USDT payment found for amount %.6f", expected_amount)
+        return False, None
     @staticmethod
     def get_final_usdt_payment_amount(base_usdt_amount_rounded_to_3_decimals: float) -> float:
         """
