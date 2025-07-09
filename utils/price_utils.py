@@ -61,7 +61,7 @@ def convert_irr_to_usdt(irr_amount: float, usdt_rate_toman: float) -> float | No
 
     1. مبلغ ریالی ابتدا به تومان تبدیل می‌شود (تقسیم بر ۱۰).
     2. مقدار به‌دست آمده بر نرخ تتر (بر حسب تومان) تقسیم می‌شود.
-    3. برای محافظت در برابر نوسان قیمت، نتیجه به سمت بالا و تا 4 رقم اعشار گرد می‌شود.
+    3. برای محافظت در برابر نوسان قیمت، نتیجه به سمت بالا و تا 5 رقم اعشار (گرد کردن به بالا در رقم ششم) گرد می‌شود.
     """
 
     if usdt_rate_toman is None or usdt_rate_toman <= 0:
@@ -69,4 +69,5 @@ def convert_irr_to_usdt(irr_amount: float, usdt_rate_toman: float) -> float | No
 
     toman_amount = irr_amount / 10  # ریال → تومان
     usdt_amount = toman_amount / usdt_rate_toman
-    return math.ceil(usdt_amount * 10000) / 10000
+    # گرد کردن به بالا در رقم ششم اعشار (نتیجه ۵ رقم اعشار به کاربر نمایش داده می‌شود)
+    return math.ceil(usdt_amount * 100000) / 100000
