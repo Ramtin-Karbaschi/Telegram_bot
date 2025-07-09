@@ -664,6 +664,11 @@ class ManagerBot:
         for handler in self.product_handler.get_product_conv_handlers():
             application.add_handler(handler)
         application.add_handler(self.ticket_handler.get_ticket_conversation_handler())
+        # Capture admin replies (ForceReply) for edited/manual ticket answers
+        application.add_handler(MessageHandler(
+            filters.ChatType.PRIVATE & filters.REPLY & filters.TEXT,
+            self.ticket_handler.receive_edited_answer
+        ))
         # Add all handlers from the menu handler, including conversation handlers
         for handler in self.menu_handler.get_handlers():
             application.add_handler(handler)
