@@ -195,7 +195,16 @@ class DatabaseQueries:
         db = Database()
         if db.connect():
             try:
-                db.execute("SELECT id, user_id, amount, payment_method, plan_id, status, created_at FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
+                sql = f"""
+                    SELECT id, user_id, amount AS amount_rial, 'rial' AS payment_type, payment_method, plan_id, status, created_at
+                    FROM payments
+                    UNION ALL
+                    SELECT id, user_id, rial_amount AS amount_rial, 'crypto' AS payment_type, 'crypto' AS payment_method, NULL as plan_id, status, created_at
+                    FROM crypto_payments
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                """
+                db.execute(sql, (limit,))
                 payments = db.fetchall()
             except sqlite3.Error as e:
                 logging.error(f"SQLite error in get_recent_payments: {e}")
