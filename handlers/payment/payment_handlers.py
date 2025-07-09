@@ -128,15 +128,15 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
     selected_plan = context.user_data.get('selected_plan_details')
     final_price = context.user_data.get('final_price', selected_plan.get('price'))
 
-    plan_price_irr_formatted = f"{final_price:,}"
+    plan_price_irr_formatted = f"{int(final_price):,}"
     live_usdt_price = None
     if final_price:
         usdt_rate = await get_usdt_to_irr_rate()
         if usdt_rate:
-            live_usdt_price = convert_irr_to_usdt(final_price, usdt_rate)
+            live_usdt_price = convert_irr_to_usdt(final_price, usdt_rate/10)
             context.user_data['live_usdt_price'] = live_usdt_price
 
-    plan_price_usdt_formatted = f"{live_usdt_price:.3f}" if live_usdt_price is not None else "N/A"
+    plan_price_usdt_formatted = f"{live_usdt_price:.4f}" if live_usdt_price is not None else "N/A"
     message_text = PAYMENT_METHOD_MESSAGE.format(
         plan_name=selected_plan.get('name', 'N/A'),
         plan_price=plan_price_irr_formatted,
@@ -570,7 +570,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
         payment_info_text = CRYPTO_PAYMENT_UNIQUE_AMOUNT_MESSAGE.format(
             wallet_address=CRYPTO_WALLET_ADDRESS,
-            usdt_amount=f"{usdt_amount_requested:.3f}",
+            usdt_amount=f"{usdt_amount_requested:.4f}",
             timeout_minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES
         )
 
@@ -1073,7 +1073,7 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
     else:
         logger.warning(f"User {update.effective_user.id}: Rial price missing for plan {selected_plan.get('id')} in back_to_payment_methods_handler.")
 
-    plan_price_usdt_formatted = f"{live_usdt_price:.3f}" if live_usdt_price is not None else "N/A"
+    plan_price_usdt_formatted = f"{live_usdt_price:.4f}" if live_usdt_price is not None else "N/A"
     message_text = PAYMENT_METHOD_MESSAGE.format(
         plan_name=selected_plan.get('name', 'N/A'),
         plan_price=plan_price_irr_formatted,
