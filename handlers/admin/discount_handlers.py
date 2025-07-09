@@ -40,7 +40,8 @@ async def get_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def get_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Gets the discount value and asks for the start date."""
     try:
-        value = float(update.message.text)
+        from utils.locale_utils import to_float
+        value = to_float(update.message.text)
         context.user_data['discount_info']['value'] = value
         await update.message.reply_text("تاریخ شروع را وارد کنید (YYYY-MM-DD) یا برای شروع فوری، 'skip' را بزنید:")
         return START_DATE
@@ -66,7 +67,8 @@ async def get_max_uses(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     """Gets max uses and asks for applicable plans."""
     if update.message.text.lower() != 'skip':
         try:
-            max_uses = int(update.message.text)
+            from utils.locale_utils import to_int
+            max_uses = to_int(update.message.text)
             context.user_data['discount_info']['max_uses'] = max_uses
         except ValueError:
             await update.message.reply_text("مقدار نامعتبر. لطفا یک عدد صحیح وارد کنید.")
@@ -80,7 +82,8 @@ async def get_plans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Gets the selected plans and shows a confirmation."""
     query = update.callback_query
     await query.answer()
-    plan_id = int(query.data.split('_')[-1])
+    from utils.locale_utils import to_int
+    plan_id = to_int(query.data.split('_')[-1])
     
     if 'plan_ids' not in context.user_data['discount_info']:
         context.user_data['discount_info']['plan_ids'] = []
