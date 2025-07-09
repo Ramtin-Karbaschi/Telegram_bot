@@ -132,13 +132,13 @@ async def get_ticket_subject(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if subject in FORBIDDEN_INPUTS:
         await update.message.reply_text(
             "لطفاً موضوع صحیحی را وارد کنید.",
-            reply_markup=get_back_button(include_cancel=True)
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="ticket_cancel")]])
         )
         return NEW_TICKET_SUBJECT
     if not subject:
         await update.message.reply_text(
             " لطفاً موضوع تیکت را وارد کنید یا از گزینه‌های پیشنهادی استفاده کنید:",
-            reply_markup=get_back_button(include_cancel=True)
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="ticket_cancel")]])
         )
         return NEW_TICKET_SUBJECT
     
@@ -148,7 +148,7 @@ async def get_ticket_subject(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Ask for message
     await update.message.reply_text(
         f"لطفاً متن پیام خود را در ارتباط با موضوع <b>{subject}</b> وارد کنید.",
-        reply_markup=get_back_button(include_cancel=True),
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="ticket_cancel")]]),
         parse_mode=ParseMode.HTML
     )
     return NEW_TICKET_MESSAGE
@@ -161,7 +161,7 @@ async def get_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not message or message in FORBIDDEN_INPUTS or len(message) < 10:
         await update.message.reply_text(
             "پیام شما باید حداقل ۱۰ کاراکتر باشد. لطفاً دوباره وارد کنید:",
-            reply_markup=get_back_button(include_cancel=True)
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="ticket_cancel")]])
         )
         return NEW_TICKET_MESSAGE
     
@@ -437,12 +437,15 @@ async def choose_suggested_subject(update: Update, context: ContextTypes.DEFAULT
         return NEW_TICKET_SUBJECT
 
     # Save subject
-        await query.message.edit_text(
-            text=f"لطفاً متن پیام خود را در ارتباط با موضوع <b>{subject}</b> وارد کنید.",
-            reply_markup=get_back_button(include_cancel=True),
-            parse_mode=ParseMode.HTML
-        )
-        return NEW_TICKET_MESSAGE
+    context.user_data['ticket_subject'] = subject
+    # Update the existing inline message AND add an inline cancel button
+    cancel_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="ticket_cancel")]])
+    await query.message.edit_text(
+        text=f"موضوع انتخاب شد: <b>{subject}</b>\nاکنون متن پیام خود را ارسال کنید.",
+        reply_markup=cancel_keyboard,
+        parse_mode=ParseMode.HTML,
+    )
+    return NEW_TICKET_MESSAGE
 
     # Callback handler functions for main_bot.py
 
