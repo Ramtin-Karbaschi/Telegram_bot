@@ -241,8 +241,7 @@ from handlers.subscription import (
 )
 from handlers.support import (
     support_menu_handler, support_ticket_list_handler,
-    new_ticket_handler, ticket_conversation, view_ticket_handler,
-
+    new_ticket_handler, ticket_conversation, view_ticket_handler, ticket_history_handler,
 )
 from handlers.admin.discount_handlers import get_create_discount_conv_handler
 from utils.keyboards import (
@@ -427,6 +426,10 @@ class MainBot:
         ))
         self.application.add_handler(CallbackQueryHandler(
             view_ticket_handler, pattern="^view_ticket_"
+        ))
+        # Ticket history handler
+        self.application.add_handler(CallbackQueryHandler(
+            ticket_history_handler, pattern="^ticket_history$"
         ))
 
         self.application.add_handler(CallbackQueryHandler(
