@@ -17,6 +17,7 @@ from handlers.support.support_handlers import (
     support_ticket_list_handler,
     new_ticket_handler,
     view_ticket_handler,
+    ticket_history_handler,
 
     ticket_conversation # ticket_conversation is the ConversationHandler instance
 )
@@ -34,6 +35,7 @@ __all__ = [
     'support_ticket_list_handler',
     'new_ticket_handler',
     'view_ticket_handler',
+    'ticket_history_handler',
 
     'ticket_conversation' # This is the ConversationHandler instance
 ]

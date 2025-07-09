@@ -18,14 +18,26 @@ SUGGESTED_TICKET_SUBJECTS = [
     "مشکل پرداخت",
     "خطای ورود",
     "پرسش درباره دوره",
-    "درخواست بازگشت وجه",
     "مشکل فنی",
+    "انتقادات و پیشنهادات"
 ]
 import config
 import logging
 import json
 
 # Configure logger
+# Define texts that should NOT be accepted as user input for subject/message (main menu buttons, etc.)
+from utils.constants import (
+    TEXT_MAIN_MENU_SUPPORT, TEXT_MAIN_MENU_HELP, TEXT_MAIN_MENU_RULES,
+    TEXT_MAIN_MENU_BUY_SUBSCRIPTION, TEXT_MAIN_MENU_STATUS
+)
+FORBIDDEN_INPUTS = {
+    TEXT_MAIN_MENU_SUPPORT,
+    TEXT_MAIN_MENU_HELP,
+    TEXT_MAIN_MENU_RULES,
+    TEXT_MAIN_MENU_BUY_SUBSCRIPTION,
+    TEXT_MAIN_MENU_STATUS,
+}
 logger = logging.getLogger(__name__)
 
 # Placeholder for AI responder (e.g., GPT-based) – currently disabled to avoid NameError
@@ -91,6 +103,8 @@ async def create_new_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
             row = []
     if row:
         keyboard.append(row)
+    # Add cancel button row to allow aborting before selecting subject
+    keyboard.append([InlineKeyboardButton("❌ لغو", callback_data="ticket_cancel")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     # Send request depending on update type
@@ -114,10 +128,17 @@ async def create_new_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_ticket_subject(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Get the subject for a new ticket (user typed custom subject)"""
     subject = update.message.text.strip() if update.message else ""
+    # Prevent selecting menu texts as subject
+    if subject in FORBIDDEN_INPUTS:
+        await update.message.reply_text(
+            "لطفاً موضوع صحیحی را وارد کنید.",
+            reply_markup=get_back_button(include_cancel=True)
+        )
+        return NEW_TICKET_SUBJECT
     if not subject:
         await update.message.reply_text(
             " لطفاً موضوع تیکت را وارد کنید یا از گزینه‌های پیشنهادی استفاده کنید:",
-            reply_markup=get_back_button()
+            reply_markup=get_back_button(include_cancel=True)
         )
         return NEW_TICKET_SUBJECT
     
@@ -127,7 +148,7 @@ async def get_ticket_subject(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Ask for message
     await update.message.reply_text(
         f"لطفاً متن پیام خود را در ارتباط با موضوع <b>{subject}</b> وارد کنید.",
-        reply_markup=get_back_button(),
+        reply_markup=get_back_button(include_cancel=True),
         parse_mode=ParseMode.HTML
     )
     return NEW_TICKET_MESSAGE
@@ -137,10 +158,10 @@ async def get_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Get the message
     message = update.message.text
     
-    if not message or len(message) < 10:
+    if not message or message in FORBIDDEN_INPUTS or len(message) < 10:
         await update.message.reply_text(
             "پیام شما باید حداقل ۱۰ کاراکتر باشد. لطفاً دوباره وارد کنید:",
-            reply_markup=get_back_button()
+            reply_markup=get_back_button(include_cancel=True)
         )
         return NEW_TICKET_MESSAGE
     
@@ -416,56 +437,202 @@ async def choose_suggested_subject(update: Update, context: ContextTypes.DEFAULT
         return NEW_TICKET_SUBJECT
 
     # Save subject
-    context.user_data['ticket_subject'] = subject
+        await query.message.edit_text(
+            text=f"لطفاً متن پیام خود را در ارتباط با موضوع <b>{subject}</b> وارد کنید.",
+            reply_markup=get_back_button(include_cancel=True),
+            parse_mode=ParseMode.HTML
+        )
+        return NEW_TICKET_MESSAGE
 
-    # Ask for ticket message
-    await query.message.edit_text(
-        text=f"لطفاً متن پیام خود را در ارتباط با موضوع <b>{subject}</b> وارد کنید.",
-        reply_markup=None,  # Remove inline keyboard to avoid BadRequest
-        parse_mode=ParseMode.HTML
+    # Callback handler functions for main_bot.py
+
+    async def ticket_history_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler to show user's ticket history with status emojis."""
+        query = update.callback_query
+        await query.answer()
+
+        user_id = update.effective_user.id
+        tickets = Database.get_user_tickets(user_id)
+
+        if not tickets:
+            await query.message.edit_text(
+                "شما تاکنون تیکتی ثبت نکرده‌اید.",
+                reply_markup=get_support_menu_keyboard([])
+            )
+            return SUPPORT_MENU
+
+        # Map ticket status to emoji
+        status_to_emoji = {
+            'open': '🟢',
+            'pending_admin_reply': '🟡',
+            'pending_user_reply': '🟡',
+            'closed': '🔴'
+        }
+
+        header_text = "📜 <b>تاریخچه تیکت‌های شما</b>:\n\nبرای مشاهده جزئیات هر تیکت روی گزینه مربوطه کلیک کنید."
+
+        # Build buttons for each ticket (paginate later if needed)
+        ticket_buttons = []
+        for ticket in tickets:
+            ticket_id = ticket['id']
+            subject = ticket['subject']
+            status = ticket['status']
+            emoji = status_to_emoji.get(status, '❔')
+            # Truncate subject for button label
+            if len(subject) > 25:
+                subject = subject[:23] + '…'
+            ticket_buttons.append([InlineKeyboardButton(f"{emoji} #{ticket_id} – {subject}", callback_data=f"view_ticket_{ticket_id}")])
+
+        # Add back button
+        ticket_buttons.append([InlineKeyboardButton("↩ بازگشت", callback_data="back_to_tickets")])
+
+        await query.message.edit_text(
+            header_text,
+            reply_markup=InlineKeyboardMarkup(ticket_buttons),
+            parse_mode=ParseMode.HTML
+        )
+
+        return SUPPORT_MENU
+
+    async def support_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler for support menu callbacks"""
+        # This is a wrapper around start_support for use with CallbackQueryHandler
+        query = update.callback_query
+        await query.answer()
+        
+        # Get user's tickets
+        user_id = update.effective_user.id
+        tickets = Database.get_user_tickets(user_id)
+        
+        # Send support menu
+        await query.message.edit_text(
+            SUPPORT_WELCOME_MESSAGE,
+            reply_markup=get_support_menu_keyboard(tickets)
+        )
+        
+        return SUPPORT_MENU
+
+    async def support_ticket_list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler for ticket list callbacks"""
+        # This is the same as support_menu_handler
+        return await support_menu_handler(update, context)
+
+    async def new_ticket_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler for new ticket callbacks"""
+        # This is a wrapper around create_new_ticket for use with CallbackQueryHandler
+        return await create_new_ticket(update, context)
+
+    async def view_ticket_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler for view ticket callbacks"""
+        # This is a wrapper around view_ticket for use with CallbackQueryHandler
+        result_state = await view_ticket(update, context)
+        logger.debug(f"view_ticket_handler returning state: {result_state}")
+        return result_state
+
+
+
+    # Define the conversation handler for ticket system
+    ticket_conversation = ConversationHandler(
+        entry_points=[
+            CommandHandler("support", start_support),
+            CallbackQueryHandler(new_ticket_handler, pattern="^new_ticket$"),
+            CallbackQueryHandler(view_ticket_handler, pattern="^view_ticket_")
+        ],
+        states={
+            SUPPORT_MENU: [
+                CallbackQueryHandler(new_ticket_handler, pattern="^new_ticket$"),
+                CallbackQueryHandler(view_ticket_handler, pattern="^view_ticket_")
+            ],
+            NEW_TICKET_SUBJECT: [
+                CallbackQueryHandler(choose_suggested_subject, pattern="^subject_"),
+                CallbackQueryHandler(support_menu_handler, pattern="^ticket_cancel$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_ticket_subject),
+                MessageHandler(filters.Regex("^❌ لغو$"), support_menu_handler),
+                MessageHandler(filters.TEXT & filters.Regex(f"^🔙 بازگشت$"), support_menu_handler)  # Go back to support menu
+            ],
+            NEW_TICKET_MESSAGE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_ticket_message),
+                CallbackQueryHandler(support_menu_handler, pattern="^ticket_cancel$"),
+                MessageHandler(filters.Regex("^❌ لغو$"), support_menu_handler),
+                MessageHandler(filters.TEXT & filters.Regex(f"^🔙 بازگشت$"), new_ticket_handler)  # Go back to subject input
+            ],
+            VIEW_TICKET: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, send_ticket_message),
+
+                CallbackQueryHandler(back_to_tickets, pattern="^back_to_tickets$") # Go back to ticket list (support menu)
+            ]
+        },
+        fallbacks=[
+            CommandHandler("cancel", back_to_tickets),
+            CallbackQueryHandler(back_to_tickets, pattern="^back$"),
+            CallbackQueryHandler(handle_back_to_main_from_support, pattern="^back_to_main$"),
+            CallbackQueryHandler(back_to_tickets, pattern="^back_to_tickets$") # Go back to ticket list (support menu)
+        ],
+        name="ticket_conversation"
     )
-    return NEW_TICKET_MESSAGE
 
-# Callback handler functions for main_bot.py
+# ======= Fixed module-level handlers & conversation (extracted) =======
 
-async def support_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for support menu callbacks"""
-    # This is a wrapper around start_support for use with CallbackQueryHandler
+async def ticket_history_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show user's ticket history with status emojis."""
     query = update.callback_query
     await query.answer()
-    
-    # Get user's tickets
     user_id = update.effective_user.id
     tickets = Database.get_user_tickets(user_id)
-    
-    # Send support menu
+    if not tickets:
+        await query.message.edit_text(
+            "شما تاکنون تیکتی ثبت نکرده‌اید.",
+            reply_markup=get_support_menu_keyboard([])
+        )
+        return SUPPORT_MENU
+    status_to_emoji = {
+        'open': '🟢',
+        'pending_admin_reply': '🟡',
+        'pending_user_reply': '🟡',
+        'closed': '🔴'
+    }
+    header_text = "📜 <b>تاریخچه تیکت‌های شما</b>:\n\nبرای مشاهده جزئیات هر تیکت روی گزینه مربوطه کلیک کنید."
+    ticket_buttons = []
+    for ticket in tickets:
+        ticket_id = ticket['id']
+        subject = ticket['subject']
+        status = ticket['status']
+        emoji = status_to_emoji.get(status, '❔')
+        if len(subject) > 25:
+            subject = subject[:23] + '…'
+        ticket_buttons.append([InlineKeyboardButton(f"{emoji} #{ticket_id} – {subject}", callback_data=f"view_ticket_{ticket_id}")])
+    ticket_buttons.append([InlineKeyboardButton("↩ بازگشت", callback_data="back_to_tickets")])
+    await query.message.edit_text(
+        header_text,
+        reply_markup=InlineKeyboardMarkup(ticket_buttons),
+        parse_mode=ParseMode.HTML
+    )
+    return SUPPORT_MENU
+
+async def support_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Refresh support menu (used for back/cancel)."""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    tickets = Database.get_user_tickets(user_id)
     await query.message.edit_text(
         SUPPORT_WELCOME_MESSAGE,
         reply_markup=get_support_menu_keyboard(tickets)
     )
-    
     return SUPPORT_MENU
 
 async def support_ticket_list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for ticket list callbacks"""
-    # This is the same as support_menu_handler
     return await support_menu_handler(update, context)
 
 async def new_ticket_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for new ticket callbacks"""
-    # This is a wrapper around create_new_ticket for use with CallbackQueryHandler
     return await create_new_ticket(update, context)
 
 async def view_ticket_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for view ticket callbacks"""
-    # This is a wrapper around view_ticket for use with CallbackQueryHandler
     result_state = await view_ticket(update, context)
     logger.debug(f"view_ticket_handler returning state: {result_state}")
     return result_state
 
-
-
-# Define the conversation handler for ticket system
+# Proper module-level ConversationHandler instance
 ticket_conversation = ConversationHandler(
     entry_points=[
         CommandHandler("support", start_support),
@@ -479,23 +646,31 @@ ticket_conversation = ConversationHandler(
         ],
         NEW_TICKET_SUBJECT: [
             CallbackQueryHandler(choose_suggested_subject, pattern="^subject_"),
+            CallbackQueryHandler(support_menu_handler, pattern="^ticket_cancel$"),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_ticket_subject),
-            MessageHandler(filters.TEXT & filters.Regex(f"^🔙 بازگشت$"), support_menu_handler)  # Go back to support menu
+            MessageHandler(filters.Regex("^❌ لغو$"), support_menu_handler),
+            MessageHandler(filters.TEXT & filters.Regex(f"^🔙 بازگشت$"), support_menu_handler)
         ],
         NEW_TICKET_MESSAGE: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_ticket_message),
-            MessageHandler(filters.TEXT & filters.Regex(f"^🔙 بازگشت$"), new_ticket_handler)  # Go back to subject input
+            CallbackQueryHandler(support_menu_handler, pattern="^ticket_cancel$"),
+            MessageHandler(filters.Regex("^❌ لغو$"), support_menu_handler),
+            MessageHandler(filters.TEXT & filters.Regex(f"^🔙 بازگشت$"), new_ticket_handler)
         ],
         VIEW_TICKET: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, send_ticket_message),
-
-            CallbackQueryHandler(back_to_tickets, pattern="^back_to_tickets$") # Go back to ticket list (support menu)
+            CallbackQueryHandler(back_to_tickets, pattern="^back_to_tickets$")
         ]
     },
     fallbacks=[
         CommandHandler("cancel", back_to_tickets),
         CallbackQueryHandler(back_to_tickets, pattern="^back$"),
-            CallbackQueryHandler(handle_back_to_main_from_support, pattern="^back_to_main$")
+        CallbackQueryHandler(handle_back_to_main_from_support, pattern="^back_to_main$"),
+        CallbackQueryHandler(back_to_tickets, pattern="^back_to_tickets$")
     ],
     name="ticket_conversation"
 )
+
+# For backward compatibility in imports
+fixed_ticket_conversation = ticket_conversation
+
