@@ -34,7 +34,8 @@ class UserAction:
         #     if user_record and 'id' in user_record: # Check if 'id' is the PK column name
         #         user_db_id = user_record['id']
 
-        success = DatabaseQueries.add_user_activity_log(
+        dbq = DatabaseQueries()
+        success = dbq.add_user_activity_log(
             telegram_id=telegram_id,
             action_type=action_type,
             details=details_json,
