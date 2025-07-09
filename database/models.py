@@ -21,6 +21,14 @@ class Database:
     'database is locked' errors in a concurrent environment.
     """
     
+    @staticmethod
+    def get_instance():
+        """Return existing Database singleton instance or create default one."""
+        global _instance
+        if _instance is None:
+            _instance = Database()
+        return _instance
+
     def __new__(cls, *args, **kwargs):
         global _instance
         if _instance is None:
