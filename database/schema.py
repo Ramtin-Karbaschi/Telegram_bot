@@ -144,6 +144,18 @@ CREATE TABLE IF NOT EXISTS crypto_payments (
 
 
 
+PAYMENT_STATUS_HISTORY_TABLE = '''
+CREATE TABLE IF NOT EXISTS payment_status_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    payment_id TEXT NOT NULL,
+    old_status TEXT,
+    new_status TEXT NOT NULL,
+    changed_by TEXT NOT NULL DEFAULT 'bot', -- 'bot' or admin username/id
+    note TEXT,
+    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+'''
+
 USER_ACTIVITY_LOGS_TABLE = '''
 CREATE TABLE IF NOT EXISTS user_activity_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -210,6 +222,7 @@ ALL_TABLES = [
     USER_ACTIVITY_LOGS_TABLE,
     DISCOUNTS_TABLE,
     PLAN_DISCOUNTS_TABLE,
+    PAYMENT_STATUS_HISTORY_TABLE,
     SUPPORT_USERS_TABLE
 ]
 
