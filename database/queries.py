@@ -14,8 +14,10 @@ from utils.helpers import get_current_time  # ensure Tehran-tz aware now
 
 class DatabaseQueries:
     """Class for handling database operations"""
-    def __init__(self, db: Database):
-        self.db = db
+    def __init__(self, db: Database | None = None):
+        # Allow passing None to use singleton Database.get_instance() or create default
+        from database.models import Database as DBModel
+        self.db = db or DBModel.get_instance()
 
     def init_database(self):
         """Initialize the database and create tables if they don't exist."""
@@ -44,9 +46,22 @@ class DatabaseQueries:
             except sqlite3.Error as e:
                 logging.error(f"Error checking/adding columns to plans table: {e}")
 
-            result = self.db.create_tables(ALL_TABLES)
+            # Ensure 'usdt_amount_requested' column in payments table
+            try:
+                self.db.execute("PRAGMA table_info(payments)")
+                pay_cols = [c['name'] for c in self.db.fetchall()]
+                # Add missing columns for crypto payments
+                if 'usdt_amount_requested' not in pay_cols:
+                    self.db.execute("ALTER TABLE payments ADD COLUMN usdt_amount_requested REAL")
+                if 'wallet_address' not in pay_cols:
+                    self.db.execute("ALTER TABLE payments ADD COLUMN wallet_address TEXT")
+                if 'expires_at' not in pay_cols:
+                    self.db.execute("ALTER TABLE payments ADD COLUMN expires_at TEXT")
+            except sqlite3.Error as col_err:
+                logging.error(f"Error ensuring usdt_amount_requested column: {col_err}")
+
             self.db.commit()
-            return result
+            return self.db.create_tables(ALL_TABLES)
         return False
 
     # -----------------------------------
