@@ -69,12 +69,14 @@ class AdminProductHandler:
         return ADD_PRICE
 
     async def get_plan_price(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        context.user_data['new_plan_price'] = float(update.message.text)
+        from utils.locale_utils import to_float
+        context.user_data['new_plan_price'] = to_float(update.message.text)
         await update.message.reply_text("مدت زمان پلن را به روز وارد کنید:")
         return ADD_DURATION
 
     async def get_plan_duration(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        context.user_data['new_plan_duration'] = int(update.message.text)
+        from utils.locale_utils import to_int
+        context.user_data['new_plan_duration'] = to_int(update.message.text)
         await update.message.reply_text("توضیحات پلن را وارد کنید (اختیاری):")
         return ADD_DESCRIPTION
 
@@ -236,13 +238,15 @@ class AdminProductHandler:
 
     async def get_new_plan_price(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message.text != '/skip':
-            context.user_data['edit_plan_price'] = float(update.message.text)
+            from utils.locale_utils import to_float
+            context.user_data['edit_plan_price'] = to_float(update.message.text)
         await update.message.reply_text("لطفاً مدت زمان جدید را به روز وارد کنید (برای رد شدن، /skip را بزنید):")
         return EDIT_DURATION
 
     async def get_new_plan_duration(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message.text != '/skip':
-            context.user_data['edit_plan_duration'] = int(update.message.text)
+            from utils.locale_utils import to_int
+            context.user_data['edit_plan_duration'] = to_int(update.message.text)
         await update.message.reply_text("لطفاً توضیحات جدید را وارد کنید (برای رد شدن، /skip را بزنید):")
         return EDIT_DESCRIPTION
 
