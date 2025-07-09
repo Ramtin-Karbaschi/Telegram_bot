@@ -8,11 +8,14 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, MessageHandler, filters, ConversationHandler
 
 from utils.helpers import admin_only_decorator as admin_only
+from utils.helpers import staff_only_decorator as staff_only
+from utils.helpers import is_user_in_admin_list
 from utils.invite_link_manager import InviteLinkManager
 from database.free_plan_helper import ensure_free_plan
 from utils.db_backup import export_database
 
 from .admin_product_handlers import AdminProductHandler
+from .admin_support_handlers import SupportUserManager
 
 
 from database.queries import DatabaseQueries
@@ -41,6 +44,8 @@ class AdminMenuHandler:
 
         # Product handler needs DB access as well as optional admin config
         self.product_handler = AdminProductHandler(self.db_queries, admin_config=self.admin_config)
+        # Support user manager
+        self.support_manager = SupportUserManager()
         # Simple flag for maintenance mode toggle in misc settings
         self.maintenance_mode = False
         self.search_flag = None
@@ -68,10 +73,16 @@ class AdminMenuHandler:
             self.button_texts['back_to_main']: self.show_admin_menu,
         }
 
-    @admin_only
+    @staff_only
     async def route_admin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Routes admin commands from ReplyKeyboardMarkup clicks."""
         command_text = update.message.text
+        user_id = update.effective_user.id if update.effective_user else None
+        is_admin_flag = user_id is not None and is_user_in_admin_list(user_id, self.admin_config)
+        support_allowed_labels = {self.button_texts['tickets'], self.button_texts['payments'], self.button_texts['back_to_main']}
+        if not is_admin_flag and command_text not in support_allowed_labels:
+            await update.message.reply_text("دسترسی محدود است.")
+            return
         function_to_call = self.admin_buttons_map.get(command_text)
 
         if not function_to_call:
@@ -138,7 +149,11 @@ class AdminMenuHandler:
     SETTINGS_MENU = "admin_settings_menu"
     PRODUCTS_MENU = "admin_products_menu"
     BACKUP_CALLBACK = "settings_backup"
+    SUPPORT_MENU = "settings_support_users"
+    SUPPORT_ADD = "settings_support_add"
+    SUPPORT_LIST = "settings_support_list"
     BACK_MAIN = "admin_back_main"
+    TICKETS_HISTORY = "tickets_history_input"
     MAIN_MENU_CALLBACK = BACK_MAIN
     BAN_UNBAN_USER = "users_ban_unban"
 
@@ -148,14 +163,21 @@ class AdminMenuHandler:
     (AWAIT_FREE30_USER_ID,) = range(103, 104)
     (AWAIT_USER_ID_FOR_BAN, AWAIT_BAN_CHOICE) = range(104, 106)
 
-    @admin_only
+    @staff_only
     async def show_admin_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Entry command `/admin` – show main panel."""
-        keyboard = [
-            [InlineKeyboardButton("🎫 مدیریت تیکت‌ها", callback_data=self.TICKETS_MENU), InlineKeyboardButton("👥 مدیریت کاربران", callback_data=self.USERS_MENU)],
-            [InlineKeyboardButton("💳 مدیریت پرداخت‌ها", callback_data=self.PAYMENTS_MENU), InlineKeyboardButton("📦 مدیریت محصولات", callback_data=self.PRODUCTS_MENU)],
-            [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data=self.BROADCAST_MENU), InlineKeyboardButton("⚙️ تنظیمات", callback_data=self.SETTINGS_MENU)],
-        ]
+        user_id = update.effective_user.id if update.effective_user else None
+        is_admin = user_id is not None and is_user_in_admin_list(user_id, self.admin_config)
+        if is_admin:
+            keyboard = [
+                [InlineKeyboardButton("🎫 مدیریت تیکت‌ها", callback_data=self.TICKETS_MENU), InlineKeyboardButton("👥 مدیریت کاربران", callback_data=self.USERS_MENU)],
+                [InlineKeyboardButton("💳 مدیریت پرداخت‌ها", callback_data=self.PAYMENTS_MENU), InlineKeyboardButton("📦 مدیریت محصولات", callback_data=self.PRODUCTS_MENU)],
+                [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data=self.BROADCAST_MENU), InlineKeyboardButton("⚙️ تنظیمات", callback_data=self.SETTINGS_MENU)],
+            ]
+        else:
+            keyboard = [
+                [InlineKeyboardButton("🎫 مدیریت تیکت‌ها", callback_data=self.TICKETS_MENU), InlineKeyboardButton("💳 مدیریت پرداخت‌ها", callback_data=self.PAYMENTS_MENU)],
+            ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         # Check if we are editing a message (from a callback) or sending a new one
         if update.callback_query:
@@ -164,15 +186,31 @@ class AdminMenuHandler:
             await update.message.reply_text("⚡️ *پنل مدیریت*\nیکی از گزینه‌های زیر را انتخاب کنید:", parse_mode="Markdown", reply_markup=reply_markup)
 
     # ---------- Menu callbacks ----------
-    @admin_only
+    @staff_only
     async def admin_menu_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         data = query.data
+        user_id = query.from_user.id
+        is_admin_flag = is_user_in_admin_list(user_id, self.admin_config)
+        support_allowed_callbacks = {
+            self.TICKETS_MENU, self.PAYMENTS_MENU,
+            "tickets_open", "tickets_all",
+            "payments_recent", "payments_stats",
+            self.TICKETS_HISTORY,
+            self.BACK_MAIN
+        }
+        if not is_admin_flag and data not in support_allowed_callbacks:
+            await query.answer("دسترسی محدود است.", show_alert=True)
+            return
+
         logger.debug("Admin menu callback: %s", data)
 
         if data == self.TICKETS_MENU:
             await self._tickets_submenu(query)
+        elif data == self.TICKETS_HISTORY:
+            await query.edit_message_text("🔎 لطفاً شمارهٔ موبایل (مثلاً +98912...) کاربر را ارسال کنید:")
+            context.user_data["awaiting_ticket_history_user"] = True
         elif data == self.USERS_MENU:
             await self._users_submenu(query)
         elif data == self.PAYMENTS_MENU:
@@ -234,19 +272,34 @@ class AdminMenuHandler:
         elif data == "discounts_menu":
             await self._discounts_submenu(query)
         elif data == "discounts_add":
-            # instruct admin to use /create_discount command (handled by conversation)
-            await query.edit_message_text("لطفاً دستور /create_discount را ارسال کنید تا فرایند ساخت کد تخفیف آغاز شود.")
+            # Start inline create discount flow
+            context.user_data["discount_flow"] = {"mode":"create","state":"await_code","data":{}}
+            await query.edit_message_text("🆕 لطفاً کد تخفیف را ارسال کنید (حروف و اعداد لاتین).")
         elif data == "discounts_list":
             await self._list_discounts(query)
         elif data.startswith("view_discount_"):
             did = int(data.split("_")[2])
             await self._show_single_discount(query, did)
+        elif data.startswith("edit_discount_") or data.startswith("discounts_edit_"):
+            # Support both 'edit_discount_' and legacy 'discounts_edit_' prefixes
+            did = int(data.split("_")[-1])
+            context.user_data["discount_flow"] = {"mode":"edit","discount_id":did,"state":"await_value","data":{}}
+            await query.edit_message_text(
+                "✏️ مقدار و نوع جدید را ارسال کنید به فرم 'percentage 10' یا 'fixed 50000':\n\nیا دکمه ⏭️ بدون تغییر را بزنید.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⏭️ بدون تغییر", callback_data="discount_edit_skip")],
+                    [InlineKeyboardButton("🔙 بازگشت", callback_data=f"view_discount_{did}")]
+                ])
+            )
         elif data.startswith("toggle_discount_"):
             did = int(data.split("_")[2])
+
             await self._toggle_discount_status(query, did)
         elif data.startswith("delete_discount_"):
             did = int(data.split("_")[2])
             await self._delete_discount_confirmation(query, did)
+        elif data.startswith("planpick_") or data in ("planpick_all", "planpick_done"):
+            await self._handle_plan_select_callback(query, context)
         elif data.startswith("confirm_delete_discount_"):
             did = int(data.split("_")[3])
             await self._delete_discount(query, did)
@@ -263,6 +316,14 @@ class AdminMenuHandler:
                 await query.answer("📤 بکاپ ارسال شد")
             else:
                 await query.answer("❌ خطا در تهیه بکاپ", show_alert=True)
+        elif data == self.SUPPORT_MENU:
+            await self._settings_support_submenu(query)
+        elif data == self.SUPPORT_ADD:
+             # Begin inline flow to add support user
+             await query.edit_message_text("➕ لطفاً آیدی عددی تلگرام کاربر پشتیبان را ارسال کنید:")
+             context.user_data["awaiting_support_user_id"] = True
+        elif data == self.SUPPORT_LIST:
+            await self._show_support_users(query)
         elif data == "settings_misc":
             await self._settings_misc_submenu(query)
         elif data == "settings_toggle_maintenance":
@@ -311,6 +372,7 @@ class AdminMenuHandler:
     async def _tickets_submenu(self, query):
         keyboard = [
             [InlineKeyboardButton("🟢 تیکت‌های منتظر پاسخ", callback_data="tickets_open"), InlineKeyboardButton("📜 همهٔ تیکت‌ها", callback_data="tickets_all")],
+            [InlineKeyboardButton("🔎 تاریخچهٔ تیکت کاربر", callback_data=self.TICKETS_HISTORY)],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text("🎫 *مدیریت تیکت‌ها*\nگزینه مورد نظر را انتخاب کنید:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -399,10 +461,81 @@ class AdminMenuHandler:
         )
         keyboard = [
             [InlineKeyboardButton(toggle_text, callback_data=f"toggle_discount_{discount_id}")],
+            [InlineKeyboardButton("✏️ ویرایش", callback_data=f"edit_discount_{discount_id}")],
             [InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_discount_{discount_id}")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data="discounts_list")],
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    # --------------------------------------
+    # New helper methods for plan selection
+    # --------------------------------------
+    def _build_plan_select_keyboard(self, selected_ids: set[int], plans):
+        """Return an inline keyboard for multi-selecting plans."""
+        keyboard = []
+        row = []
+        for p in plans:
+            pid = p[0] if isinstance(p, (list, tuple)) else p.get("id")
+            pname = p[1] if isinstance(p, (list, tuple)) else p.get("name")
+            selected = pid in selected_ids
+            button_text = ("✅ " if selected else "☑️ ") + str(pname)
+            row.append(InlineKeyboardButton(button_text, callback_data=f"planpick_{pid}"))
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        # Control buttons
+        toggle_all_text = "انتخاب همه" if len(selected_ids) < len(plans) else "لغو همه"
+        keyboard.append([
+            InlineKeyboardButton(toggle_all_text, callback_data="planpick_all"),
+            InlineKeyboardButton("✅ تأیید", callback_data="planpick_done"),
+        ])
+        keyboard.append([InlineKeyboardButton("❌ انصراف", callback_data="discounts_menu")])
+        return keyboard
+
+    async def _handle_plan_select_callback(self, query, context):
+        """Handle toggle/confirm actions during plan multi-select."""
+        df = context.user_data.get("discount_flow")
+        if not df or df.get("state") != "await_plan_inline":
+            return  # Not in this flow
+        data = query.data
+        selected: set = df["data"].get("selected_plan_ids", set())
+        plans = DatabaseQueries.get_active_plans()
+
+        if data == "planpick_done":
+            # Proceed to create discount
+            plan_ids = list(selected)
+            ddata = df["data"]
+            new_id = DatabaseQueries.create_discount(ddata["code"], ddata["type"], ddata["value"])
+            if new_id:
+                if plan_ids:
+                    DatabaseQueries.link_discount_to_plans(new_id, plan_ids)
+                await query.edit_message_text("✅ کد تخفیف ایجاد شد.")
+            else:
+                await query.edit_message_text("❌ خطا در ایجاد کد تخفیف. شاید کد تکراری باشد.")
+            # Clean up and show submenu
+            context.user_data.pop("discount_flow", None)
+            await self._discounts_submenu(query)
+            return
+        elif data == "planpick_all":
+            if len(selected) < len(plans):
+                selected = {p[0] if isinstance(p, (list, tuple)) else p.get("id") for p in plans}
+            else:
+                selected = set()
+        elif data.startswith("planpick_"):
+            pid = int(data.split("_")[1])
+            if pid in selected:
+                selected.remove(pid)
+            else:
+                selected.add(pid)
+        else:
+            return  # Unknown callback
+
+        # Save and refresh keyboard
+        df["data"]["selected_plan_ids"] = selected
+        keyboard = self._build_plan_select_keyboard(selected, plans)
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _toggle_discount_status(self, query, discount_id: int):
         d = DatabaseQueries.get_discount_by_id_code_or_id(discount_id) if hasattr(DatabaseQueries, 'get_discount_by_id_code_or_id') else None
@@ -432,6 +565,7 @@ class AdminMenuHandler:
     async def _settings_submenu(self, query):
         keyboard = [
             [InlineKeyboardButton("🔐 تنظیم مدیران", callback_data="settings_admins"), InlineKeyboardButton("⚙️ سایر تنظیمات", callback_data="settings_misc")],
+            [InlineKeyboardButton("👥 مدیریت پشتیبان‌ها", callback_data=self.SUPPORT_MENU)],
             [InlineKeyboardButton("💸 مدیریت کدهای تخفیف", callback_data="discounts_menu")],
             [InlineKeyboardButton("💾 بکاپ JSON دیتابیس", callback_data=self.BACKUP_CALLBACK)],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
@@ -468,8 +602,145 @@ class AdminMenuHandler:
     @admin_only
     async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle dynamic admin inputs based on flow flags (broadcast, user search)."""
+        # Short-circuit if admin is replying to a ticket (set by AdminTicketHandler.manual_answer_callback or edit_answer_callback)
+        if context.user_data.get("editing_ticket_id") is not None:
+            from .admin_ticket_handlers import AdminTicketHandler  # Local import to avoid circular deps
+            ticket_handler = getattr(self, "_ticket_delegate", None)
+            if ticket_handler is None:
+                ticket_handler = AdminTicketHandler()
+                setattr(self, "_ticket_delegate", ticket_handler)
+            await ticket_handler.receive_edited_answer(update, context)
+            return
+
         logger.info("Admin message_handler triggered with text: %s | broadcast_flag=%s | search_flag=%s", update.effective_message.text if update.effective_message else "<no message>", context.user_data.get("awaiting_broadcast_content"), context.user_data.get("awaiting_user_search_query"))
         message = update.effective_message
+        # -------- Ticket history flow --------
+        if context.user_data.get("awaiting_ticket_history_user"):
+            text = message.text.strip()
+            digits = "".join(ch for ch in text if ch.isdigit())
+            if not digits:
+                await message.reply_text("❌ لطفاً شمارهٔ موبایل معتبر وارد کنید.")
+                return
+            # اگر طول ارقام حداقل 8 باشد فرض می‌کنیم شماره موبایل است
+            target_id = None
+            if len(digits) >= 8:
+                user_row = DatabaseQueries.get_user_by_phone(digits)
+                if not user_row:
+                    await message.reply_text("❌ کاربری با این شماره پیدا نشد.")
+                    return
+                target_id = user_row.get('user_id')
+            else:
+                # فرض بر این است که آیدی تلگرام است
+                target_id = int(digits)
+            context.user_data.pop("awaiting_ticket_history_user", None)
+            # Lazy init ticket delegate
+            ticket_handler = getattr(self, "_ticket_delegate_history", None)
+            if ticket_handler is None:
+                from .admin_ticket_handlers import AdminTicketHandler
+                ticket_handler = AdminTicketHandler()
+                setattr(self, "_ticket_delegate_history", ticket_handler)
+            await ticket_handler.show_ticket_history_for_user(update, context, target_id)
+            return
+
+        # -------- Add-support flow --------
+        if context.user_data.get("awaiting_support_user_id"):
+            text = message.text.strip()
+            if not text.isdigit():
+                await message.reply_text("❌ آیدی باید یک عدد باشد. دوباره تلاش کنید یا /cancel را بزنید.")
+                return
+            tg_id = int(text)
+            admin_id = update.effective_user.id
+            if DatabaseQueries.add_support_user(tg_id, added_by=admin_id):
+                await message.reply_text(f"✅ کاربر {tg_id} به عنوان پشتیبان ثبت شد.")
+            else:
+                await message.reply_text("❌ خطا در افزودن کاربر یا کاربر قبلاً پشتیبان است.")
+            # Reset flag and show submenu again
+            context.user_data.pop("awaiting_support_user_id", None)
+            class DummyQuery:
+                def __init__(self, message):
+                    self.message = message
+                async def edit_message_text(self,*args,**kwargs):
+                    await self.message.reply_text(*args,**kwargs)
+            await self._settings_support_submenu(DummyQuery(message))
+            return
+
+        # -------- Discount create/edit flow --------
+        if context.user_data.get("discount_flow"):
+            df = context.user_data["discount_flow"]
+            mode = df.get("mode")
+            state = df.get("state")
+            text = message.text.strip()
+            if mode == "create":
+                if state == "await_code":
+                    df["data"]["code"] = text
+                    df["state"] = "await_value_type"
+                    await message.reply_text("لطفاً نوع و مقدار را ارسال کنید به فرم 'percentage 10' یا 'fixed 50000':")
+                    return
+                elif state == "await_value_type":
+                    parts = text.split()
+                    if len(parts)!=2 or parts[0] not in ("percentage","fixed") or not parts[1].replace('.', '', 1).isdigit():
+                        await message.reply_text("❌ فرمت نامعتبر است. دوباره امتحان کنید.")
+                        return
+                    df["data"]["type"] = "percentage" if parts[0]=="percentage" else "fixed_amount"
+                    df["data"]["value"] = float(parts[1])
+                    # ask plan id or 0
+                    active_plans = DatabaseQueries.get_active_plans()
+                    if not active_plans:
+                        await message.reply_text("❌ هیچ پلن فعالی برای انتخاب وجود ندارد.")
+                        # Cancel flow
+                        context.user_data.pop("discount_flow", None)
+                        return
+                    df["state"] = "await_plan_inline"
+                    df["data"]["selected_plan_ids"] = set()
+                    keyboard = self._build_plan_select_keyboard(set(), active_plans)
+                    await message.reply_text("لطفاً پلن‌های مورد نظر را انتخاب کنید و سپس دکمه تأیید را بزنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+                    return
+                elif state == "await_plan":
+                    plan_input = text.replace(' ','')
+                    if plan_input=="0":
+                        plan_ids = []
+                    else:
+                        ids=[pid for pid in plan_input.split(',') if pid.isdigit()]
+                        if not ids:
+                            await message.reply_text("❌ ورودی نامعتبر. دوباره تلاش کنید.")
+                            return
+                        plan_ids=[int(i) for i in ids]
+                    data=df["data"]
+                    new_id=DatabaseQueries.create_discount(data["code"],data["type"],data["value"])
+                    if new_id:
+                        if plan_ids:
+                            DatabaseQueries.link_discount_to_plans(new_id,plan_ids)
+                        await message.reply_text("✅ کد تخفیف ایجاد شد.")
+                    else:
+                        await message.reply_text("❌ خطا در ایجاد کد تخفیف. شاید کد تکراری باشد.")
+                    context.user_data.pop("discount_flow",None)
+                    # back to discounts submenu
+                    class DummyQuery:
+                        def __init__(self,m):
+                            self.message=m
+                        async def edit_message_text(self,*args,**kwargs):
+                            await self.message.reply_text(*args,**kwargs)
+                    await self._discounts_submenu(DummyQuery(message))
+                    return
+            elif mode=="edit":
+                did=df.get("discount_id")
+                parts=text.split()
+                if len(parts)!=2 or parts[0] not in ("percentage","fixed") or not parts[1].replace('.', '', 1).isdigit():
+                    await message.reply_text("❌ فرمت نامعتبر است. دوباره تلاش کنید.")
+                    return
+                new_type="percentage" if parts[0]=="percentage" else "fixed_amount"
+                new_value=float(parts[1])
+                ok=DatabaseQueries.update_discount(did, type=new_type, value=new_value)
+                await message.reply_text("✅ به‌روزرسانی شد." if ok else "❌ خطا در به‌روزرسانی.")
+                context.user_data.pop("discount_flow",None)
+                class DummyQuery:
+                    def __init__(self,m):
+                        self.message=m
+                    async def edit_message_text(self,*args,**kwargs):
+                        await self.message.reply_text(*args,**kwargs)
+                await self._show_single_discount(DummyQuery(message), did)
+                return
+
         # -------- Broadcast flow --------
         if context.user_data.get("awaiting_broadcast_content"):
             # Determine target users
@@ -656,6 +927,7 @@ class AdminMenuHandler:
             await query.edit_message_text("🔐 پیکربندی مدیران یافت نشد.")
             return
         lines = ["🔐 *فهرست مدیران:*\n"]
+            # Add support users header later
         if isinstance(self.admin_config, list):
             for adm in self.admin_config:
                 if isinstance(adm, dict):
@@ -867,6 +1139,34 @@ class AdminMenuHandler:
         await self._users_submenu(query)
         return ConversationHandler.END
 
+    async def _settings_support_submenu(self, query):
+        """Support users management submenu"""
+        keyboard = [
+            [InlineKeyboardButton("➕ افزودن پشتیبان", callback_data=self.SUPPORT_ADD)],
+            [InlineKeyboardButton("📋 فهرست پشتیبان‌ها", callback_data=self.SUPPORT_LIST)],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data=self.SETTINGS_MENU)],
+        ]
+        await query.edit_message_text("👥 *مدیریت پشتیبان‌ها*:\nگزینه مورد نظر را انتخاب کنید.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def _show_support_users(self, query):
+        rows = DatabaseQueries.get_all_support_users()
+        if not rows:
+            await query.edit_message_text("👥 هیچ کاربر پشتیبانی تعریف نشده است.")
+            return
+        lines = ["👥 *فهرست پشتیبان‌ها:*\n"]
+        keyboard = []
+        for row in rows:
+            if isinstance(row, (list, tuple)):
+                tg_id = row[0]
+                added_at = row[2] if len(row) > 2 else None
+            else:
+                tg_id = row["telegram_id"] if "telegram_id" in row.keys() else row[0]
+                added_at = row["added_at"] if "added_at" in row.keys() else (row[2] if len(row) > 2 else None)
+            lines.append(f"• {tg_id} – {added_at}")
+            keyboard.append([InlineKeyboardButton(f"❌ حذف {tg_id}", callback_data=f"remove_support_{tg_id}")])
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data=self.SUPPORT_MENU)])
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
     def get_handlers(self):
         """Return telegram.ext handlers to register in the dispatcher."""
         handlers = [
@@ -914,8 +1214,11 @@ class AdminMenuHandler:
         )
         handlers.append(ban_unban_handler)
 
+        # ---- Support user management handlers ----
+        handlers.extend(self.support_manager.get_handlers())
+
         # This is the main handler for all other admin menu callbacks
         # Note: The invite link and ban/unban callbacks are handled by their respective ConversationHandlers.
-        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|settings_|products_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_)"))
+        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|settings_|products_|discounts_|view_discount_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_)"))
 
         return handlers
