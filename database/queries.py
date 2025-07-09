@@ -173,14 +173,19 @@ class DatabaseQueries:
             logging.error(f"SQLite error in search_users: {e}")
         return results
 
-    def get_recent_payments(self, limit: int = 20):
+    @staticmethod
+    def get_recent_payments(limit: int = 20):
         """Return recent payment records."""
         payments = []
-        try:
-            self.db.execute("SELECT id, user_id, amount, payment_method, plan_id, status, created_at FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
-            payments = self.db.fetchall()
-        except sqlite3.Error as e:
-            logging.error(f"SQLite error in get_recent_payments: {e}")
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT id, user_id, amount, payment_method, plan_id, status, created_at FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
+                payments = db.fetchall()
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in get_recent_payments: {e}")
+            finally:
+                db.close()
         return payments
 
     def _ensure_video_table(self):
@@ -315,20 +320,35 @@ class DatabaseQueries:
             logging.error(f"Error updating user profile: {e}")
             return False
 
-    def update_user_single_field(self, user_id: int, field_name: str, value):
-        """Update a single field for a user."""
-        allowed_fields = ['full_name', 'phone', 'email', 'education', 'city', 'age', 'occupation', 'birth_date']
+    @staticmethod
+    def update_user_single_field(user_id: int, field_name: str, value):
+        """Update a single field for a user.
+
+        This method was converted to a static method so that callers can invoke it
+        directly via ``DatabaseQueries.update_user_single_field`` without needing to
+        manually instantiate ``DatabaseQueries`` with an already-connected
+        ``Database`` instance.  Internally it takes care of opening a connection,
+        executing the update, committing and finally closing the connection.
+        """
+        allowed_fields = [
+            'full_name', 'phone', 'email', 'education', 'city', 'age', 'occupation', 'birth_date'
+        ]
         if field_name not in allowed_fields:
+            logging.warning(f"Attempted to update disallowed field '{field_name}'.")
             return False
-        
-        query = f"UPDATE users SET {field_name} = ? WHERE user_id = ?"
-        try:
-            self.db.execute(query, (value, user_id))
-            self.db.commit()
-            return True
-        except sqlite3.Error as e:
-            logging.error(f"SQLite error when updating single field {field_name}: {e}")
-            return False
+
+        db = Database()
+        if db.connect():
+            try:
+                db.execute(f"UPDATE users SET {field_name} = ? WHERE user_id = ?", (value, user_id))
+                db.commit()
+                return db.cursor.rowcount > 0
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error when updating single field {field_name}: {e}")
+                return False
+            finally:
+                db.close()
+        return False
 
     def add_user_activity_log(self, telegram_id: int, action_type: str, details: str = None, user_id: int = None):
         """Add a user activity log."""
@@ -356,6 +376,25 @@ class DatabaseQueries:
         except (sqlite3.Error, IndexError, KeyError) as e:
             logging.error(f"Error checking registration status for user {user_id}: {e}")
         return False
+
+    @staticmethod
+    def get_user_by_phone(phone: str):
+        """Return user row dict for given phone digits. Accepts phone with +98 or 0 prefix; only digits are compared."""
+        digits = "".join(ch for ch in phone if ch.isdigit())
+        if len(digits) < 8:
+            return None
+        db = Database()
+        if db.connect():
+            try:
+                # Use LIKE to match ending digits (handles country codes)
+                db.execute("SELECT * FROM users WHERE REPLACE(REPLACE(phone, '+', ''), ' ', '') LIKE ? LIMIT 1", (f"%{digits}",))
+                row = db.fetchone()
+                return dict(row) if row else None
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in get_user_by_phone: {e}")
+            finally:
+                db.close()
+        return None
 
     @staticmethod
     def is_registered_static(user_id):
@@ -1600,6 +1639,21 @@ class DatabaseQueries:
         return None
 
     @staticmethod
+    def get_discount_by_id(discount_id: int):
+        """Retrieves a discount by its unique ID."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "SELECT * FROM discounts WHERE id = ?"
+                if db.execute(query, (discount_id,)):
+                    return db.fetchone()
+            except sqlite3.Error as e:
+                print(f"SQLite error in get_discount_by_id: {e}")
+            finally:
+                db.close()
+        return None
+
+    @staticmethod
     def get_discount_by_code(code: str):
         """Retrieves a discount by its code."""
         db = Database()
@@ -1730,6 +1784,81 @@ class DatabaseQueries:
                     return db.fetchall()
             except sqlite3.Error as e:
                 print(f"SQLite error in get_plans_for_discount: {e}")
+            finally:
+                db.close()
+        return []
+
+    # ---------- Ticket helper ----------
+
+    @staticmethod
+    def get_tickets_by_user(user_id: int, limit: int = 20):
+        """Fetch recent tickets for a given user id ordered by newest."""
+        db = Database()
+        rows = []
+        if db.connect():
+            try:
+                sql = "SELECT id, subject, status, created_at FROM tickets WHERE user_id = ? ORDER BY created_at DESC LIMIT ?"
+                db.execute(sql, (user_id, limit))
+                rows = db.fetchall()
+            except Exception as e:
+                logging.error(f"SQLite error in get_tickets_by_user: {e}")
+            finally:
+                db.close()
+        return rows
+
+    # ---------- Support Users ----------
+    @staticmethod
+    def add_support_user(telegram_id: int, added_by: int = None) -> bool:
+        """Add a new support staff user."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "INSERT OR IGNORE INTO support_users (telegram_id, added_by) VALUES (?, ?)"
+                if db.execute(query, (telegram_id, added_by)):
+                    db.commit()
+                    return True
+            except Exception as e:
+                logging.error(f"SQLite error in add_support_user: {e}")
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def remove_support_user(telegram_id: int) -> bool:
+        db = Database()
+        if db.connect():
+            try:
+                if db.execute("DELETE FROM support_users WHERE telegram_id = ?", (telegram_id,)):
+                    db.commit()
+                    return True
+            except Exception as e:
+                logging.error(f"SQLite error in remove_support_user: {e}")
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def is_support_user(telegram_id: int) -> bool:
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT 1 FROM support_users WHERE telegram_id = ? LIMIT 1", (telegram_id,))
+                return db.fetchone() is not None
+            except Exception as e:
+                logging.error(f"SQLite error in is_support_user: {e}")
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def get_all_support_users():
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT telegram_id, added_by, added_at FROM support_users")
+                return db.fetchall()
+            except Exception as e:
+                logging.error(f"SQLite error in get_all_support_users: {e}")
             finally:
                 db.close()
         return []
