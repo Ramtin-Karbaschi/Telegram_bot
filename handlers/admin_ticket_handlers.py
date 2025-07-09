@@ -14,7 +14,7 @@ from telegram.ext import (
 from database.queries import DatabaseQueries
 import config
 from utils.helpers import is_admin
-from utils.helpers import admin_only_decorator as admin_only
+from utils.helpers import staff_only_decorator as staff_only
 
 import json
 from ai.model import responder
@@ -28,18 +28,41 @@ class AdminTicketHandler:
     """Handle ticket management for admins"""
     
     def __init__(self):
-        # self.db_queries = DatabaseQueries() # This instance is not strictly needed if all calls are static
-        pass
+        """Initialize the handler and set `admin_config` required by permission decorators."""
+        self.admin_config = getattr(config, "MANAGER_BOT_ADMINS_DICT", {}) or getattr(config, "ADMIN_USER_IDS", [])
     
+    @staff_only
+    async def show_ticket_history_for_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE, target_user_id: int):
+        """Show recent tickets of specified user to admin/support."""
+        tickets = DatabaseQueries.get_tickets_by_user(target_user_id, limit=20)
+        if not tickets:
+            await update.effective_message.reply_text("📭 برای این کاربر تیکتی یافت نشد.")
+            return
+        text_lines = [f"📄 *آخرین تیکت‌های کاربر {target_user_id}:*\n"]
+        keyboard = []
+        for t in tickets:
+            t = dict(t)
+            ticket_id = t.get('id') or t.get('ticket_id')
+            subject = t.get('subject', 'بدون موضوع')
+            status = (t.get('status') or '').replace('_', ' ')
+            created_at = t.get('created_at', '')
+            text_lines.append(f"• #{ticket_id} | {subject} | {status} | {created_at}")
+            keyboard.append([InlineKeyboardButton(f"تیکت#{ticket_id}", callback_data=f"view_ticket_{ticket_id}")])
+        await update.effective_message.reply_text("\n".join(text_lines), parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(keyboard))
+
     def get_ticket_conversation_handler(self):
         """Get the conversation handler for ticket management"""
         return ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(self.show_tickets_command, pattern="^show_tickets$"),
-                CallbackQueryHandler(self.view_ticket_callback, pattern="^view_ticket_\d+$"),
-                CallbackQueryHandler(self.edit_answer_callback, pattern="^edit_answer_\d+$"),
-                CallbackQueryHandler(self.send_answer_callback, pattern="^send_answer_\d+$"),
-                CallbackQueryHandler(self.close_ticket_callback, pattern="^close_ticket_\d+$")
+                CallbackQueryHandler(self.view_ticket_callback, pattern="^view_ticket_\\d+$"),
+                CallbackQueryHandler(self.generate_answer_callback, pattern="^gen_answer_\\d+$"),
+                CallbackQueryHandler(self.manual_answer_callback, pattern="^manual_answer_\\d+$"),
+                CallbackQueryHandler(self.edit_answer_callback, pattern="^edit_answer_\\d+$"),
+                CallbackQueryHandler(self.send_answer_callback, pattern="^send_answer_\\d+$"),
+                CallbackQueryHandler(self.close_ticket_callback, pattern="^close_ticket_\\d+$"),
+                CallbackQueryHandler(self.refresh_tickets_callback, pattern="^refresh_tickets$"),
+                CallbackQueryHandler(self.refresh_all_tickets_callback, pattern="^refresh_all_tickets$")
             ],
             states={
                 # Add states as needed
@@ -50,11 +73,7 @@ class AdminTicketHandler:
             per_message=False
         )
     
-    def __init__(self):
-        # self.db_queries = DatabaseQueries() # This instance is not strictly needed if all calls are static
-        pass
-    
-    @admin_only
+    @staff_only
     async def show_tickets_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show all pending tickets to admin"""
         user_id = update.effective_user.id
@@ -92,7 +111,7 @@ class AdminTicketHandler:
                 # Add button for this ticket to the current row
                 row.append(
                     InlineKeyboardButton(
-                        f"مشاهده تیکت #{ticket_id}", 
+                        f"تیکت#{ticket_id}", 
                         callback_data=f"view_ticket_{ticket_id}"
                     )
                 )
@@ -154,10 +173,7 @@ class AdminTicketHandler:
             created_at = ticket.get('created_at', 'نامشخص')
             status = ticket.get('status', 'نامشخص')
 
-            # Generate AI suggested answer for the specific user
-            ticket_owner_id = ticket.get('user_id')
-            ai_answer = responder.answer_ticket(subject, message, ticket_owner_id)
-            context.user_data[f'ai_answer_{ticket_id}'] = ai_answer
+
 
             # Get user info
             user_info = self._get_user_info(user_id_ticket)
@@ -181,19 +197,18 @@ class AdminTicketHandler:
                 f"اطلاعات تماس: {contact_info}"
             )
 
-            # Append AI suggested answer to message
-            message_text += f"پاسخ پیشنهادی هوش‌مصنوعی:\n{ai_answer}\n\n"
+
 
             # Create action buttons
             keyboard = [
-                [ # First row: Send and Edit
-                    InlineKeyboardButton("ارسال پاسخ پیشنهادی", callback_data=f"send_answer_{ticket_id}"),
-                    InlineKeyboardButton("ویرایش و ارسال پاسخ", callback_data=f"edit_answer_{ticket_id}")
+                [  # First row: generate AI answer
+                    InlineKeyboardButton("🔄 تولید پاسخ پیشنهادی", callback_data=f"gen_answer_{ticket_id}"),
+                    InlineKeyboardButton("✍️ پاسخ دستی", callback_data=f"manual_answer_{ticket_id}")
                 ],
-                [ # Second row: Close ticket
+                [  # Second row: Close ticket
                     InlineKeyboardButton("بستن تیکت", callback_data=f"close_ticket_{ticket_id}")
                 ],
-                [ # Third row: Back to list
+                [  # Third row: Back to list
                     InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data="refresh_tickets")
                 ]
             ]
@@ -207,6 +222,69 @@ class AdminTicketHandler:
         except Exception as e:
             logger.error(f"Error viewing ticket: {e}")
             await query.edit_message_text("خطا در نمایش تیکت.")
+
+    async def generate_answer_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Generate AI suggested answer on demand and update the ticket view"""
+        query = update.callback_query
+        await query.answer("در حال تولید پاسخ...")
+
+        user_id = query.from_user.id
+        if not self._is_admin(user_id):
+            await query.edit_message_text("شما دسترسی لازم برای این عملیات را ندارید.")
+            return
+
+        ticket_id = int(query.data.split('_')[-1])
+        ticket = self._get_ticket_by_id(ticket_id)
+        if not ticket:
+            await query.edit_message_text("تیکت یافت نشد.")
+            return
+
+        # Generate AI answer
+        subject = ticket.get('subject', 'بدون موضوع')
+        first_message = ticket.get('message', '')
+        ai_answer = responder.answer_ticket(subject, first_message, ticket.get('user_id'))
+        if not ai_answer:
+            await query.edit_message_text("خطا در تولید پاسخ توسط هوش‌مصنوعی.")
+            return
+        context.user_data[f'ai_answer_{ticket_id}'] = ai_answer
+
+        # Prepare updated message text (similar to view_ticket details)
+        user_info = self._get_user_info(ticket.get('user_id'))
+        user_display = html.escape(self._format_user_info(user_info)) if user_info else "نامشخص"
+        contact_info = html.escape(self._get_contact_info(user_info)) if user_info else "-"
+        subject_html = html.escape(subject)
+        message_html = html.escape(first_message)
+        created_at = ticket.get('created_at', 'نامشخص')
+        status = ticket.get('status', 'نامشخص')
+
+        message_text = (
+            f"جزئیات تیکت #{ticket_id}\n\n"
+            f"کاربر: {user_display}\n"
+            f"موضوع: {subject_html}\n"
+            f"تاریخ ایجاد: {created_at}\n"
+            f"وضعیت: {self._get_status_emoji(status)} {status}\n\n"
+            f"پیام:\n{message_html}\n\n"
+            f"اطلاعات تماس: {contact_info}\n\n"
+            f"پاسخ پیشنهادی هوش‌مصنوعی:\n{ai_answer}\n"
+        )
+
+        # Updated keyboard with send/edit options
+        keyboard = [
+            [
+                InlineKeyboardButton("ارسال پاسخ پیشنهادی", callback_data=f"send_answer_{ticket_id}"),
+                InlineKeyboardButton("ویرایش و ارسال پاسخ", callback_data=f"edit_answer_{ticket_id}")
+            ],
+            [
+                InlineKeyboardButton("🔄 تولید مجدد پاسخ", callback_data=f"gen_answer_{ticket_id}")
+            ],
+            [
+                InlineKeyboardButton("بستن تیکت", callback_data=f"close_ticket_{ticket_id}")
+            ],
+            [
+                InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data="refresh_tickets")
+            ]
+        ]
+        await query.edit_message_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def send_answer_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Send the stored AI answer to the ticket owner"""
@@ -263,6 +341,29 @@ class AdminTicketHandler:
             reply_markup=ForceReply(selective=True)
         )
         # Set state for later processing (implementation of listener not included here)
+        context.user_data['editing_ticket_id'] = ticket_id
+
+    async def manual_answer_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Prompt admin to type a manual answer without AI suggestion"""
+        query = update.callback_query
+        await query.answer()
+
+        user_id = query.from_user.id
+        if not self._is_admin(user_id):
+            await query.edit_message_text("شما دسترسی لازم برای این عملیات را ندارید.")
+            return
+
+        ticket_id = int(query.data.split('_')[-1])
+        ticket = self._get_ticket_by_id(ticket_id)
+        if not ticket:
+            await query.edit_message_text("تیکت یافت نشد.")
+            return
+
+        # Ask admin to reply manually
+        await query.message.reply_text(
+            "لطفاً پاسخ خود را بنویسید و ارسال کنید.",
+            reply_markup=ForceReply(selective=True)
+        )
         context.user_data['editing_ticket_id'] = ticket_id
 
     async def receive_edited_answer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -343,8 +444,8 @@ class AdminTicketHandler:
             def __init__(self, chat_id, from_user):
                 self.chat_id = chat_id
                 self.from_user = from_user
-            async def reply_text(self, text, reply_markup):
-                await query.edit_message_text(text=text, reply_markup=reply_markup)
+            async def reply_text(self, text, reply_markup=None, parse_mode=None, **kwargs):
+                await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode, **kwargs)
         
         dummy_update = Update(update.update_id, message=DummyMessage(query.message.chat_id, query.from_user))
         await self.show_tickets_command(dummy_update, context)
@@ -395,7 +496,7 @@ class AdminTicketHandler:
                 # Build button and group by 3 per row
                 keyboard.append([
                     InlineKeyboardButton(
-                        f"مشاهده تیکت #{ticket_id}", 
+                        f"تیکت#{ticket_id}", 
                         callback_data=f"view_ticket_{ticket_id}"
                     )
                 ])
@@ -441,6 +542,10 @@ class AdminTicketHandler:
                 if isinstance(admin, dict) and admin.get('chat_id') == user_id and \
                    'manager_bot_admin' in admin.get('roles', []):
                     return True
+            # Check support users table
+            from database.queries import DatabaseQueries
+            if DatabaseQueries.is_support_user(user_id):
+                return True  # Treat support users as authorized for ticket handling
             return False
         except json.JSONDecodeError as e:
             logger.error(f"Error decoding ALL_ADMINS_CONFIG_JSON: {e}")
@@ -598,7 +703,7 @@ class AdminTicketHandler:
             logger.error(f"Error in _get_all_tickets: {e}", exc_info=True)
             return []
 
-    @admin_only
+    @staff_only
     async def show_all_tickets_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show all tickets history to admin"""
         user_id = update.effective_user.id  # noqa: F841 unused but kept for symmetry
@@ -626,7 +731,7 @@ class AdminTicketHandler:
                 message_text += "─────────────────\n\n"
                 keyboard.append([
                     InlineKeyboardButton(
-                        f"📋 مشاهده تیکت #{ticket_id}", callback_data=f"view_ticket_{ticket_id}")
+                        f"📋 تیکت#{ticket_id}", callback_data=f"view_ticket_{ticket_id}")
                 ])
             keyboard.append([InlineKeyboardButton("به‌روزرسانی", callback_data="refresh_all_tickets")])
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -674,7 +779,7 @@ class AdminTicketHandler:
                 message_text += "───────────────────\n\n"
 
                 row.append(InlineKeyboardButton(
-                    f"📋 مشاهده تیکت #{ticket_id}", callback_data=f"view_ticket_{ticket_id}"
+                    f"📋 تیکت#{ticket_id}", callback_data=f"view_ticket_{ticket_id}"
                 ))
 
                 if len(row) == 3:
@@ -702,7 +807,10 @@ class AdminTicketHandler:
         return [
             CommandHandler('tickets', self.show_tickets_command),
             CommandHandler('all_tickets', self.show_all_tickets_command),
+            
             CallbackQueryHandler(self.view_ticket_callback, pattern=r'^view_ticket_\d+$'),
+            CallbackQueryHandler(self.generate_answer_callback, pattern=r'^gen_answer_\d+$'),
+            CallbackQueryHandler(self.manual_answer_callback, pattern=r'^manual_answer_\d+$'),
             CallbackQueryHandler(self.send_answer_callback, pattern=r'^send_answer_\d+$'),
             CallbackQueryHandler(self.edit_answer_callback, pattern=r'^edit_answer_\d+$'),
             CallbackQueryHandler(self.close_ticket_callback, pattern=r'^close_ticket_\d+$'),
