@@ -187,7 +187,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     keyboard.append([InlineKeyboardButton(constants.TEXT_BACK_TO_MAIN_MENU, callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU)])
                                     
                                     reply_markup = InlineKeyboardMarkup(keyboard)
-                                    text = "🎉 عالی! اشتراک شما با موفقیت فعال شد. اکنون می‌توانید از طریق لینک‌های زیر به کانال و گروه دسترسی داشته باشید:\n\n⚠️ این لینک‌ها پس از ۵ دقیقه منقضی می‌شوند."
+                                    text = "🎉 عالی! اشتراک شما با موفقیت فعال شد. اکنون می‌توانید از طریق دکمه‌های زیر به کانال دسترسی داشته باشید:\n\n⚠️ این لینک‌ها پس از ۵ دقیقه منقضی می‌شوند."
                                     
                                     # Send the message and schedule it for deletion
                                     await send_and_schedule_deletion(update, context, text, reply_markup, 300)
