@@ -962,31 +962,26 @@ class AdminMenuHandler:
         await query.edit_message_text("\n".join(lines), parse_mode="MarkdownV2")
 
     async def _show_payments_stats(self, query):
-        plans = DatabaseQueries.get_active_plans()
-        if not plans:
-            await query.edit_message_text("📊 هیچ پلن فعالی یافت نشد.")
-            return
+        """Show per-plan sales & subscription stats for admins."""
         from telegram.helpers import escape_markdown
-        lines = [escape_markdown("📈 آمار اشتراک‌های فعال:", version=2) + "\n"]
-        for plan in plans:
-            # Extract fields robustly for tuple/list, dict, or sqlite3.Row
-            if isinstance(plan, (list, tuple)):
-                plan_id, plan_name = plan[0], plan[1]
-            else:
-                # Try mapping access first
-                try:
-                    plan_id = plan["id"]
-                    plan_name = plan["name"]
-                except Exception:
-                    plan_id = getattr(plan, "id", None)
-                    plan_name = getattr(plan, "name", str(plan))
-                    if plan_id is None and hasattr(plan, "get"):
-                        plan_id = plan.get("id")
-                        plan_name = plan.get("name", plan_name)
 
-            count = DatabaseQueries.count_total_subs(plan_id)
-            escaped_name = escape_markdown(str(plan_name), version=2)
-            lines.append(f"• {escaped_name}: {count} مشترک فعال")
+        stats = DatabaseQueries.get_sales_stats_per_plan()
+        if not stats:
+            await query.edit_message_text("📊 هیچ آماری برای نمایش وجود ندارد.")
+            return
+
+        header = escape_markdown("📈 آمار فروش/اشتراک هر پلن:", version=2)
+        lines = [header + "\n"]
+        for rec in stats:
+            pid   = rec.get("plan_id")
+            name  = rec.get("plan_name")
+            active = rec.get("active_subscriptions", 0)
+            total  = rec.get("total_subscriptions", 0)
+            rev_r = rec.get("total_revenue_rial", 0) or 0
+            rev_u = rec.get("total_revenue_usdt", 0) or 0
+            name_md = escape_markdown(str(name), version=2)
+            lines.append(f"• {name_md}: {active}/{total} فعال | درآمد: {rev_u:.2f} USDT – {int(rev_r):,} ریال")
+
         await query.edit_message_text("\n".join(lines), parse_mode="MarkdownV2")
 
     # ---------- Settings helpers ----------
