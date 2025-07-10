@@ -77,9 +77,7 @@ async def _payment_timer_callback(context: ContextTypes.DEFAULT_TYPE):
             final_price_rial = user_data.get('dynamic_irr_price')
             # Force refresh USDT rate
             new_rate = await get_usdt_to_irr_rate(force_refresh=True)
-            if new_rate:
-                new_usdt_price = convert_irr_to_usdt(final_price_rial, new_rate)
-                user_data['live_usdt_price'] = new_usdt_price
+            # USDT price remains constant (product base price), no need to recalculate
             expiry = now + timedelta(minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES)
             job_data['expiry'] = expiry
             remaining = expiry - now
@@ -185,15 +183,11 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Persist dynamic IRR price in context for later payment creation steps
     context.user_data['dynamic_irr_price'] = irr_price_dynamic
+    context.user_data['live_usdt_price'] = usdt_price  # base USDT price (no markup)
     final_price = irr_price_dynamic
 
     plan_price_irr_formatted = f"{int(final_price):,}" if final_price is not None else "N/A"
-    live_usdt_price = None
-    if irr_price_dynamic and usdt_rate:
-        live_usdt_price = convert_irr_to_usdt(irr_price_dynamic, usdt_rate)
-        context.user_data['live_usdt_price'] = live_usdt_price
-
-    plan_price_usdt_formatted = f"{live_usdt_price:.5f}" if live_usdt_price is not None else "N/A"
+    plan_price_usdt_formatted = f"{usdt_price:.5f}" if usdt_price is not None else "N/A"
     message_text = PAYMENT_METHOD_MESSAGE.format(
         plan_name=selected_plan.get('name', 'N/A'),
         plan_price=plan_price_irr_formatted,
@@ -408,11 +402,29 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.edit_text("خطا: اطلاعات طرح یافت نشد. لطفاً از ابتدا شروع کنید.", reply_markup=get_subscription_plans_keyboard(telegram_id))
         return SELECT_PLAN
 
-    # Retrieve the final price (potentially discounted) from user_data, otherwise get original price
-    price_irr = context.user_data.get('final_price', selected_plan.get('price'))
+    # Retrieve the final price (potentially discounted) from user_data; if absent or not numeric, compute dynamically
+    price_irr = context.user_data.get('final_price')
+    if price_irr is None or (isinstance(price_irr, (str, bytes)) and not str(price_irr).strip().isdigit()):
+        # Try dynamic IRR price stored earlier
+        price_irr = context.user_data.get('dynamic_irr_price')
+
     if price_irr is None:
-        logger.error(f"User {telegram_id}: Could not find price for selected plan in user_data.")
-        await query.message.edit_text("خطای سیستمی: قیمت پلن انتخابی یافت نشد. لطفاً مجدداً تلاش کنید.")
+        # Fallback: compute from USDT price * live rate
+        usdt_price = selected_plan.get('price_tether') or selected_plan.get('original_price_usdt')
+        if usdt_price:
+            usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
+            price_irr = convert_usdt_to_irr(usdt_price, usdt_rate) if usdt_rate else None
+            context.user_data['dynamic_irr_price'] = price_irr
+    
+    # Ensure price_irr is numeric
+    try:
+        price_irr = int(price_irr) if price_irr is not None else None
+    except (ValueError, TypeError):
+        price_irr = None
+
+    if price_irr is None:
+        logger.error(f"User {telegram_id}: Could not determine numeric IRR price for selected plan.")
+        await query.message.edit_text("خطای سیستمی: قیمت پلن انتخابی مشخص نشد. لطفاً دوباره تلاش کنید.")
         return SELECT_PLAN
 
     plan_id = selected_plan['id']
@@ -489,6 +501,10 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             authority = zarinpal_request.get('authority')
             payment_url = zarinpal_request.get('payment_url')
 
+            # Set 30-minute expiry for this payment link
+            expires_at_dt = datetime.now() + timedelta(minutes=30)
+            Database.update_payment_expires_at(payment_db_id, expires_at_dt)
+
             # Immediately update the database with the authority code
             Database.update_payment_transaction_id(payment_db_id, str(authority), status='pending_verification')
 
@@ -503,7 +519,8 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
             message_text = (
                 f"برای تکمیل خرید محصولات «{plan_name}» به مبلغ {amount_for_zarinpal:,} ریال، لطفاً از طریق لینک زیر پرداخت خود را انجام دهید.\n\n"
-                f"⚠️ <b>مهم:</b> پس از تکمیل پرداخت در سایت زرین‌پال، <b>روی دکمه زیر کلیک کنید</b> تا اشتراک شما فعال شود."
+                f"⚠️ <b>مهم:</b> پس از تکمیل پرداخت در سایت زرین‌پال، <b>روی دکمه زیر کلیک کنید</b> تا اشتراک شما فعال شود.\n\n"
+                f"این لینک پرداخت تا ۳۰ دقیقه معتبر است و پس از آن منقضی می‌شود."
             )
             await query.message.edit_text(
                 text=message_text,
@@ -533,18 +550,9 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif payment_method == 'crypto':
         rial_amount = context.user_data.get('dynamic_irr_price')
-        # Always fetch a fresh USDT buy price from AbanTether right before showing wallet address
-        usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
-        if not usdt_rate:
-            logger.error("Failed to fetch live USDT buy rate for crypto payment (telegram_id=%s)", telegram_id)
-            await query.message.edit_text(
-                "خطا در دریافت قیمت لحظه‌ای تتر. لطفاً دوباره تلاش کنید یا روش پرداخت دیگری را انتخاب نمایید.",
-                reply_markup=get_payment_methods_keyboard()
-            )
-            return SELECT_PAYMENT_METHOD
-
-        live_calculated_usdt_price = convert_irr_to_usdt(rial_amount, usdt_rate)
-        # Cache the live price in user_data for later use (e.g., verification callbacks)
+        # Use the original (or discounted) USDT price directly; no reverse conversion needed
+        live_calculated_usdt_price = context.user_data.get('live_usdt_price') or (selected_plan.get('price_tether') or selected_plan.get('original_price_usdt'))
+        # Cache the price in user_data for later use (e.g., verification callbacks)
         context.user_data['live_usdt_price'] = live_calculated_usdt_price
 
         if live_calculated_usdt_price is None or live_calculated_usdt_price <= 0:
@@ -580,26 +588,24 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             )
             logger.error(f"Failed to create placeholder crypto payment request for user_db_id {user_db_id}, plan {plan_id}.")
             await query.message.edit_text(PAYMENT_ERROR_MESSAGE, reply_markup=get_main_menu_keyboard(telegram_id))
-            return ConversationHandler.END # Or SELECT_PAYMENT_METHOD
+            return ConversationHandler.END  # Or SELECT_PAYMENT_METHOD
 
-        logger.info(f"User {telegram_id} (DB ID: {user_db_id}): About to call Database.create_crypto_payment_request for plan {selected_plan['id']}, price_tether: {selected_plan['price_tether']}")
-
+        # -- Calculate unique USDT amount for this request -------------------
         try:
-            # Step 2: Calculate the unique USDT amount using the obtained ID.
-            logger.info(f"User {telegram_id} (DB ID: {user_db_id}): Crypto payment_request_db_id: {crypto_payment_request_db_id}. About to call CryptoPaymentService.get_final_usdt_payment_amount with base_usdt_amount_rounded_to_3_decimals: {live_calculated_usdt_price}")
             usdt_amount_requested = CryptoPaymentService.get_final_usdt_payment_amount(
-                base_usdt_amount_rounded_to_3_decimals=live_calculated_usdt_price # live_calculated_usdt_price is the USDT amount for the plan, already rounded to 3 decimals
+                base_usdt_amount_rounded_to_3_decimals=live_calculated_usdt_price,
+                payment_request_id=crypto_payment_request_db_id
             )
-            # The following log line can be adjusted if needed, as 'unique_amount' might be misleading now.
-            # Perhaps change 'unique_amount' to 'final_amount' or 'requested_amount'.
-            logger.info(f"User {telegram_id} (DB ID: {user_db_id}): Crypto final_usdt_amount_data: {{'final_amount': {usdt_amount_requested}, 'id': {crypto_payment_request_db_id}}}")
             context.user_data['usdt_amount_requested'] = usdt_amount_requested
-
         except Exception as e:
-            logger.exception(f"Error calculating USDT amount for rial_amount {rial_amount}, payment_id {crypto_payment_request_db_id}. telegram_id: {telegram_id}")
-            # Consider updating DB record status to 'calculation_exception'
-            await query.message.edit_text("خطا در سیستم تبدیل ارز. لطفاً لحظاتی دیگر تلاش کنید یا با پشتیبانی تماس بگیرید.", reply_markup=get_payment_methods_keyboard())
+            logger.exception(
+                f"Error calculating USDT amount for payment_request_id {crypto_payment_request_db_id}. telegram_id: {telegram_id}")
+            await query.message.edit_text(
+                "خطا در سیستم تبدیل ارز. لطفاً لحظاتی دیگر تلاش کنید یا با پشتیبانی تماس بگیرید.",
+                reply_markup=get_payment_methods_keyboard()
+            )
             return SELECT_PAYMENT_METHOD
+
 
         # Step 3: Update the crypto payment request record with the calculated USDT amount.
         # This requires a method like: Database.update_crypto_payment_request_with_amount(request_id, usdt_amount)
@@ -1017,6 +1023,22 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
         verification_result = ZarinpalPaymentService.verify_payment(amount=rial_amount, authority=zarinpal_authority)
         
         current_payment_record = Database.get_payment_by_id(payment_db_id)
+        # Check expiration before contacting gateway
+        expires_at_str = current_payment_record.get('expires_at') if current_payment_record else None
+        if expires_at_str:
+            try:
+                expires_at_dt = datetime.fromisoformat(expires_at_str)
+            except ValueError:
+                expires_at_dt = None
+            if expires_at_dt and datetime.now() > expires_at_dt:
+                # Expired – update status and notify user
+                Database.update_payment_status(payment_db_id, 'expired', error_message='link_expired')
+                await query.message.edit_text(
+                    text="❌ این لینک پرداخت منقضی شده است. لطفاً دوباره اقدام به پرداخت کنید.",
+                    reply_markup=get_payment_methods_keyboard()
+                )
+                UserAction.log_user_action(telegram_id, 'zarinpal_link_expired', {'payment_db_id': payment_db_id})
+                return ConversationHandler.END
         if not current_payment_record or current_payment_record['user_id'] != user_db_id:
             logger.error(f"Zarinpal verification: Payment record {payment_db_id} not found or mismatch for user {user_db_id}.")
             await query.message.edit_text("خطا: رکورد پرداخت شما یافت نشد. با پشتیبانی تماس بگیرید.")
@@ -1128,21 +1150,23 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
         context.user_data['selected_plan_details'] = selected_plan
 
     await query.answer()
-    plan_price_irr_formatted = f"{int(selected_plan['price']):,}" if selected_plan.get('price') is not None else "N/A"
 
-    # Recalculate live USDT price
-    live_usdt_price = None
-    rial_price = selected_plan.get('price')
-    if rial_price:
-        usdt_rate = await get_usdt_to_irr_rate(force_refresh=True) # Fetches live rate from Nobitex/Coingecko
-        if usdt_rate:
-            # نرخ دریافتی از get_usdt_to_irr_rate به ریال است؛ برای تبدیل به تومان باید تقسیم بر ۱۰ شود.
-            live_usdt_price = convert_irr_to_usdt(rial_price, usdt_rate)
-            context.user_data['live_usdt_price'] = live_usdt_price # Store for crypto payment step
-        else:
-            logger.warning(f"User {update.effective_user.id}: Could not fetch USDT rate in back_to_payment_methods_handler.")
-    else:
-        logger.warning(f"User {update.effective_user.id}: Rial price missing for plan {selected_plan.get('id')} in back_to_payment_methods_handler.")
+    # Use dynamic IRR price stored in context (set in show_payment_methods). If not present, compute now.
+    dynamic_irr_price = context.user_data.get('dynamic_irr_price')
+    usdt_price = context.user_data.get('live_usdt_price')
+
+    if dynamic_irr_price is None:
+        usdt_price = selected_plan.get('price_tether') or selected_plan.get('original_price_usdt')
+        usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
+        dynamic_irr_price = convert_usdt_to_irr(usdt_price, usdt_rate) if (usdt_price and usdt_rate) else None
+        context.user_data['dynamic_irr_price'] = dynamic_irr_price
+        # Store rate-converted USDT price as well for later crypto payments
+        context.user_data['live_usdt_price'] = usdt_price
+
+    plan_price_irr_formatted = f"{int(dynamic_irr_price):,}" if dynamic_irr_price is not None else "N/A"
+
+    # Ensure we have live_usdt_price (might be computed above or stored earlier)
+    live_usdt_price = context.user_data.get('live_usdt_price')
 
     plan_price_usdt_formatted = f"{live_usdt_price:.5f}" if live_usdt_price is not None else "N/A"
     message_text = PAYMENT_METHOD_MESSAGE.format(
