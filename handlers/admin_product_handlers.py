@@ -149,7 +149,7 @@ class AdminProductHandler:
 
             text = (
                 f"*جزئیات پلن: {plan['name']}*\n\n"
-                f"*قیمت:* {plan['price']} تومان\n"
+                f"*قیمت:* {plan['price']} ریال\n"
                 f"*مدت:* {plan['duration_days']} روز\n"
                 f"*توضیحات:* {plan.get('description', 'ندارد')}\n"
                 f"*وضعیت:* {status_text}\n"
