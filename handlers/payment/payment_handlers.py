@@ -60,7 +60,7 @@ def _cancel_existing_payment_timer(context: ContextTypes.DEFAULT_TYPE):
     if job:
         job.schedule_removal()
 
-def _payment_timer_callback(context: ContextTypes.DEFAULT_TYPE):
+async def _payment_timer_callback(context: ContextTypes.DEFAULT_TYPE):
     """Update the payment message countdown each minute and refresh price on expiry."""
     job_data = context.job.data
     chat_id = job_data['chat_id']
@@ -184,41 +184,25 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
     plan_price_irr_formatted = f"{int(final_price):,}"
     live_usdt_price = None
     if final_price:
-        usdt_rate = await get_usdt_to_irr_rate()
+        usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
         if usdt_rate:
             live_usdt_price = convert_irr_to_usdt(final_price, usdt_rate)
             context.user_data['live_usdt_price'] = live_usdt_price
 
     plan_price_usdt_formatted = f"{live_usdt_price:.5f}" if live_usdt_price is not None else "N/A"
-    # Store header for timer updates
-    header_text = PAYMENT_METHOD_MESSAGE.format(
+    message_text = PAYMENT_METHOD_MESSAGE.format(
         plan_name=selected_plan.get('name', 'N/A'),
         plan_price=plan_price_irr_formatted,
         plan_tether=plan_price_usdt_formatted
     )
-    context.user_data['payment_message_header'] = header_text
 
     await query.message.edit_text(
-        text=header_text,
+        text=message_text,
         reply_markup=get_payment_methods_keyboard(),
         parse_mode=ParseMode.HTML
     )
 
-    # ---------------- schedule / reset countdown timer ----------------
-    _cancel_existing_payment_timer(context)
-    expiry_dt = datetime.utcnow() + timedelta(minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES)
-    context.user_data['payment_price_expiry'] = expiry_dt
-    job = context.job_queue.run_repeating(
-        _payment_timer_callback,
-        interval=60,
-        first=60,
-        data={'chat_id': query.message.chat_id,
-              'message_id': query.message.message_id,
-              'expiry': expiry_dt,
-              'user_data': context.user_data},
-        name=f"payment_timer_{update.effective_user.id}"
-    )
-    context.user_data['payment_timer_job'] = job
+
     return SELECT_PAYMENT_METHOD
 
 async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -545,8 +529,19 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif payment_method == 'crypto':
         rial_amount = selected_plan.get('price')
-        # price_tether = selected_plan.get('price_tether') # Using live calculated price now
-        live_calculated_usdt_price = context.user_data.get('live_usdt_price')
+        # Always fetch a fresh USDT buy price from AbanTether right before showing wallet address
+        usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
+        if not usdt_rate:
+            logger.error("Failed to fetch live USDT buy rate for crypto payment (telegram_id=%s)", telegram_id)
+            await query.message.edit_text(
+                "خطا در دریافت قیمت لحظه‌ای تتر. لطفاً دوباره تلاش کنید یا روش پرداخت دیگری را انتخاب نمایید.",
+                reply_markup=get_payment_methods_keyboard()
+            )
+            return SELECT_PAYMENT_METHOD
+
+        live_calculated_usdt_price = convert_irr_to_usdt(rial_amount, usdt_rate)
+        # Cache the live price in user_data for later use (e.g., verification callbacks)
+        context.user_data['live_usdt_price'] = live_calculated_usdt_price
 
         if live_calculated_usdt_price is None or live_calculated_usdt_price <= 0:
             logger.warning(f"Plan {plan_id} has invalid live_calculated_usdt_price {live_calculated_usdt_price} for crypto payment. telegram_id: {telegram_id}")
@@ -1135,7 +1130,7 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
     live_usdt_price = None
     rial_price = selected_plan.get('price')
     if rial_price:
-        usdt_rate = await get_usdt_to_irr_rate() # Fetches live rate from Nobitex/Coingecko
+        usdt_rate = await get_usdt_to_irr_rate(force_refresh=True) # Fetches live rate from Nobitex/Coingecko
         if usdt_rate:
             # نرخ دریافتی از get_usdt_to_irr_rate به ریال است؛ برای تبدیل به تومان باید تقسیم بر ۱۰ شود.
             live_usdt_price = convert_irr_to_usdt(rial_price, usdt_rate)
