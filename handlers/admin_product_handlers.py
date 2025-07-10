@@ -1,5 +1,6 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from utils.price_utils import get_usdt_to_irr_rate
 from utils.helpers import admin_only_decorator as admin_only
 from database.queries import DatabaseQueries
 import logging
@@ -65,12 +66,12 @@ class AdminProductHandler:
 
     async def get_plan_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['new_plan_name'] = update.message.text
-        await update.message.reply_text("لطفاً قیمت پلن را به تومان وارد کنید:")
+        await update.message.reply_text("لطفاً قیمت پلن را به تتر (USDT) وارد کنید:")
         return ADD_PRICE
 
     async def get_plan_price(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         from utils.locale_utils import to_float
-        context.user_data['new_plan_price'] = to_float(update.message.text)
+        context.user_data['new_plan_price_usdt'] = to_float(update.message.text)
         await update.message.reply_text("مدت زمان پلن را به روز وارد کنید:")
         return ADD_DURATION
 
@@ -81,13 +82,24 @@ class AdminProductHandler:
         return ADD_DESCRIPTION
 
     async def get_plan_description(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Collect description and show confirmation with USDT & IRR prices."""
         context.user_data['new_plan_description'] = update.message.text
-        # Show confirmation
         plan_data = context.user_data
+
+        usdt_price: float | None = plan_data.get('new_plan_price_usdt')
+        irr_price: int | None = None
+        if usdt_price is not None:
+            usdt_rate = await get_usdt_to_irr_rate()
+            if usdt_rate:
+                irr_price = int(usdt_price * usdt_rate * 10)  # toman→rial
+
+        price_line = f"قیمت: {usdt_price} USDT" if usdt_price is not None else "قیمت مشخص نشده"
+        if irr_price is not None:
+            price_line += f" (~{irr_price:,} ریال)"
         text = (
             f"آیا از افزودن پلن زیر اطمینان دارید؟\n\n"
             f"نام: {plan_data['new_plan_name']}\n"
-            f"قیمت: {plan_data['new_plan_price']} تومان\n"
+            f"{price_line}\n"
             f"مدت: {plan_data['new_plan_duration']} روز\n"
             f"توضیحات: {plan_data['new_plan_description']}"
         )
@@ -107,9 +119,20 @@ class AdminProductHandler:
         if name == 'free_30d':
             is_public = False
 
+        # Compute IRR equivalent for storage (legacy compatibility)
+        usdt_price: float | None = plan_data.get('new_plan_price_usdt')
+        irr_price: int | None = None
+        if usdt_price is not None:
+            usdt_rate = await get_usdt_to_irr_rate()
+            if usdt_rate:
+                irr_price = int(usdt_price * usdt_rate * 10)
+
         plan_id = self.db_queries.add_plan(
             name=name,
-            price=plan_data['new_plan_price'],
+            price=irr_price,
+            price_tether=plan_data.get('new_plan_price_usdt'),
+            original_price_irr=irr_price,
+            original_price_usdt=plan_data.get('new_plan_price_usdt'),
             duration_days=plan_data['new_plan_duration'],
             description=plan_data['new_plan_description'],
             is_active=is_active,
@@ -144,12 +167,20 @@ class AdminProductHandler:
             is_active = plan.get('is_active', False)
             is_public = plan.get('is_public', False)
 
+            
             status_text = "فعال" if is_active else "غیرفعال"
             public_text = "عمومی" if is_public else "خصوصی (فقط ادمین)"
 
+            # Prepare price display (USDT + IRR)
+            usdt_val = plan.get('price_tether') or plan.get('original_price_usdt')
+            irr_val = plan.get('price') or plan.get('original_price_irr')
+            price_display = f"{usdt_val} USDT" if usdt_val is not None else "—"
+            if irr_val is not None:
+                price_display += f" (~{irr_val:,} ریال)"
+
             text = (
                 f"*جزئیات پلن: {plan['name']}*\n\n"
-                f"*قیمت:* {plan['price']} ریال\n"
+                f"*قیمت:* {price_display}\n"
                 f"*مدت:* {plan['duration_days']} روز\n"
                 f"*توضیحات:* {plan.get('description', 'ندارد')}\n"
                 f"*وضعیت:* {status_text}\n"
@@ -239,7 +270,7 @@ class AdminProductHandler:
     async def get_new_plan_price(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message.text != '/skip':
             from utils.locale_utils import to_float
-            context.user_data['edit_plan_price'] = to_float(update.message.text)
+            context.user_data['edit_plan_price_usdt'] = to_float(update.message.text)
         await update.message.reply_text("لطفاً مدت زمان جدید را به روز وارد کنید (برای رد شدن، /skip را بزنید):")
         return EDIT_DURATION
 
@@ -282,11 +313,21 @@ class AdminProductHandler:
         plan_id = context.user_data['edit_plan_id']
         update_kwargs = {
             'name': context.user_data.get('edit_plan_name'),
-            'price': context.user_data.get('edit_plan_price'),
+            'price': None,  # will derive again
+            'price_tether': context.user_data.get('edit_plan_price_usdt'),
             'duration_days': context.user_data.get('edit_plan_duration'),
             'description': context.user_data.get('edit_plan_description'),
         }
         # Filter out None values
+        # compute IRR price if tether provided
+        if update_kwargs.get('price_tether') is not None:
+            usdt_rate = await get_usdt_to_irr_rate()
+            if usdt_rate:
+                irr_price_val = int(update_kwargs['price_tether'] * usdt_rate * 10)
+                update_kwargs['price'] = irr_price_val
+                update_kwargs['original_price_irr'] = irr_price_val
+                update_kwargs['original_price_usdt'] = update_kwargs['price_tether']
+        # remove None entries
         update_kwargs = {k: v for k, v in update_kwargs.items() if v is not None}
 
         if update_kwargs:
