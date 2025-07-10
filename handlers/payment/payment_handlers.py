@@ -43,7 +43,7 @@ import uuid
 import os
 # import config # Direct access to SUBSCRIPTION_PLANS removed
 from database.queries import DatabaseQueries as Database
-from utils.price_utils import get_usdt_to_irr_rate, convert_irr_to_usdt
+from utils.price_utils import get_usdt_to_irr_rate, convert_irr_to_usdt, convert_usdt_to_irr
 from config import RIAL_GATEWAY_URL, CRYPTO_GATEWAY_URL # Assuming these are still needed from config
 from utils.keyboards import (
     get_subscription_plans_keyboard, get_payment_methods_keyboard,
@@ -74,7 +74,7 @@ async def _payment_timer_callback(context: ContextTypes.DEFAULT_TYPE):
         if remaining.total_seconds() <= 0:
             # Price expired – recalc price & reset timer
             selected_plan = user_data.get('selected_plan_details')
-            final_price_rial = user_data.get('final_price', selected_plan.get('price'))
+            final_price_rial = user_data.get('dynamic_irr_price')
             # Force refresh USDT rate
             new_rate = await get_usdt_to_irr_rate(force_refresh=True)
             if new_rate:
@@ -179,15 +179,19 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
 
     selected_plan = context.user_data.get('selected_plan_details')
-    final_price = context.user_data.get('final_price', selected_plan.get('price'))
+    usdt_price = selected_plan.get('price_tether') or selected_plan.get('original_price_usdt')
+    usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
+    irr_price_dynamic = convert_usdt_to_irr(usdt_price, usdt_rate) if (usdt_price and usdt_rate) else None
 
-    plan_price_irr_formatted = f"{int(final_price):,}"
+    # Persist dynamic IRR price in context for later payment creation steps
+    context.user_data['dynamic_irr_price'] = irr_price_dynamic
+    final_price = irr_price_dynamic
+
+    plan_price_irr_formatted = f"{int(final_price):,}" if final_price is not None else "N/A"
     live_usdt_price = None
-    if final_price:
-        usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
-        if usdt_rate:
-            live_usdt_price = convert_irr_to_usdt(final_price, usdt_rate)
-            context.user_data['live_usdt_price'] = live_usdt_price
+    if irr_price_dynamic and usdt_rate:
+        live_usdt_price = convert_irr_to_usdt(irr_price_dynamic, usdt_rate)
+        context.user_data['live_usdt_price'] = live_usdt_price
 
     plan_price_usdt_formatted = f"{live_usdt_price:.5f}" if live_usdt_price is not None else "N/A"
     message_text = PAYMENT_METHOD_MESSAGE.format(
@@ -370,7 +374,7 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Default to subscription flow
     logger.info(f"Plan {plan_id} is a subscription. Proceeding to ask for discount.")
     context.user_data['selected_plan_details'] = plan_dict
-    context.user_data['final_price'] = plan_dict['price'] # Initialize final_price
+    # No fixed IRR price; will compute dynamically later
     return await ask_discount_handler(update, context)
     
 
@@ -528,7 +532,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             return SELECT_PAYMENT_METHOD
 
     elif payment_method == 'crypto':
-        rial_amount = selected_plan.get('price')
+        rial_amount = context.user_data.get('dynamic_irr_price')
         # Always fetch a fresh USDT buy price from AbanTether right before showing wallet address
         usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
         if not usdt_rate:
@@ -555,13 +559,13 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         expires_at = datetime.now() + timedelta(minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES)
 
         # Step 1: Create a preliminary crypto payment request entry to get an ID.
-        rial_plan_price = selected_plan.get('price') # Get RIAL price of the plan
+        rial_plan_price_irr = context.user_data.get('dynamic_irr_price') # Get RIAL price of the plan
         payment_timeout_minutes = config.CRYPTO_PAYMENT_TIMEOUT_MINUTES
         expires_at_dt = datetime.now() + timedelta(minutes=payment_timeout_minutes)
 
         crypto_payment_request_db_id = Database.create_crypto_payment_request(
             user_id=user_db_id,
-            rial_amount=rial_plan_price, # Pass the RIAL amount of the plan
+            rial_amount=rial_plan_price_irr,  # Dynamic IRR amount of the plan
             usdt_amount_requested=live_calculated_usdt_price, # This is the base USDT price for the plan
             wallet_address=config.CRYPTO_WALLET_ADDRESS,
             expires_at=expires_at_dt
@@ -1194,7 +1198,10 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
 
     discount = Database.get_discount_by_code(discount_code)
     selected_plan = context.user_data.get('selected_plan_details')
-    final_price = selected_plan.get('price')
+    # Recalculate dynamic IRR price using current rate for discount validation
+    usdt_price = selected_plan.get('price_tether') or selected_plan.get('original_price_usdt')
+    usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
+    final_price = convert_usdt_to_irr(usdt_price, usdt_rate) if (usdt_price and usdt_rate) else None
 
     error_message = None
     if not discount:
@@ -1266,7 +1273,10 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
             return ConversationHandler.END
 
     # If price is not zero, proceed to payment
-    await update.message.reply_text(f"تخفیف با موفقیت اعمال شد. قیمت جدید: {final_price:,} ریال")
+    if final_price is not None:
+        await update.message.reply_text(f"تخفیف با موفقیت اعمال شد. قیمت جدید (تقریبی): {final_price:,} ریال")
+    else:
+        await update.message.reply_text("تخفیف با موفقیت اعمال شد. قیمت جدید محاسبه نشد.")
 
     keyboard = get_payment_methods_keyboard()
     await update.message.reply_text(
