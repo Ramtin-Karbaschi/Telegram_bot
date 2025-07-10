@@ -242,6 +242,9 @@ class AdminMenuHandler:
         elif data.startswith("delete_plan_"):
             plan_id = int(data.split("_")[2])
             await self.product_handler.delete_plan_confirmation(query, plan_id)
+        elif data.startswith("delete_plan_confirm_"):
+            plan_id = int(data.split("_")[3])
+            await self.product_handler.delete_plan(query, plan_id)
         elif data.startswith("confirm_delete_plan_"):
             plan_id = int(data.split("_")[3])
             await self.product_handler.delete_plan(query, plan_id)
