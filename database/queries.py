@@ -57,8 +57,8 @@ class DatabaseQueries:
                         WHERE pay.plan_id = p.id AND pay.status IN ('paid','completed','successful','verified')
                     ), 0)                                         AS total_revenue_rial,
                     COALESCE((
-                        SELECT SUM(usdt_amount_requested) FROM crypto_payments cp
-                        WHERE cp.plan_id = p.id AND cp.status IN ('paid','completed','successful','verified')
+                        SELECT SUM(usdt_amount_requested) FROM payments pay2
+                        WHERE pay2.plan_id = p.id AND pay2.usdt_amount_requested IS NOT NULL AND pay2.status IN ('paid','completed','successful','verified')
                     ), 0)                                         AS total_revenue_usdt
                 FROM plans p
                 {plan_cond}
