@@ -9,8 +9,9 @@ logger = logging.getLogger(__name__)
 
 from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
-(ADD_NAME, ADD_PRICE, ADD_DURATION, ADD_DESCRIPTION, ADD_CONFIRMATION) = range(5)
-(EDIT_NAME, EDIT_PRICE, EDIT_DURATION, EDIT_DESCRIPTION, EDIT_CONFIRMATION) = range(5, 10)
+# Adding capacity states
+(ADD_NAME, ADD_PRICE, ADD_DURATION, ADD_CAPACITY, ADD_DESCRIPTION, ADD_CONFIRMATION) = range(6)
+(EDIT_NAME, EDIT_PRICE, EDIT_DURATION, EDIT_CAPACITY, EDIT_DESCRIPTION, EDIT_CONFIRMATION) = range(6, 12)
 
 class AdminProductHandler:
     def __init__(self, db_queries: DatabaseQueries, admin_config=None):
@@ -78,6 +79,30 @@ class AdminProductHandler:
     async def get_plan_duration(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         from utils.locale_utils import to_int
         context.user_data['new_plan_duration'] = to_int(update.message.text)
+        await update.message.reply_text("ظرفیت فروش (تعداد مجاز) را وارد کنید:")
+        return ADD_CAPACITY
+
+    async def _parse_capacity_input(self, text: str):
+        """Helper to interpret capacity input; returns int or None (for unlimited)."""
+        text = text.strip().lower()
+        if text in {'نامحدود', 'unlimited', '-', '', '∞'}:
+            return None
+        try:
+            from utils.locale_utils import to_int
+            val = to_int(text)
+            if val == 0:
+                return None
+            return val
+        except Exception:
+            return None
+
+    async def get_plan_capacity(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # Allow admin to send /skip or words indicating unlimited
+        if update.message.text == '/skip':
+            capacity_val = None
+        else:
+            capacity_val = await self._parse_capacity_input(update.message.text)
+        context.user_data['new_plan_capacity'] = capacity_val
         await update.message.reply_text("توضیحات پلن را وارد کنید (اختیاری):")
         return ADD_DESCRIPTION
 
@@ -101,6 +126,7 @@ class AdminProductHandler:
             f"نام: {plan_data['new_plan_name']}\n"
             f"{price_line}\n"
             f"مدت: {plan_data['new_plan_duration']} روز\n"
+            f"ظرفیت: {plan_data.get('new_plan_capacity', 'نامحدود')}\n"
             f"توضیحات: {plan_data['new_plan_description']}"
         )
         keyboard = [[InlineKeyboardButton("✅ تایید و افزودن", callback_data="confirm_add_plan"), InlineKeyboardButton("❌ لغو", callback_data="cancel_add_plan")]]
@@ -129,11 +155,11 @@ class AdminProductHandler:
 
         plan_id = self.db_queries.add_plan(
             name=name,
-            price=irr_price,
             price_tether=plan_data.get('new_plan_price_usdt'),
             original_price_irr=irr_price,
             original_price_usdt=plan_data.get('new_plan_price_usdt'),
             duration_days=plan_data['new_plan_duration'],
+            capacity=plan_data.get('new_plan_capacity'),
             description=plan_data['new_plan_description'],
             is_active=is_active,
             is_public=is_public
@@ -182,6 +208,7 @@ class AdminProductHandler:
                 f"*جزئیات پلن: {plan['name']}*\n\n"
                 f"*قیمت:* {price_display}\n"
                 f"*مدت:* {plan['duration_days']} روز\n"
+                f"*ظرفیت:* {plan.get('capacity', 'نامحدود')}\n"
                 f"*توضیحات:* {plan.get('description', 'ندارد')}\n"
                 f"*وضعیت:* {status_text}\n"
                 f"*نمایش:* {public_text}"
@@ -195,6 +222,7 @@ class AdminProductHandler:
                  InlineKeyboardButton(f"🗑 حذف", callback_data=f"delete_plan_confirm_{plan_id}")],
                 [InlineKeyboardButton(toggle_active_text, callback_data=f"toggle_plan_active_{plan_id}")],
                 [InlineKeyboardButton(toggle_public_text, callback_data=f"toggle_plan_public_{plan_id}")],
+                [InlineKeyboardButton("✏️ ویرایش ظرفیت", callback_data=f"edit_plan_{plan_id}")],
                 [InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="products_show_all")]
             ]
 
@@ -278,6 +306,12 @@ class AdminProductHandler:
         if update.message.text != '/skip':
             from utils.locale_utils import to_int
             context.user_data['edit_plan_duration'] = to_int(update.message.text)
+        await update.message.reply_text("لطفاً ظرفیت فروش جدید را وارد کنید (برای رد شدن، /skip را بزنید):")
+        return EDIT_CAPACITY
+
+    async def get_new_plan_capacity(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.message.text != '/skip':
+            context.user_data['edit_plan_capacity'] = await self._parse_capacity_input(update.message.text)
         await update.message.reply_text("لطفاً توضیحات جدید را وارد کنید (برای رد شدن، /skip را بزنید):")
         return EDIT_DESCRIPTION
 
@@ -293,6 +327,7 @@ class AdminProductHandler:
             'name': context.user_data.get('edit_plan_name', original_plan['name']),
             'price': context.user_data.get('edit_plan_price', original_plan['price']),
             'duration_days': context.user_data.get('edit_plan_duration', original_plan['duration_days']),
+            'capacity': context.user_data.get('edit_plan_capacity', original_plan.get('capacity')),
             'description': context.user_data.get('edit_plan_description', original_plan['description'])
         }
 
@@ -301,6 +336,7 @@ class AdminProductHandler:
             f"نام: {updated_data['name']}\n"
             f"قیمت: {updated_data['price']} تومان\n"
             f"مدت: {updated_data['duration_days']} روز\n"
+            f"ظرفیت: {updated_data.get('capacity', 'نامحدود')}\n"
             f"توضیحات: {updated_data['description']}"
         )
         keyboard = [[InlineKeyboardButton("✅ تایید و ذخیره", callback_data="confirm_edit_plan"), InlineKeyboardButton("❌ لغو", callback_data="cancel_edit_plan")]]
@@ -316,7 +352,8 @@ class AdminProductHandler:
             'price': None,  # will derive again
             'price_tether': context.user_data.get('edit_plan_price_usdt'),
             'duration_days': context.user_data.get('edit_plan_duration'),
-            'description': context.user_data.get('edit_plan_description'),
+            'capacity': context.user_data.get('edit_plan_capacity'),
+        'description': context.user_data.get('edit_plan_description'),
         }
         # Filter out None values
         # compute IRR price if tether provided
@@ -382,6 +419,10 @@ class AdminProductHandler:
                 ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_plan_name)],
                 ADD_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_plan_price)],
                 ADD_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_plan_duration)],
+                ADD_CAPACITY: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_plan_capacity),
+                    CommandHandler('skip', self.get_plan_capacity)
+                ],
                 ADD_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_plan_description)],
                 ADD_CONFIRMATION: [
                     CallbackQueryHandler(self.save_plan, pattern='^confirm_add_plan$'),
@@ -399,6 +440,10 @@ class AdminProductHandler:
                 EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_new_plan_name)],
                 EDIT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_new_plan_price)],
                 EDIT_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_new_plan_duration)],
+                EDIT_CAPACITY: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_new_plan_capacity),
+                    CommandHandler('skip', self.get_new_plan_capacity)
+                ],
                 EDIT_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_new_plan_description)],
                 EDIT_CONFIRMATION: [
                     CallbackQueryHandler(self.update_plan, pattern='^confirm_edit_plan$'),
