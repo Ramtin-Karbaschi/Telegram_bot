@@ -205,8 +205,8 @@ async def get_ticket_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     success_message_user = (
         f"✅ تیکت شما با شناسه <b>{formatted_ticket_id}</b> با موفقیت ثبت شد.\n"
         f"موضوع: {subject}\n\n"
-        "به زودی توسط تیم پشتیبانی بررسی خواهد شد.\n"
-        "جهت دریافت پاسخ، لطفاً ربات @Daraei_Academy_Manager_bot را Start کنید."
+        "⚠ جهت دریافت پاسخ، لطفاً ربات @Daraei_Academy_Manager_bot را Start کنید.\n\n"
+        "به زودی درخواست شما توسط تیم پشتیبانی بررسی خواهد شد."
     )
     
     # Get user's tickets again to update the support menu
