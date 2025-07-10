@@ -37,23 +37,43 @@ async def get_usdt_to_irr_rate(force_refresh: bool = False) -> float | None:
         # Expected structure: {"USDT": {"usdtPrice": "1", "irtPriceBuy": "27200.0", ...}}
         if isinstance(data, dict) and "USDT" in data and isinstance(data["USDT"], dict):
             usdt_info = data["USDT"]
-                        # AbanTether returns both buy/sell. To ensure the customer pays enough, use the HIGHER of the two.
-            sell_str = usdt_info.get("irtPriceSell")
+            # AbanTether provides both buy and sell prices.
+            # For customer **purchases** we must use the **buy** price (irtPriceBuy),
+            # because that is the amount users must pay per USDT. If the buy price
+            # is missing or invalid, we gracefully fall back to the sell price.
             buy_str = usdt_info.get("irtPriceBuy")
+            sell_str = usdt_info.get("irtPriceSell")
+
             try:
-                sell_price = float(sell_str) if sell_str else 0.0
-            except ValueError:
-                sell_price = 0.0
-            try:
-                buy_price = float(buy_str) if buy_str else 0.0
+                buy_price = float(buy_str.replace(',', '')) if buy_str else 0.0
             except ValueError:
                 buy_price = 0.0
+            try:
+                sell_price = float(sell_str.replace(',', '')) if sell_str else 0.0
+            except ValueError:
+                sell_price = 0.0
 
-            rate_irr = max(sell_price, buy_price)
+            # Debug log raw values for troubleshooting discrepancies
+            logger.debug("AbanTether raw prices — buy: %s, sell: %s", buy_price, sell_price)
+
+            # AbanTether API seems to label fields opposite of website UI; in practice
+            # the *higher* of the two numbers matches what the user must pay. To avoid
+            # under-charging we therefore use **max(buy, sell)**.
+            rate_irr = max(buy_price, sell_price)
+            # Optional configurable markup to account for AbanTether OTC → site conversion fees (≈4-5%)
+            try:
+                from config import USDT_RATE_MARKUP_PERCENT  # type: ignore
+                markup_percent = float(USDT_RATE_MARKUP_PERCENT)
+            except (ImportError, AttributeError, ValueError):
+                markup_percent = 0.0  # Fallback if constant not present or invalid
+            if markup_percent != 0:
+                rate_irr = rate_irr * (1 + markup_percent / 100)
+                logger.debug("Applied markup of %.2f%% to rate. Final rate: %.0f Toman", markup_percent, rate_irr)
+
             if rate_irr > 0:
                 _cached_rate_toman = rate_irr
                 _cache_timestamp = now
-                logger.info("Fetched USDT SELL price from AbanTether: %.0f Toman.", rate_irr)
+                logger.info("Fetched USDT BUY price from AbanTether (with markup): %.0f Toman.", rate_irr)
                 return rate_irr
             logger.error("AbanTether response missing valid price fields. Response: %s", data)
             return None
@@ -80,7 +100,10 @@ def convert_usdt_to_irr(usdt_amount: float, usdt_rate_toman: float) -> int | Non
         return None
 
     toman_amount = usdt_amount * usdt_rate_toman  # USDT ➜ Toman
-    irr_amount = int(round(toman_amount * 10))    # Toman ➜ Rial
+    irr_raw = int(round(toman_amount * 10))    # Toman ➜ Rial
+    # Round **up** to the nearest thousand so that hundreds become 0 and
+    # the thousands digit is rounded upward.
+    irr_amount = int(math.ceil(irr_raw / 1000.0) * 1000)
     return irr_amount
 
 
