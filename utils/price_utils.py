@@ -5,8 +5,8 @@ from typing import Optional
 
 from config import logger, ABANTETHER_API_KEY, ABANTETHER_API_BASE_URL
 
-# Cache variables for USDT→IRR rate to avoid hitting the API more than once per minute
-_cached_rate_irr: Optional[float] = None
+# Cache variables for USDT→Toman (IRT) buy rate to avoid hitting the API more than once per minute
+_cached_rate_toman: Optional[float] = None
 _cache_timestamp: float = 0.0
 
 ABANTETHER_USDT_IRR_PRICE_URL = f"{ABANTETHER_API_BASE_URL.rstrip('/')}/otc/coin-price/"
@@ -18,11 +18,11 @@ async def get_usdt_to_irr_rate(force_refresh: bool = False) -> float | None:
     API limits. If *force_refresh* is True, the cache is bypassed.
     """
 
-    global _cached_rate_irr, _cache_timestamp
+    global _cached_rate_toman, _cache_timestamp
 
     now = time.time()
-    if not force_refresh and _cached_rate_irr is not None and (now - _cache_timestamp) < 60:
-        return _cached_rate_irr
+    if not force_refresh and _cached_rate_toman is not None and (now - _cache_timestamp) < 60:
+        return _cached_rate_toman
 
     try:
         headers = {}
@@ -36,14 +36,16 @@ async def get_usdt_to_irr_rate(force_refresh: bool = False) -> float | None:
         # Expected structure: {"USDT": {"usdtPrice": "1", "irtPriceBuy": "27200.0", ...}}
         if isinstance(data, dict) and "USDT" in data and isinstance(data["USDT"], dict):
             usdt_info = data["USDT"]
-            price_irr_str = usdt_info.get("irtPriceBuy") or usdt_info.get("irtPriceSell")
+            price_irr_str = usdt_info.get("irtPriceBuy")    #or usdt_info.get("irtPriceSell")
             if price_irr_str:
                 rate_irr = float(price_irr_str)
-                _cached_rate_irr = rate_irr
+                # Convert IRR → Toman (divide by 10) because downstream calculations expect Toman
+                rate_toman = rate_irr / 10
+                _cached_rate_toman = rate_toman
                 _cache_timestamp = now
-                logger.info("Fetched USDT/IRR rate from AbanTether: %.0f IRR.", rate_irr)
-                return rate_irr
-            logger.error("AbanTether response missing 'irtPriceBuy'/'irtPriceSell'. Response: %s", data)
+                logger.info("Fetched USDT buy price from AbanTether: %.0f Toman.", rate_toman)
+                return rate_toman
+            logger.error("AbanTether response missing 'irtPriceBuy'. Response: %s", data)
             return None
         logger.error("Unexpected AbanTether response structure: %s", data)
         return None
