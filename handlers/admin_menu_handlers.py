@@ -980,19 +980,10 @@ class AdminMenuHandler:
             rev_r = rec.get("total_revenue_rial", 0) or 0
             rev_u = rec.get("total_revenue_usdt", 0) or 0
             name_md = escape_markdown(str(name), version=2)
-            lines.append(f"• {name_md}: {active}/{total} فعال | درآمد: {rev_u:.2f} USDT – {int(rev_r):,} ریال")
+            rev_u_md = escape_markdown(str(rev_u), version=2).replace('.', '\.').replace('-', '\-')
+            lines.append(f"• {name_md}: {active}/{total} فعال \| درآمد: {rev_u_md} USDT – {int(rev_r):,} ریال")
 
         await query.edit_message_text("\n".join(lines), parse_mode="MarkdownV2")
-
-    # ---------- Settings helpers ----------
-    async def _settings_misc_submenu(self, query):
-        keyboard = [
-            [InlineKeyboardButton(f"🛠 حالت تعمیرات: {'فعال' if self.maintenance_mode else 'غیرفعال'}", callback_data="settings_toggle_maintenance")],
-            [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
-        ]
-        status_text = "🛠 *حالت تعمیرات فعال است.*" if self.maintenance_mode else "✅ ربات در حالت عادی کار می‌کند."
-        await query.edit_message_text(f"⚙️ *سایر تنظیمات*:\n{status_text}\nگزینه مورد نظر را انتخاب کنید:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-
     async def _show_admins_settings(self, query):
         if not self.admin_config:
             await query.edit_message_text("🔐 پیکربندی مدیران یافت نشد.")
