@@ -141,6 +141,12 @@ COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "") # Default to empty string
 if not COINGECKO_API_KEY:
     logger.info("COINGECKO_API_KEY not set or empty in .env. Real-time exchange rates via CoinGecko will not be used if it is required by the implementation.")
 
+# Cache TTL for USDT rate (seconds). Default 30; override via .env if needed.
+USDT_RATE_CACHE_SECONDS = int(os.getenv("USDT_RATE_CACHE_SECONDS", "30"))
+if USDT_RATE_CACHE_SECONDS < 5:
+    logger.warning("USDT_RATE_CACHE_SECONDS too low (%s). Setting to minimum 5s to respect API limits.", USDT_RATE_CACHE_SECONDS)
+    USDT_RATE_CACHE_SECONDS = 5
+
 USDT_TRC20_CONTRACT_ADDRESS = os.getenv("USDT_TRC20_CONTRACT_ADDRESS")
 if not USDT_TRC20_CONTRACT_ADDRESS:
     USDT_TRC20_CONTRACT_ADDRESS = "USDT_CONTRACT_NOT_SET_IN_ENV" 
