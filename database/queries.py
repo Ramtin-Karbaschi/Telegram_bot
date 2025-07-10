@@ -14,6 +14,68 @@ from utils.helpers import get_current_time  # ensure Tehran-tz aware now
 
 class DatabaseQueries:
     """Class for handling database operations"""
+
+    # --- SALES STATS HELPERS -------------------------------------------------
+    @staticmethod
+    def get_sales_stats_per_plan(only_active: bool = True):
+        """Return sales statistics per subscription plan.
+
+        For each plan we calculate:
+        • total_subscriptions   – total number of subscriptions ever purchased for the plan
+        • active_subscriptions  – current active subscriptions
+        • total_revenue_rial    – total IRR revenue (payments.amount) linked to the plan with status = 'paid'
+        • total_revenue_usdt    – total USDT revenue (payments.usdt_amount_requested *or* crypto_payments.usdt_amount_requested)
+
+        Note: because our schema has two payment sources (payments & crypto_payments) and
+        may not always store plan_id in crypto_payments, we only aggregate what is reliably
+        available.
+        """
+        db = Database()
+        stats: list[dict] = []
+        if not db.connect():
+            return stats
+
+        try:
+            now_str = get_current_time().strftime("%Y-%m-%d %H:%M:%S")
+            # Build base plans query
+            plan_cond = "WHERE p.is_active = 1" if only_active else ""
+            # SQL aggregates using correlated sub-queries for clarity & SQLite compatibility
+            sql = f"""
+                SELECT
+                    p.id                                         AS plan_id,
+                    p.name                                       AS plan_name,
+                    (
+                        SELECT COUNT(*) FROM subscriptions s
+                        WHERE s.plan_id = p.id
+                    )                                            AS total_subscriptions,
+                    (
+                        SELECT COUNT(*) FROM subscriptions s
+                        WHERE s.plan_id = p.id AND s.status = 'active'
+                    )                                            AS active_subscriptions,
+                    COALESCE((
+                        SELECT SUM(amount) FROM payments pay
+                        WHERE pay.plan_id = p.id AND pay.status IN ('paid','completed','successful','verified')
+                    ), 0)                                         AS total_revenue_rial,
+                    COALESCE((
+                        SELECT SUM(usdt_amount_requested) FROM crypto_payments cp
+                        WHERE cp.plan_id = p.id AND cp.status IN ('paid','completed','successful','verified')
+                    ), 0)                                         AS total_revenue_usdt
+                FROM plans p
+                {plan_cond}
+                ORDER BY p.display_order, p.id
+            """
+            db.execute(sql)
+            rows = db.fetchall()
+            if rows:
+                # Convert to list of dicts for easier consumption
+                col_names = [desc[0] for desc in db.cursor.description]
+                for row in rows:
+                    stats.append(dict(zip(col_names, row)))
+        except sqlite3.Error as e:
+            logging.error("SQLite error in get_sales_stats_per_plan: %s", e)
+        finally:
+            db.close()
+        return stats
     def __init__(self, db: Database | None = None):
         # Allow passing None to use singleton Database.get_instance() or create default
         from database.models import Database as DBModel
@@ -37,11 +99,14 @@ class DatabaseQueries:
                         except sqlite3.Error as copy_err:
                             logging.error(f"Error migrating days to duration_days: {copy_err}")
 
-                # Ensure is_active / is_public columns exist
+                # Ensure is_active / is_public & capacity columns exist
                 if 'is_active' not in columns:
                     self.db.execute("ALTER TABLE plans ADD COLUMN is_active BOOLEAN DEFAULT 1")
                 if 'is_public' not in columns:
                     self.db.execute("ALTER TABLE plans ADD COLUMN is_public BOOLEAN DEFAULT 1")
+                # Add capacity INTEGER column (nullable) if missing
+                if 'capacity' not in columns:
+                    self.db.execute("ALTER TABLE plans ADD COLUMN capacity INTEGER")
                 self.db.commit()
             except sqlite3.Error as e:
                 logging.error(f"Error checking/adding columns to plans table: {e}")
@@ -67,7 +132,7 @@ class DatabaseQueries:
     # -----------------------------------
     # Product Management
     # -----------------------------------
-    def add_plan(self, name: str, price: float | None, duration_days: int, description: str | None = None, *, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None, is_active: bool = True, is_public: bool = True):
+    def add_plan(self, name: str, price: float | None, duration_days: int, description: str | None = None, *, capacity: int | None = None, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None, is_active: bool = True, is_public: bool = True):
         """Add a new plan to the database with active and public status."""
         try:
             # Determine if legacy 'days' column exists
@@ -81,7 +146,9 @@ class DatabaseQueries:
                 column_names.append("price")
                 values.append(price)
 
-            column_names.append("duration_days")
+            # Duration column
+            duration_col = "duration_days" if "duration_days" in columns else "days"
+            column_names.append(duration_col)
             values.append(duration_days)
 
             # If legacy 'days' column exists, keep it in sync
@@ -92,6 +159,11 @@ class DatabaseQueries:
             # Description may be optional
             column_names.append("description")
             values.append(description)
+
+            # Capacity if supported
+            if 'capacity' in columns:
+                column_names.append("capacity")
+                values.append(capacity)
 
             # USDT pricing columns if present in schema and provided
             if 'price_tether' in columns and price_tether is not None:
@@ -142,7 +214,7 @@ class DatabaseQueries:
             logging.error(f"SQLite error in get_plan_by_id: {e}")
             return None
 
-    def update_plan(self, plan_id: int, *, name: str | None = None, price: float | None = None, duration_days: int | None = None, description: str | None = None, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None):
+    def update_plan(self, plan_id: int, *, name: str | None = None, price: float | None = None, duration_days: int | None = None, capacity: int | None = None, description: str | None = None, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None):
         """Update an existing plan's details."""
         try:
             # Ensure both duration_days and legacy days are updated if applicable
@@ -158,10 +230,16 @@ class DatabaseQueries:
 
             add_field("name", name)
             add_field("price", price)
-            add_field("duration_days", duration_days)
-            if 'days' in cols:
-                add_field("days", duration_days)
+            if duration_days is not None:
+                if 'duration_days' in cols:
+                    add_field("duration_days", duration_days)
+                elif 'days' in cols:
+                    add_field("days", duration_days)
             add_field("description", description)
+            if 'capacity' in cols:
+                # None means leave unchanged; explicit value (including 0) sets.
+                if capacity is not None:
+                    add_field("capacity", capacity)
             if 'price_tether' in cols:
                 add_field("price_tether", price_tether)
             if 'original_price_irr' in cols:
@@ -1392,6 +1470,25 @@ class DatabaseQueries:
         """Alias for `get_payment` so existing handlers calling this name work."""
         return DatabaseQueries.get_payment(payment_id)
     
+    @staticmethod
+    def update_payment_expires_at(payment_id: int, expires_at: datetime):
+        """Set/Update the *expires_at* timestamp for a payment row."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute(
+                    "UPDATE payments SET expires_at = ?, updated_at = ? WHERE payment_id = ?",
+                    (expires_at.isoformat(), datetime.now().isoformat(), payment_id),
+                )
+                db.commit()
+                return db.cursor.rowcount > 0
+            except sqlite3.Error as e:
+                config.logger.error(f"SQLite error in update_payment_expires_at for payment_id {payment_id}: {e}")
+                return False
+            finally:
+                db.close()
+        return False
+
     @staticmethod
     def update_payment_status(payment_id, status, transaction_id=None, error_message=None):
         """Update payment status and optionally an error message in description."""
