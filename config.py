@@ -109,6 +109,15 @@ ZARINPAL_CALLBACK_URL = os.getenv("ZARINPAL_CALLBACK_URL")
 if not ZARINPAL_CALLBACK_URL:
     logger.error("CRITICAL: ZARINPAL_CALLBACK_URL not set in .env. Zarinpal payment verification will fail.")
 
+# Price adjustment (markup) applied to AbanTether USDT rate to match website purchase price.
+# This compensates for approximate 4-5% OTC→buy spread and possible gateway fees.
+USDT_RATE_MARKUP_PERCENT_STR = os.getenv("USDT_RATE_MARKUP_PERCENT", "4.5")
+try:
+    USDT_RATE_MARKUP_PERCENT: float = float(USDT_RATE_MARKUP_PERCENT_STR)
+except ValueError:
+    USDT_RATE_MARKUP_PERCENT = 0.0
+    logger.warning("Invalid USDT_RATE_MARKUP_PERCENT in .env ('%s'). Falling back to 0%%.", USDT_RATE_MARKUP_PERCENT_STR)
+
 # Nobitex API (for USDT price)
 NOBITEX_API_BASE_URL = os.getenv("NOBITEX_API_BASE_URL", "https://api.nobitex.ir")
 NOBITEX_API_KEY = os.getenv("NOBITEX_API_KEY", "") # API key for Nobitex
