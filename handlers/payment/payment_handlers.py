@@ -133,7 +133,7 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
     if final_price:
         usdt_rate = await get_usdt_to_irr_rate()
         if usdt_rate:
-            live_usdt_price = convert_irr_to_usdt(final_price, usdt_rate/10)
+            live_usdt_price = convert_irr_to_usdt(final_price, usdt_rate)
             context.user_data['live_usdt_price'] = live_usdt_price
 
     plan_price_usdt_formatted = f"{live_usdt_price:.5f}" if live_usdt_price is not None else "N/A"
@@ -1067,7 +1067,7 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
         usdt_rate = await get_usdt_to_irr_rate() # Fetches live rate from Nobitex/Coingecko
         if usdt_rate:
             # نرخ دریافتی از get_usdt_to_irr_rate به ریال است؛ برای تبدیل به تومان باید تقسیم بر ۱۰ شود.
-            live_usdt_price = convert_irr_to_usdt(rial_price, usdt_rate/10)
+            live_usdt_price = convert_irr_to_usdt(rial_price, usdt_rate)
             context.user_data['live_usdt_price'] = live_usdt_price # Store for crypto payment step
         else:
             logger.warning(f"User {update.effective_user.id}: Could not fetch USDT rate in back_to_payment_methods_handler.")
@@ -1229,7 +1229,7 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
         return VERIFY_PAYMENT
 
     expected_usdt = payment_record['usdt_amount_requested']
-    wallet_address = payment_record.get('wallet_address') or config.CRYPTO_WALLET_ADDRESS
+    wallet_address = payment_record['wallet_address'] or config.CRYPTO_WALLET_ADDRESS
     created_at_str = payment_record['created_at']
     created_at = datetime.fromisoformat(created_at_str) if isinstance(created_at_str, str) else created_at_str
 
