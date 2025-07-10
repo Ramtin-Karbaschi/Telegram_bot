@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from .models import Database
 import config
 import logging
-from typing import Optional
+from typing import Optional, Any
 from database.models import Database
 from database.schema import ALL_TABLES
 from utils.helpers import get_current_time  # ensure Tehran-tz aware now
@@ -67,18 +67,51 @@ class DatabaseQueries:
     # -----------------------------------
     # Product Management
     # -----------------------------------
-    def add_plan(self, name: str, price: float, duration_days: int, description: str | None = None, *, is_active: bool = True, is_public: bool = True):
+    def add_plan(self, name: str, price: float | None, duration_days: int, description: str | None = None, *, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None, is_active: bool = True, is_public: bool = True):
         """Add a new plan to the database with active and public status."""
         try:
             # Determine if legacy 'days' column exists
             self.db.execute("PRAGMA table_info(plans)")
             columns = [col['name'] for col in self.db.fetchall()]
+            column_names = ["name"]
+            values: list[Any] = [name]
+
+            # Handle IRR price (legacy) if provided
+            if price is not None:
+                column_names.append("price")
+                values.append(price)
+
+            column_names.append("duration_days")
+            values.append(duration_days)
+
+            # If legacy 'days' column exists, keep it in sync
             if 'days' in columns:
-                sql = "INSERT INTO plans (name, price, duration_days, days, description, is_active, is_public) VALUES (?, ?, ?, ?, ?, ?, ?)"
-                params = (name, price, duration_days, duration_days, description, is_active, is_public)
-            else:
-                sql = "INSERT INTO plans (name, price, duration_days, description, is_active, is_public) VALUES (?, ?, ?, ?, ?, ?)"
-                params = (name, price, duration_days, description, is_active, is_public)
+                column_names.append("days")
+                values.append(duration_days)
+
+            # Description may be optional
+            column_names.append("description")
+            values.append(description)
+
+            # USDT pricing columns if present in schema and provided
+            if 'price_tether' in columns and price_tether is not None:
+                column_names.append("price_tether")
+                values.append(price_tether)
+            if 'original_price_irr' in columns and original_price_irr is not None:
+                column_names.append("original_price_irr")
+                values.append(original_price_irr)
+            if 'original_price_usdt' in columns and original_price_usdt is not None:
+                column_names.append("original_price_usdt")
+                values.append(original_price_usdt)
+
+            # Activation & visibility flags
+            column_names.extend(["is_active", "is_public"])
+            values.extend([is_active, is_public])
+
+            placeholders = ", ".join(["?" for _ in column_names])
+            columns_sql = ", ".join(column_names)
+            sql = f"INSERT INTO plans ({columns_sql}) VALUES ({placeholders})"
+            params = tuple(values)
             self.db.execute(sql, params)
             self.db.commit()
             return self.db.cursor.lastrowid
@@ -109,18 +142,39 @@ class DatabaseQueries:
             logging.error(f"SQLite error in get_plan_by_id: {e}")
             return None
 
-    def update_plan(self, plan_id: int, name: str, price: float, duration_days: int, description: str):
+    def update_plan(self, plan_id: int, *, name: str | None = None, price: float | None = None, duration_days: int | None = None, description: str | None = None, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None):
         """Update an existing plan's details."""
         try:
             # Ensure both duration_days and legacy days are updated if applicable
             self.db.execute("PRAGMA table_info(plans)")
             cols = [c['name'] for c in self.db.fetchall()]
+            set_clauses: list[str] = []
+            params: list[Any] = []
+
+            def add_field(field_name: str, value):
+                if value is not None:
+                    set_clauses.append(f"{field_name} = ?")
+                    params.append(value)
+
+            add_field("name", name)
+            add_field("price", price)
+            add_field("duration_days", duration_days)
             if 'days' in cols:
-                sql = "UPDATE plans SET name = ?, price = ?, duration_days = ?, days = ?, description = ? WHERE id = ?"
-                params = (name, price, duration_days, duration_days, description, plan_id)
-            else:
-                sql = "UPDATE plans SET name = ?, price = ?, duration_days = ?, description = ? WHERE id = ?"
-                params = (name, price, duration_days, description, plan_id)
+                add_field("days", duration_days)
+            add_field("description", description)
+            if 'price_tether' in cols:
+                add_field("price_tether", price_tether)
+            if 'original_price_irr' in cols:
+                add_field("original_price_irr", original_price_irr)
+            if 'original_price_usdt' in cols:
+                add_field("original_price_usdt", original_price_usdt)
+
+            if not set_clauses:
+                return False  # Nothing to update
+
+            set_sql = ", ".join(set_clauses)
+            sql = f"UPDATE plans SET {set_sql} WHERE id = ?"
+            params.append(plan_id)
             self.db.execute(sql, params)
             self.db.commit()
             return self.db.cursor.rowcount > 0
