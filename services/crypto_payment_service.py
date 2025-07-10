@@ -96,26 +96,45 @@ class CryptoPaymentService:
         logger.info("No matching USDT payment found for amount %.6f", expected_amount)
         return False, None
     @staticmethod
-    def get_final_usdt_payment_amount(base_usdt_amount_rounded_to_3_decimals: float) -> float:
-        """
-        Returns the final USDT amount to be paid by the user.
-        This is typically the base USDT amount for the plan, already converted from Rial 
-        and rounded up to 3 decimal places.
-        No unique offset is added here as per the new requirement.
-        The amount is returned rounded to USDT_DECIMALS (e.g., 6) for consistency, 
-        but the value itself will effectively be the 3-decimal rounded input.
-        Example: input 0.061 -> output 0.061000 (if USDT_DECIMALS is 6)
+    def get_final_usdt_payment_amount(base_usdt_amount_rounded_to_3_decimals: float, payment_request_id: str | int) -> float:
+        """Return a **unique** USDT amount for this payment request.
+
+        Args:
+            base_usdt_amount_rounded_to_3_decimals: Plan price already rounded to 3 decimals (e.g. ``97.000``).
+            payment_request_id: Primary-key/UUID of the row returned by ``create_crypto_payment_request``.
+
+        Strategy
+        ---------
+        • Add یک افست کوچک (≤ 0.00099) به مبلغ پایه؛ این افست از شناسهٔ رکورد مشتق می‌شود و تا 5 رقم اعشار نگه داشته می‌شود.
+        • بدین ترتیب هر تراکنش عدد متمایز دارد و می‌توان آن را با دقت کامل روی بلاک‌چین تطبیق داد.
+        • خروجی نهایتاً تا ``USDT_DECIMALS`` رقم اعشار (پیش‌فرض 6) گرد می‌شود.
         """
         if base_usdt_amount_rounded_to_3_decimals <= 0:
             logger.error("Base USDT amount must be positive: %s", base_usdt_amount_rounded_to_3_decimals)
-            # Consider raising ValueError if this is an unrecoverable state
             return 0.0
-        
-        # Ensure the final amount is represented with USDT_DECIMALS, even if it's just padding zeros
-        # For example, if base is 0.061 and USDT_DECIMALS is 6, this returns 0.061000.
-        # This maintains consistency in how amounts are stored or processed downstream if they expect USDT_DECIMALS precision.
-        final_amount = round(base_usdt_amount_rounded_to_3_decimals, USDT_DECIMALS)
-        logger.info(f"Final USDT payment amount determined: {final_amount} from base: {base_usdt_amount_rounded_to_3_decimals}")
+
+        # Derive a deterministic numeric seed from the request id (works for int PK or UUID string)
+        try:
+            if isinstance(payment_request_id, int):
+                numeric_id = payment_request_id
+            else:
+                # UUID or str: take last 6 hex chars -> int
+                numeric_id = int(str(payment_request_id).replace("-", "")[-6:], 16)
+        except (ValueError, TypeError):
+            numeric_id = int(time.time())  # fallback to current seconds, still reasonably unique
+
+        # Map to 1-99 then to 0.00001-0.00099
+        offset_index = (numeric_id % 99) + 1  # 1 → 99 inclusive
+        unique_offset = round(offset_index / 100_000, 5)  # five-decimal offset
+
+        final_amount = round(base_usdt_amount_rounded_to_3_decimals + unique_offset, USDT_DECIMALS)
+        logger.info(
+            "Computed unique USDT amount %.6f (base %.3f + offset %.5f) for payment_request_id=%s",
+            final_amount,
+            base_usdt_amount_rounded_to_3_decimals,
+            unique_offset,
+            payment_request_id,
+        )
         return final_amount
 
 # Example usage (for testing purposes, normally called from bot handlers)
