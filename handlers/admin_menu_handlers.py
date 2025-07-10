@@ -308,7 +308,18 @@ class AdminMenuHandler:
             did = int(data.split("_")[2])
             await self._delete_discount_confirmation(query, did)
         elif data.startswith("planpick_") or data in ("planpick_all", "planpick_done"):
-            await self._handle_plan_select_callback(query, context)
+            try:
+                # Extract plan ID if it exists and is numeric
+                if data.startswith("planpick_") and not data in ("planpick_all", "planpick_done"):
+                    parts = data.split("_")
+                    if len(parts) > 1 and not parts[1].isdigit() and parts[1] not in ["all", "done"]:
+                        logger.warning(f"Invalid planpick callback data: {data}")
+                        await query.answer("❌ شناسه پلن نامعتبر است.", show_alert=True)
+                        return
+                await self._handle_plan_select_callback(query, context)
+            except Exception as e:
+                logger.error(f"Error in planpick callback: {e}", exc_info=True)
+                await query.answer("❌ خطا در پردازش درخواست", show_alert=True)
         elif data.startswith("confirm_delete_discount_"):
             did = int(data.split("_")[3])
             await self._delete_discount(query, did)
@@ -542,11 +553,23 @@ class AdminMenuHandler:
             else:
                 selected = set()
         elif data.startswith("planpick_"):
-            pid = int(data.split("_")[1])
-            if pid in selected:
-                selected.remove(pid)
-            else:
-                selected.add(pid)
+            try:
+                # Extract the part after planpick_
+                parts = data.split("_", 1)
+                if len(parts) < 2 or not parts[1].isdigit():
+                    logger.warning(f"Invalid planpick callback data: {data}")
+                    await query.answer("❌ شناسه پلن نامعتبر است.", show_alert=True)
+                    return
+                    
+                pid = int(parts[1])
+                if pid in selected:
+                    selected.remove(pid)
+                else:
+                    selected.add(pid)
+            except (ValueError, IndexError) as e:
+                logger.error(f"Error processing planpick callback: {e}", exc_info=True)
+                await query.answer("❌ خطا در پردازش درخواست", show_alert=True)
+                return
         else:
             return  # Unknown callback
 
