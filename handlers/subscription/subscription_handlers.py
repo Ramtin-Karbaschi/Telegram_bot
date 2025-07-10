@@ -7,6 +7,7 @@ import jdatetime
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ParseMode # Added for message formatting
+from telegram.error import BadRequest  # To handle 'Message is not modified' gracefully
 from datetime import datetime, timedelta
 from telegram.ext import ContextTypes, ConversationHandler
 import config # Added for TELEGRAM_CHANNELS_INFO
@@ -409,7 +410,14 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
     reply_markup = InlineKeyboardMarkup(keyboard_buttons)
 
     if query:
-        await query.message.edit_text(text=final_message, reply_markup=reply_markup, parse_mode='HTML')
+        try:
+            await query.message.edit_text(text=final_message, reply_markup=reply_markup, parse_mode='HTML')
+        except BadRequest as e:
+            # Ignore harmless error when the new text & markup are identical
+            if 'Message is not modified' in str(e):
+                pass
+            else:
+                raise
     else:
         await update.message.reply_text(text=final_message, reply_markup=reply_markup, parse_mode='HTML')
 
