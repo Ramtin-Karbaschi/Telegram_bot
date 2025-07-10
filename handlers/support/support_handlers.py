@@ -17,8 +17,8 @@ from utils.constants import (
 SUGGESTED_TICKET_SUBJECTS = [
     "مشکل پرداخت",
     "خطای ورود",
-    "پرسش درباره دوره",
     "مشکل فنی",
+    "پرسش درباره دوره",
     "انتقادات و پیشنهادات"
 ]
 import config
