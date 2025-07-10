@@ -53,3 +53,10 @@ DatabaseQueries.update_user_profile = staticmethod(_wrapper(_orig_update_user_pr
 DatabaseQueries.update_user_activity = staticmethod(_wrapper(_orig_update_user_activity))
 DatabaseQueries.get_user_details = staticmethod(_wrapper(_orig_get_user_details))
 DatabaseQueries.search_users = staticmethod(_wrapper(_orig_search_users))
+
+# --- Video file ID convenience wrappers ---
+_orig_get_video_file_id = DatabaseQueries.get_video_file_id  # type: ignore[attr-defined]
+_orig_save_video_file_id = DatabaseQueries.save_video_file_id  # type: ignore[attr-defined]
+
+DatabaseQueries.get_video_file_id = staticmethod(_wrapper(_orig_get_video_file_id))  # type: ignore[assignment]
+DatabaseQueries.save_video_file_id = staticmethod(_wrapper(_orig_save_video_file_id))  # type: ignore[assignment]
