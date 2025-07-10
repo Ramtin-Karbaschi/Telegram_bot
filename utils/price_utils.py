@@ -21,7 +21,8 @@ async def get_usdt_to_irr_rate(force_refresh: bool = False) -> float | None:
     global _cached_rate_toman, _cache_timestamp
 
     now = time.time()
-    if not force_refresh and _cached_rate_toman is not None and (now - _cache_timestamp) < 60:
+    from config import USDT_RATE_CACHE_SECONDS
+    if not force_refresh and _cached_rate_toman is not None and (now - _cache_timestamp) < USDT_RATE_CACHE_SECONDS:
         return _cached_rate_toman
 
     try:
@@ -36,15 +37,14 @@ async def get_usdt_to_irr_rate(force_refresh: bool = False) -> float | None:
         # Expected structure: {"USDT": {"usdtPrice": "1", "irtPriceBuy": "27200.0", ...}}
         if isinstance(data, dict) and "USDT" in data and isinstance(data["USDT"], dict):
             usdt_info = data["USDT"]
-            price_irr_str = usdt_info.get("irtPriceBuy")    #or usdt_info.get("irtPriceSell")
+            # Always use the buy price as authoritative source
+            price_irr_str = usdt_info.get("irtPriceBuy")
             if price_irr_str:
                 rate_irr = float(price_irr_str)
-                # Convert IRR → Toman (divide by 10) because downstream calculations expect Toman
-                rate_toman = rate_irr / 10
-                _cached_rate_toman = rate_toman
+                _cached_rate_toman = rate_irr
                 _cache_timestamp = now
-                logger.info("Fetched USDT buy price from AbanTether: %.0f Toman.", rate_toman)
-                return rate_toman
+                logger.info("Fetched USDT buy price from AbanTether: %.0f Toman.", rate_irr)
+                return rate_irr
             logger.error("AbanTether response missing 'irtPriceBuy'. Response: %s", data)
             return None
         logger.error("Unexpected AbanTether response structure: %s", data)
