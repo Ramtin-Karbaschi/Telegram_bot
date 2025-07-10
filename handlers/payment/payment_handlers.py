@@ -51,6 +51,59 @@ from utils.keyboards import (
     get_main_menu_keyboard, get_ask_discount_keyboard, get_back_to_ask_discount_keyboard
 )
 
+# ---------------- Count-down timer helpers -----------------
+from telegram.ext import Job
+
+def _cancel_existing_payment_timer(context: ContextTypes.DEFAULT_TYPE):
+    """Cancel any running payment timer job for the current chat/user."""
+    job: Job | None = context.user_data.pop('payment_timer_job', None)
+    if job:
+        job.schedule_removal()
+
+def _payment_timer_callback(context: ContextTypes.DEFAULT_TYPE):
+    """Update the payment message countdown each minute and refresh price on expiry."""
+    job_data = context.job.data
+    chat_id = job_data['chat_id']
+    message_id = job_data['message_id']
+    expiry: datetime = job_data['expiry']
+    user_data = job_data['user_data']  # reference to same dict
+
+    now = datetime.utcnow()
+    remaining = expiry - now
+    try:
+        if remaining.total_seconds() <= 0:
+            # Price expired – recalc price & reset timer
+            selected_plan = user_data.get('selected_plan_details')
+            final_price_rial = user_data.get('final_price', selected_plan.get('price'))
+            # Force refresh USDT rate
+            new_rate = await get_usdt_to_irr_rate(force_refresh=True)
+            if new_rate:
+                new_usdt_price = convert_irr_to_usdt(final_price_rial, new_rate)
+                user_data['live_usdt_price'] = new_usdt_price
+            expiry = now + timedelta(minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES)
+            job_data['expiry'] = expiry
+            remaining = expiry - now
+        # Format remaining mm:ss
+        mins, secs = divmod(int(remaining.total_seconds()), 60)
+        timer_str = f"{mins:02d}:{secs:02d}"
+        usdt_display = user_data.get('live_usdt_price')
+        usdt_str = f"{usdt_display:.5f}" if usdt_display is not None else "N/A"
+        text = (
+            f"{user_data['payment_message_header']}\n\n"
+            f"⏳ اعتبار قیمت: {timer_str} دقیقه\n"
+            f"💵 مبلغ تتر: {usdt_str} USDT"
+        )
+        context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            reply_markup=get_payment_methods_keyboard(),
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.warning("Payment timer update failed: %s", e)
+
+
 from utils.constants import (
     SUBSCRIPTION_PLANS_MESSAGE, PAYMENT_METHOD_MESSAGE,
     CRYPTO_PAYMENT_UNIQUE_AMOUNT_MESSAGE, # Changed from CRYPTO_PAYMENT_MESSAGE
@@ -137,17 +190,35 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
             context.user_data['live_usdt_price'] = live_usdt_price
 
     plan_price_usdt_formatted = f"{live_usdt_price:.5f}" if live_usdt_price is not None else "N/A"
-    message_text = PAYMENT_METHOD_MESSAGE.format(
+    # Store header for timer updates
+    header_text = PAYMENT_METHOD_MESSAGE.format(
         plan_name=selected_plan.get('name', 'N/A'),
         plan_price=plan_price_irr_formatted,
         plan_tether=plan_price_usdt_formatted
     )
+    context.user_data['payment_message_header'] = header_text
 
     await query.message.edit_text(
-        text=message_text,
+        text=header_text,
         reply_markup=get_payment_methods_keyboard(),
         parse_mode=ParseMode.HTML
     )
+
+    # ---------------- schedule / reset countdown timer ----------------
+    _cancel_existing_payment_timer(context)
+    expiry_dt = datetime.utcnow() + timedelta(minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES)
+    context.user_data['payment_price_expiry'] = expiry_dt
+    job = context.job_queue.run_repeating(
+        _payment_timer_callback,
+        interval=60,
+        first=60,
+        data={'chat_id': query.message.chat_id,
+              'message_id': query.message.message_id,
+              'expiry': expiry_dt,
+              'user_data': context.user_data},
+        name=f"payment_timer_{update.effective_user.id}"
+    )
+    context.user_data['payment_timer_job'] = job
     return SELECT_PAYMENT_METHOD
 
 async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
