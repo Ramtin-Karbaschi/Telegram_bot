@@ -37,15 +37,25 @@ async def get_usdt_to_irr_rate(force_refresh: bool = False) -> float | None:
         # Expected structure: {"USDT": {"usdtPrice": "1", "irtPriceBuy": "27200.0", ...}}
         if isinstance(data, dict) and "USDT" in data and isinstance(data["USDT"], dict):
             usdt_info = data["USDT"]
-            # Always use the buy price as authoritative source
-            price_irr_str = usdt_info.get("irtPriceBuy")
-            if price_irr_str:
-                rate_irr = float(price_irr_str)
+                        # AbanTether returns both buy/sell. To ensure the customer pays enough, use the HIGHER of the two.
+            sell_str = usdt_info.get("irtPriceSell")
+            buy_str = usdt_info.get("irtPriceBuy")
+            try:
+                sell_price = float(sell_str) if sell_str else 0.0
+            except ValueError:
+                sell_price = 0.0
+            try:
+                buy_price = float(buy_str) if buy_str else 0.0
+            except ValueError:
+                buy_price = 0.0
+
+            rate_irr = max(sell_price, buy_price)
+            if rate_irr > 0:
                 _cached_rate_toman = rate_irr
                 _cache_timestamp = now
-                logger.info("Fetched USDT buy price from AbanTether: %.0f Toman.", rate_irr)
+                logger.info("Fetched USDT SELL price from AbanTether: %.0f Toman.", rate_irr)
                 return rate_irr
-            logger.error("AbanTether response missing 'irtPriceBuy'. Response: %s", data)
+            logger.error("AbanTether response missing valid price fields. Response: %s", data)
             return None
         logger.error("Unexpected AbanTether response structure: %s", data)
         return None
@@ -57,6 +67,22 @@ async def get_usdt_to_irr_rate(force_refresh: bool = False) -> float | None:
         logger.error("Unexpected error fetching USDT price: %s", e)
 
     return None
+
+def convert_usdt_to_irr(usdt_amount: float, usdt_rate_toman: float) -> int | None:
+    """Convert a *usdt_amount* to Iranian **Rial** (IRR).
+
+    1. Multiply USDT amount by the *toman* rate to obtain a value in Toman.
+    2. Convert Toman to Rial by multiplying by ``10``.
+    3. The result is rounded to the nearest integer Rial for gateway compatibility.
+    """
+
+    if usdt_rate_toman is None or usdt_rate_toman <= 0:
+        return None
+
+    toman_amount = usdt_amount * usdt_rate_toman  # USDT ➜ Toman
+    irr_amount = int(round(toman_amount * 10))    # Toman ➜ Rial
+    return irr_amount
+
 
 def convert_irr_to_usdt(irr_amount: float, usdt_rate_toman: float) -> float | None:
     """Convert *irr_amount* (Rial) to USDT.
