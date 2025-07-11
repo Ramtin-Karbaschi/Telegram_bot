@@ -1603,7 +1603,7 @@ class DatabaseQueries:
                 """
                 SELECT * FROM plans 
                 WHERE is_active = 1 
-                AND (expiration_date IS NULL OR expiration_date > ?)
+                AND (expiration_date IS NULL OR expiration_date = '' OR expiration_date > ?)
                 ORDER BY display_order
                 """,
                 (now_str,)

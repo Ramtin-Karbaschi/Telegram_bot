@@ -1423,7 +1423,7 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
 payment_conversation = ConversationHandler(
     entry_points=[
         CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'),
-        MessageHandler(filters.Regex(r"^(🎫 خرید محصولات)$"), start_subscription_flow),
+        MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان)$"), start_subscription_flow),
     ],
     states={
         SELECT_PLAN: [
@@ -1441,14 +1441,14 @@ payment_conversation = ConversationHandler(
         SELECT_PAYMENT_METHOD: [
             CallbackQueryHandler(select_payment_method, pattern='^payment_(rial|crypto)$'),
             CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
-            MessageHandler(filters.Regex(r"^(🎫 خرید محصولات)$"), start_subscription_flow),
+            MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان)$"), start_subscription_flow),
         ],
         VERIFY_PAYMENT: [
             CallbackQueryHandler(verify_payment_status, pattern='^payment_verify$'),
             CallbackQueryHandler(payment_verify_crypto_handler, pattern='^payment_verify_crypto$'),
             CallbackQueryHandler(payment_verify_zarinpal_handler, pattern=f'^{VERIFY_ZARINPAL_PAYMENT_CALLBACK}$'),
             CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$'),
-            MessageHandler(filters.Regex(r"^(🎫 خرید محصولات)$"), start_subscription_flow),
+            MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان)$"), start_subscription_flow),
         ],
     },
     fallbacks=[

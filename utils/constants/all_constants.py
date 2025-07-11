@@ -53,7 +53,7 @@ RULES_MESSAGE = """
 """
 
 # Main Menu Button Texts
-TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🎫 خرید محصولات"
+TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🎫 عضویت رایگان"
 TEXT_MAIN_MENU_STATUS = "👤 پروفایل کاربری"
 TEXT_BACK_TO_MAIN_MENU = " بازگشت به منوی اصلی"
 

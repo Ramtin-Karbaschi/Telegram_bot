@@ -232,7 +232,7 @@ async def start_subscription_status(update: Update, context: ContextTypes.DEFAUL
     if not subscription:
         # No active subscription
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("خرید محصولات", callback_data="start_subscription_flow")], # Changed text and callback
+            [InlineKeyboardButton("🎫 عضویت رایگان", callback_data="start_subscription_flow")], # Changed text and callback
             [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="back_to_main_menu")] # Consistent callback
         ])
         
@@ -410,7 +410,7 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
         else:  # No active subscription (None or expired)
             # Provide button for buying/renewing subscription
             keyboard_buttons.append(
-                [InlineKeyboardButton("خرید محصولات", callback_data="start_subscription_flow")]
+                [InlineKeyboardButton("🎫 عضویت رایگان", callback_data="start_subscription_flow")]
             )
         
         # Common buttons for all regular users
