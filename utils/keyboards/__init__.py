@@ -182,7 +182,7 @@ def get_subscription_plans_keyboard(telegram_id=None): # Added telegram_id as op
             if capacity <= 0:
                 plan_buttons_row.append(
                     InlineKeyboardButton(
-                        f"{plan['name']} (تکمیل)", callback_data=f"select_plan_{plan['id']}"
+                        f"{plan['name']} (تکمیل)", callback_data=f"plan_{plan['id']}"
                     )
                 )
                 if plan_buttons_row:
@@ -199,7 +199,7 @@ def get_subscription_plans_keyboard(telegram_id=None): # Added telegram_id as op
         for plan in active_plans:
             plan_id = plan['id']
             button_text = plan['name']  # Use plan's name directly for the button
-            plan_buttons_row.append(InlineKeyboardButton(button_text, callback_data=f"select_plan_{plan_id}"))
+            plan_buttons_row.append(InlineKeyboardButton(button_text, callback_data=f"plan_{plan_id}"))
             if len(plan_buttons_row) == 2:
                 keyboard.append(plan_buttons_row)
                 plan_buttons_row = []
