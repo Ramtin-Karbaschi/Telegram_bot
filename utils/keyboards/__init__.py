@@ -451,54 +451,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def get_subscription_plans_keyboard(telegram_id=None): # Added telegram_id as optional param, might be needed later
-    """Get keyboard with subscription plan options, showing discounted prices."""
-    keyboard = []
-    # Lazy import to avoid circular dependency
-    from database.queries import DatabaseQueries as _DB
-    all_active_plans = _DB.get_active_plans()
-    active_plans = []
-    for plan in all_active_plans:
-        # sqlite3.Row objects are accessed by index or key, not with .get()
-        # Skip plans that are marked as private (is_public = 0)
-        if ('is_public' in plan.keys() and not plan['is_public']):
-            continue
-
-        capacity = plan['capacity'] if 'capacity' in plan.keys() else None
-        if capacity is not None:
-            # Correctly count active subscriptions for the plan
-            count = _DB.count_total_subs(plan_id=plan['id'])
-            subscription_count = count
-
-            if subscription_count >= capacity:
-                continue  # Skip this plan as it has reached its capacity
-        active_plans.append(plan)
-
-    if not active_plans:
-        keyboard.append([InlineKeyboardButton("در حال حاضر طرح فعالی وجود ندارد.", callback_data='no_plans_available')])
-    else:
-        # Group plans into rows of 2 for better layout
-        plan_buttons_row = []
-        for plan in active_plans:
-            plan_id = plan['id']
-            button_text = plan['name']  # Use plan's name directly for the button
-            plan_buttons_row.append(InlineKeyboardButton(button_text, callback_data=f"plan_{plan_id}"))
-            if len(plan_buttons_row) == 2:
-                keyboard.append(plan_buttons_row)
-                plan_buttons_row = []
-        
-        if plan_buttons_row:  # Add the last row if it's not empty and has buttons
-            keyboard.append(plan_buttons_row)
-    
-    # Ensure TEXT_GENERAL_BACK is defined and imported correctly
-    try:
-        back_button_text = TEXT_GENERAL_BACK
-    except AttributeError:
-        logger.warning("'TEXT_GENERAL_BACK' not found, using default '↩ بازگشت'. Check 'utils.constants.all_constants'.")
-        back_button_text = "↩ بازگشت"
-        
-    keyboard.append([InlineKeyboardButton(back_button_text, callback_data="back_to_main_menu_from_plans")])
-    return InlineKeyboardMarkup(keyboard)
+# Removed duplicate definition of get_subscription_plans_keyboard; main implementation is defined earlier in this file to avoid override.
 
 def get_payment_methods_keyboard():
     """Get keyboard with payment method options"""
