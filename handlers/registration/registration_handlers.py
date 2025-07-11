@@ -115,10 +115,8 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.message.contact:
         raw_phone = update.message.contact.phone_number
-        
-        logger.info(f"Received phone via contact: {phone}")
-        if not phone.startswith('+'):
-            phone = '+' + phone
+
+        logger.info(f"Received phone via contact: {raw_phone}")
     elif update.message.text:
         raw_phone = update.message.text.strip()
         logger.info(f"Received phone via text: '{update.message.text}'")
