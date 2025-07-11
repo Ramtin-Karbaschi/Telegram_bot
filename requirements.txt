@@ -16,3 +16,4 @@ nltk==3.9.1
 pandas>=2.2.2
 XlsxWriter>=3.2.0
 openpyxl>=3.1.2
+pytest>=8.2.0

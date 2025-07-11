@@ -1,4 +1,5 @@
 import logging
+from telegram import Bot as TelegramBot
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
 from telegram.constants import ParseMode
@@ -30,6 +31,12 @@ class AdminTicketHandler:
     def __init__(self):
         """Initialize the handler and set `admin_config` required by permission decorators."""
         self.admin_config = getattr(config, "MANAGER_BOT_ADMINS_DICT", {}) or getattr(config, "ADMIN_USER_IDS", [])
+        # Use the *main* bot token to reach end-users; manager bot cannot initiate chats.
+        try:
+            self.main_bot = TelegramBot(token=config.MAIN_BOT_TOKEN)
+        except Exception as e:  # Fallback if token missing
+            logger.error("Failed to create main bot instance: %s", e)
+            self.main_bot = None
     
     @staff_only
     async def show_ticket_history_for_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE, target_user_id: int):
@@ -314,7 +321,8 @@ class AdminTicketHandler:
                 f"سوال شما:\n{original_question}\n\n"
                 f"پاسخ:\n{ai_answer}"
             )
-            await context.bot.send_message(chat_id=target_user_id, text=user_reply_text)
+            bot_to_use = self.main_bot or context.bot
+            await bot_to_use.send_message(chat_id=target_user_id, text=user_reply_text)
             DatabaseQueries.add_ticket_message(ticket_id, user_id, ai_answer, is_admin_message=True, update_status=False)
             DatabaseQueries.update_ticket_status(ticket_id, 'closed')
             await query.edit_message_text(
@@ -391,7 +399,8 @@ class AdminTicketHandler:
                 f"❔ سوال شما:\n{original_question}\n\n"
                 f"✅ پاسخ:\n{text}"
             )
-            await context.bot.send_message(chat_id=target_user_id, text=combined_text)
+            bot_to_use = self.main_bot or context.bot
+            await bot_to_use.send_message(chat_id=target_user_id, text=combined_text)
             DatabaseQueries.add_ticket_message(ticket_id, user_id, text, is_admin_message=True, update_status=False)
             DatabaseQueries.update_ticket_status(ticket_id, 'closed')
             await update.message.reply_text(

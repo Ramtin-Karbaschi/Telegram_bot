@@ -141,7 +141,7 @@ class AdminMenuHandler:
     # Callback data constants
     TICKETS_MENU = "admin_tickets_menu"
     USERS_MENU = "admin_users_menu"
-    FREE30_CALLBACK = "users_free30"
+    FREE20_CALLBACK = "users_free20"
     CREATE_INVITE_LINK = "users_create_invite_link"
     PAYMENTS_MENU = "admin_payments_menu"
     BROADCAST_MENU = "admin_broadcast_menu"
@@ -162,7 +162,7 @@ class AdminMenuHandler:
     # Conversation states
     (GET_INVITE_LINK_USER_ID,) = range(100, 101)
     (AWAIT_BROADCAST_MESSAGE, AWAIT_BROADCAST_CONFIRMATION) = range(101, 103)
-    (AWAIT_FREE30_USER_ID,) = range(103, 104)
+    (AWAIT_FREE20_USER_ID,) = range(103, 104)
     (AWAIT_USER_ID_FOR_BAN, AWAIT_BAN_CHOICE) = range(104, 106)
 
     @staff_only
@@ -259,10 +259,10 @@ class AdminMenuHandler:
             # Ask admin for search term
             await query.edit_message_text("🔎 لطفاً نام کاربری، نام یا آیدی عددی کاربر را ارسال کنید:")
             context.user_data["awaiting_user_search_query"] = True
-        elif data == self.FREE30_CALLBACK:
-            # Start free 30-day activation flow
+        elif data == self.FREE20_CALLBACK:
+            # Start free 20-day activation flow
             await query.edit_message_text("🎁 لطفاً نام کاربری (بدون @) یا آیدی عددی کاربر را ارسال کنید:")
-            context.user_data["awaiting_free30_user"] = True
+            context.user_data["awaiting_free20_user"] = True
         elif data == self.BAN_UNBAN_USER:
             await self.ban_unban_start(update, context)
         # ----- Payments submenu actions -----
@@ -408,7 +408,7 @@ class AdminMenuHandler:
     async def _users_submenu(self, query):
         keyboard = [
             [InlineKeyboardButton("🔗 ایجاد لینک دعوت", callback_data=self.CREATE_INVITE_LINK)],
-            [InlineKeyboardButton("🎁 فعال‌سازی ۳۰ روزه رایگان", callback_data=self.FREE30_CALLBACK)],
+            [InlineKeyboardButton("🎁 فعال‌سازی ۲۰ روزه رایگان", callback_data=self.FREE20_CALLBACK)],
             [InlineKeyboardButton("📋 لیست کاربران فعال", callback_data="users_list_active")],
             [InlineKeyboardButton("🔎 جستجوی کاربر", callback_data="users_search"), InlineKeyboardButton("🛑 مسدود/آزاد کردن", callback_data=self.BAN_UNBAN_USER)],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
@@ -846,9 +846,9 @@ class AdminMenuHandler:
             await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
         # --- Free 30-Day Activation Flow ---
-        elif context.user_data.get("awaiting_free30_user"):
+        elif context.user_data.get("awaiting_free20_user"):
             term = update.message.text.strip().lstrip("@")
-            context.user_data.pop("awaiting_free30_user", None)  # Reset flag
+            context.user_data.pop("awaiting_free20_user", None)  # Reset flag
 
             user_rows = DatabaseQueries.search_users(term)
             if not user_rows:
@@ -869,7 +869,7 @@ class AdminMenuHandler:
                 user_id=target_user_id,
                 plan_id=plan_id,
                 payment_id=None,  # No payment for a free plan
-                plan_duration_days=30,
+                plan_duration_days=20,
                 amount_paid=0,
                 payment_method="manual_free",
             )
@@ -879,7 +879,7 @@ class AdminMenuHandler:
                 return
 
             # Notify admin
-            await update.message.reply_text(f"✅ اشتراک ۳۰ روزه رایگان برای کاربر `{target_user_id}` با موفقیت فعال شد. در حال ایجاد و ارسال لینک دعوت...", parse_mode="Markdown")
+            await update.message.reply_text(f"✅ اشتراک ۲۰ روزه رایگان برای کاربر `{target_user_id}` با موفقیت فعال شد. در حال ایجاد و ارسال لینک دعوت...", parse_mode="Markdown")
 
             # Generate and send invite links
             links = await self.invite_link_manager.ensure_one_time_links(context.bot, target_user_id)
@@ -887,7 +887,7 @@ class AdminMenuHandler:
                 await update.message.reply_text("❌ خطا در ایجاد لینک‌های دعوت. اشتراک فعال شد اما لینک ارسال نشد.")
                 return
 
-            link_message = "🎁 سلام! اشتراک ۳۰ روزه رایگان شما فعال شد.\n\nمی‌توانید از طریق لینک‌های زیر به کانال‌ها و گروه‌های ما بپیوندید:\n"
+            link_message = "🎁 سلام! اشتراک ۲۰ روزه رایگان شما فعال شد.\n\nمی‌توانید از طریق لینک‌های زیر به کانال‌ها و گروه‌های ما بپیوندید:\n"
             for channel_name, link in links.items():
                 link_message += f"\n🔗 {channel_name}: {link}\n"
             link_message += "\nاین لینک‌ها یکبار مصرف هستند و فقط برای شما کار می‌کنند."
