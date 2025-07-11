@@ -240,10 +240,9 @@ async def handle_free_content_plan(update: Update, context: ContextTypes.DEFAULT
     plan_id = plan['id']
     plan_name = plan['name']
 
-    # 1. Check if the plan capacity is full
+    # 1. Check if the plan capacity is full (capacity stores remaining slots)
     if plan.get('capacity') is not None:
-        current_usage = Database.count_subscriptions_for_plan(plan_id)
-        if current_usage >= plan['capacity']:
+        if plan['capacity'] <= 0:
             await query.message.edit_text(
                 "ظرفیت این پلن تکمیل شده است.",
                 reply_markup=get_main_menu_keyboard()
@@ -359,11 +358,10 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     plan_dict = dict(selected_plan)
     context.user_data['selected_plan'] = plan_dict
 
-    # Check plan capacity
+    # Check remaining capacity slots (capacity stores remaining slots).
     plan_capacity = plan_dict.get('capacity')
     if plan_capacity is not None:
-        current_subscribers = Database.count_subscribers_for_plan(plan_id)
-        if current_subscribers >= plan_capacity:
+        if plan_capacity <= 0:
             logger.info(f"User {user_id} tried to select plan {plan_id} which is at full capacity.")
             await query.message.edit_text(
                 text="ظرفیت این محصول تکمیل شده است.",
