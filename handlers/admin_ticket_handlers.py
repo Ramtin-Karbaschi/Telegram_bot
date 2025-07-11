@@ -458,19 +458,19 @@ class AdminTicketHandler:
             await query.edit_message_text("خطا در بستن تیکت.")
 
     async def refresh_tickets_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Refresh the list of pending tickets."""
+        """Refresh the list of pending tickets (inline)."""
         query = update.callback_query
-        await query.answer("🔁 در حال به‌روزرسانی...")
-        # We need to simulate a message object for show_tickets_command
-        class DummyMessage:
-            def __init__(self, chat_id, from_user):
-                self.chat_id = chat_id
-                self.from_user = from_user
-            async def reply_text(self, text, reply_markup=None, parse_mode=None, **kwargs):
-                await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode, **kwargs)
-        
-        dummy_update = Update(update.update_id, message=DummyMessage(query.message.chat_id, query.from_user))
-        await self.show_tickets_command(dummy_update, context)
+        # Show a short answering toast but don't block on it
+        await query.answer("🔄 در حال به‌روزرسانی…", show_alert=False)
+
+        # Only admins/support are allowed – reuse the same check
+        if not self._is_admin(query.from_user.id):
+            await query.edit_message_text("❌ شما دسترسی لازم برای این عملیات را ندارید.")
+            return
+
+        # Delegate to the inline implementation that already handles
+        # the 'Message is not modified' BadRequest gracefully.
+        await self._show_tickets_inline(query)
 
     def get_handlers(self):
         """Return all handlers for the ticket management module."""
