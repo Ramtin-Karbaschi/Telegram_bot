@@ -360,13 +360,49 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data['selected_plan'] = plan_dict
     logger.info(f"[select_plan_handler] Selected plan: {plan_dict}")
 
-    # Route based on plan_type
+    # Route based on plan_type first
     if plan_dict.get('plan_type') == 'one_time_content':
         logger.info(f"Plan {plan_id} is one_time_content. Routing to handle_free_content_plan.")
         return await handle_free_content_plan(update, context)
-    
-    # Default to subscription flow
-    logger.info(f"Plan {plan_id} is a subscription. Proceeding to ask for discount.")
+
+    # If the plan price in USDT is zero, treat it as a free subscription and skip payment flow
+    usdt_price = plan_dict.get('price_tether') or plan_dict.get('original_price_usdt') or 0
+    if usdt_price == 0:
+        logger.info(f"Plan {plan_id} price is zero. Activating subscription without payment flow.")
+        # Fetch user's DB id
+        user_row = Database.get_user_by_telegram_id(user_id)
+        user_db_id = user_row['id'] if user_row and 'id' in user_row else None
+        if user_db_id is None:
+            logger.error(f"User DB record not found for telegram_id {user_id}. Cannot activate free plan.")
+            await query.message.edit_text("خطا: اطلاعات کاربری یافت نشد.", reply_markup=get_main_menu_keyboard(user_id))
+            return ConversationHandler.END
+
+        success, err_msg = await activate_or_extend_subscription(
+            user_id=user_db_id,
+            telegram_id=user_id,
+            plan_id=plan_id,
+            plan_name=plan_dict['name'],
+            payment_amount=0.0,
+            payment_method='free',
+            transaction_id='FREE',
+            context=context,
+            payment_table_id=0
+        )
+        if success:
+            await query.message.edit_text(
+                text="✅ اشتراک شما با موفقیت فعال شد. لینک‌های دسترسی برای شما ارسال گردید.",
+                reply_markup=get_main_menu_keyboard(user_id),
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await query.message.edit_text(
+                text=f"❌ {err_msg}",
+                reply_markup=get_main_menu_keyboard(user_id)
+            )
+        return ConversationHandler.END
+
+    # Default to paid subscription flow
+    logger.info(f"Plan {plan_id} requires payment. Proceeding to ask for discount.")
     context.user_data['selected_plan_details'] = plan_dict
     # No fixed IRR price; will compute dynamically later
     return await ask_discount_handler(update, context)
