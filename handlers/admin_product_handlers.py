@@ -77,8 +77,14 @@ class AdminProductHandler:
         return ADD_PRICE
 
     async def get_plan_price(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Collects the plan price in USDT and validates the numeric input."""
         from utils.locale_utils import to_float
-        context.user_data['new_plan_price_usdt'] = to_float(update.message.text)
+        try:
+            context.user_data['new_plan_price_usdt'] = to_float(update.message.text)
+        except (ValueError, TypeError):
+            await update.message.reply_text("❌ مقدار وارد شده معتبر نیست. لطفاً مبلغ را به عدد (مثلاً 10.5) وارد کنید یا /skip بزنید.")
+            return ADD_PRICE
+
         await update.message.reply_text("مدت زمان پلن را به روز وارد کنید:")
         return ADD_DURATION
 
@@ -128,12 +134,17 @@ class AdminProductHandler:
         "is_public": "عمومی؟ (1/0)"
     }
 
-    def _build_fields_keyboard(self) -> InlineKeyboardMarkup:
-        """Return an inline keyboard with <=3 buttons per row for all editable plan columns."""
+    def _build_fields_keyboard(self, context: ContextTypes.DEFAULT_TYPE, mode: str) -> InlineKeyboardMarkup:
+        """Return an inline keyboard with <=3 buttons per row for all editable plan columns.
+        Each button shows a tick if that field already has a value in the current user_data.
+        """
         buttons: list[list[InlineKeyboardButton]] = []
         row: list[InlineKeyboardButton] = []
         for idx, (field, label) in enumerate(self._PLAN_FIELD_LABELS.items(), start=1):
-            row.append(InlineKeyboardButton(label, callback_data=f"set_field_{field}"))
+            prefix = 'new_plan_' if mode == 'add' else 'edit_plan_'
+            value_exists = context.user_data.get(f"{prefix}{field}") is not None
+            label_with_tick = ("✅ " if value_exists else "▫️ ") + label
+            row.append(InlineKeyboardButton(label_with_tick, callback_data=f"set_field_{field}"))
             if idx % 3 == 0:
                 buttons.append(row)
                 row = []
@@ -146,13 +157,25 @@ class AdminProductHandler:
         ])
         return InlineKeyboardMarkup(buttons)
 
+
     async def _show_fields_menu(self, query, context: ContextTypes.DEFAULT_TYPE, mode: str):
         """Show the menu for selecting which additional field to set (add/edit)."""
         context.user_data['extra_mode'] = mode  # 'add' or 'edit'
         await query.edit_message_text(
-            "ستون مورد نظر را برای مقداردهی انتخاب کنید:",
-            reply_markup=self._build_fields_keyboard()
+            self._generate_summary_text(context, mode) + "\n\nستون مورد نظر را برای مقداردهی انتخاب کنید:",
+            reply_markup=self._build_fields_keyboard(context, mode)
         )
+
+    def _generate_summary_text(self, context: ContextTypes.DEFAULT_TYPE, mode: str) -> str:
+        """Build a Persian summary of all currently filled fields for the admin."""
+        prefix = 'new_plan_' if mode == 'add' else 'edit_plan_'
+        lines: list[str] = ["— وضعیت مقادیر فعلی —"]
+        for field, label in self._PLAN_FIELD_LABELS.items():
+            val = context.user_data.get(f"{prefix}{field}")
+            emoji = "✅" if val is not None else "▫️"
+            show_val = val if val is not None else "—"
+            lines.append(f"{emoji} {label}: {show_val}")
+        return "\n".join(lines)
 
     async def _prompt_for_field_value(self, query: Update.callback_query, field_key: str):
         label = self._PLAN_FIELD_LABELS.get(field_key, field_key)
@@ -443,9 +466,15 @@ class AdminProductHandler:
         return EDIT_PRICE
 
     async def get_new_plan_price(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Updates the USDT price for an existing plan with validation."""
         if update.message.text != '/skip':
             from utils.locale_utils import to_float
-            context.user_data['edit_plan_price_usdt'] = to_float(update.message.text)
+            try:
+                context.user_data['edit_plan_price_usdt'] = to_float(update.message.text)
+            except (ValueError, TypeError):
+                await update.message.reply_text("❌ مقدار وارد شده معتبر نیست. لطفاً مبلغ را به عدد (مثلاً 9.99) وارد کنید یا /skip بزنید.")
+                return EDIT_PRICE
+
         await update.message.reply_text("لطفاً مدت زمان جدید را به روز وارد کنید (برای رد شدن، /skip را بزنید):")
         return EDIT_DURATION
 
