@@ -370,12 +370,20 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if usdt_price == 0:
         logger.info(f"Plan {plan_id} price is zero. Activating subscription without payment flow.")
         # Fetch user's DB id
+        # We expect the primary key column in users table to be `user_id` (same as Telegram ID).
+        # Ensure the user exists; `update_user_activity` at start usually inserts missing users via triggers/wrappers.
         user_row = Database.get_user_by_telegram_id(user_id)
-        user_db_id = user_row['id'] if user_row and 'id' in user_row else None
+        user_db_id = None
+        if user_row:
+            # sqlite3.Row can be accessed like a dict
+            if 'user_id' in user_row.keys():
+                user_db_id = user_row['user_id']
+            elif 'id' in user_row.keys():  # fallback if schema differs
+                user_db_id = user_row['id']
+        # As a last resort, fall back to telegram_id itself (they are identical in our schema)
         if user_db_id is None:
-            logger.error(f"User DB record not found for telegram_id {user_id}. Cannot activate free plan.")
-            await query.message.edit_text("خطا: اطلاعات کاربری یافت نشد.", reply_markup=get_main_menu_keyboard(user_id))
-            return ConversationHandler.END
+            user_db_id = user_id
+
 
         success, err_msg = await activate_or_extend_subscription(
             user_id=user_db_id,
@@ -390,7 +398,7 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         if success:
             await query.message.edit_text(
-                text="✅ اشتراک شما با موفقیت فعال شد. لینک‌های دسترسی برای شما ارسال گردید.",
+                text=f"✅ اشتراک پلن «{plan_dict['name']}» با موفقیت فعال شد. لینک‌های دسترسی برای شما ارسال گردید.",
                 reply_markup=get_main_menu_keyboard(user_id),
                 parse_mode=ParseMode.HTML
             )
