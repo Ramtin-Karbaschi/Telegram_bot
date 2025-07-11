@@ -358,6 +358,18 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Convert sqlite3.Row to a dictionary for easier and safer access
     plan_dict = dict(selected_plan)
     context.user_data['selected_plan'] = plan_dict
+
+    # Check plan capacity
+    plan_capacity = plan_dict.get('capacity')
+    if plan_capacity is not None:
+        current_subscribers = Database.count_subscribers_for_plan(plan_id)
+        if current_subscribers >= plan_capacity:
+            logger.info(f"User {user_id} tried to select plan {plan_id} which is at full capacity.")
+            await query.message.edit_text(
+                text="ظرفیت این محصول تکمیل شده است.",
+                reply_markup=get_main_menu_keyboard(user_id)
+            )
+            return ConversationHandler.END
     logger.info(f"[select_plan_handler] Selected plan: {plan_dict}")
 
     # Route based on plan_type first
@@ -368,6 +380,14 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     # If the plan price in USDT is zero, treat it as a free subscription and skip payment flow
     usdt_price = plan_dict.get('price_tether') or plan_dict.get('original_price_usdt') or 0
     if usdt_price == 0:
+        # Prevent users from subscribing to free plan multiple times
+        if Database.has_user_used_free_plan(user_id=user_id, plan_id=plan_id):
+            await query.message.edit_text(
+                text="شما قبلاً از این طرح رایگان استفاده کرده‌اید و امکان فعال‌سازی مجدد آن وجود ندارد.",
+                reply_markup=get_main_menu_keyboard(user_id)
+            )
+            return ConversationHandler.END
+
         logger.info(f"Plan {plan_id} price is zero. Activating subscription without payment flow.")
         # Fetch user's DB id
         # We expect the primary key column in users table to be `user_id` (same as Telegram ID).

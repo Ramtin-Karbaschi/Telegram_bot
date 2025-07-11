@@ -129,12 +129,14 @@ async def activate_or_extend_subscription(
     logger.info(f"Attempting to activate/extend subscription for user_id: {user_id}, plan_id: {plan_id}")
 
     try:
-        plan_details = Database.get_plan_by_id(plan_id)
-        if not plan_details:
+        plan_row = Database.get_plan_by_id(plan_id)
+        if not plan_row:
             logger.error(f"Plan with ID {plan_id} not found for user_id: {user_id}.")
             return False, "اطلاعات طرح اشتراک یافت نشد."
 
-        plan_duration_days = dict(plan_details).get('days')
+        plan_details = dict(plan_row)  # convert sqlite3.Row → dict for safe .get access
+
+        plan_duration_days = plan_details.get('days')
         if plan_duration_days is None:
             logger.error(f"Plan duration not found for plan_id: {plan_id}, user_id: {user_id}.")
             return False, "مدت زمان طرح اشتراک مشخص نشده است."
@@ -180,7 +182,16 @@ async def activate_or_extend_subscription(
         new_expiration_date = start_date + timedelta(days=plan_duration_days)
         new_expiration_date_str = new_expiration_date.isoformat()
 
-        # 4. Update the users table
+        # 4. Decrement plan capacity if applicable (do this before updating user summary to ensure atomicity)
+        if plan_details.get('capacity') is not None:
+            dec_success = Database.decrement_plan_capacity(plan_id)
+            if not dec_success:
+                logger.warning(
+                    "Could not decrement capacity for plan_id %s – it may already be exhausted. Continuing anyway.",
+                    plan_id,
+                )
+
+        # 5. Update the users table
         update_success = Database.update_user_subscription_summary(
             user_id=user_id,
             total_days=new_total_days,

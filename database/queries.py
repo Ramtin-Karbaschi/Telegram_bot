@@ -294,6 +294,57 @@ class DatabaseQueries:
             logging.error(f"SQLite error in set_plan_activation: {e}")
             return False
 
+    @staticmethod
+    def count_subscribers_for_plan(plan_id: int) -> int:
+        """Counts the number of active subscribers for a given plan."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "SELECT COUNT(id) FROM subscriptions WHERE plan_id = ? AND status = 'active'"
+                if db.execute(query, (plan_id,)):
+                    result = db.fetchone()
+                    return result[0] if result else 0
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in count_subscribers_for_plan: {e}")
+            finally:
+                db.close()
+        return 0
+
+    # ------------------------------------------------------------------
+    # Capacity helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def decrement_plan_capacity(plan_id: int, amount: int = 1) -> bool:
+        """Decrements remaining capacity for a plan by the given amount.
+
+        The update is only applied if the plan has a non-NULL capacity value
+        and the resulting capacity would not become negative.
+        Returns True if a row was updated (capacity decremented), otherwise False.
+        """
+        if amount <= 0:
+            return False
+        db = Database()
+        if db.connect():
+            try:
+                db.execute(
+                    """
+                    UPDATE plans
+                    SET capacity = capacity - ?
+                    WHERE id = ?
+                      AND capacity IS NOT NULL
+                      AND capacity >= ?
+                    """,
+                    (amount, plan_id, amount),
+                )
+                db.commit()
+                return db.cursor.rowcount > 0
+            except sqlite3.Error as exc:
+                logging.error("SQLite error in decrement_plan_capacity: %s", exc)
+                return False
+            finally:
+                db.close()
+        return False
+
     def delete_plan(self, plan_id: int):
         """Delete a plan from the database."""
         try:
