@@ -177,13 +177,9 @@ def get_subscription_plans_keyboard(telegram_id=None): # Added telegram_id as op
 
         capacity = plan['capacity'] if 'capacity' in plan.keys() else None
         if capacity is not None:
-            # First interpret capacity as the TOTAL allowed subscriptions (not remaining).
-            # Calculate remaining slots.
-            subscription_count = _DB.count_subscriptions_for_plan(plan['id'])
-            remaining_slots = capacity - subscription_count
-
-            # If no slots remain, mark as full; otherwise show with normal label.
-            if remaining_slots <= 0:
+            # Capacity column stores the REMAINING slots (decremented on each purchase).
+            # Plan is full if remaining capacity is 0 or less.
+            if capacity <= 0:
                 plan_buttons_row.append(
                     InlineKeyboardButton(
                         f"{plan['name']} (تکمیل)", callback_data=f"select_plan_{plan['id']}"
