@@ -1472,16 +1472,43 @@ class DatabaseQueries:
     
     # Payment-related queries
     @staticmethod
-    def add_payment(user_id, amount, payment_method, description=None, transaction_id=None, status="pending", plan_id=None):
-        """Add a new payment"""
+    def add_payment(user_id, amount, payment_method, description=None, transaction_id=None, status="pending", plan_id=None, *, expires_at: datetime | None = None):
+        """Add a new payment record.
+
+        Args:
+            user_id: ID of the purchaser (telegram_id).
+            amount: Amount in IRR to be paid.
+            payment_method: e.g. 'zarinpal', 'crypto'.
+            description: Optional textual description.
+            transaction_id: Gateway authority / pre-payment token if available.
+            status: Initial status, default 'pending'.
+            plan_id: Related subscription plan.
+            expires_at: Optional expiration `datetime`.  When provided it will be stored in the
+                        `expires_at` column so that verification handlers can enforce link
+                        expiration.
+        """
         db = Database()
         if db.connect():
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now_iso = datetime.now().isoformat()
+            expires_at_iso = expires_at.isoformat() if expires_at else None
+            # Use explicit column list for forward-compatibility.
             db.execute(
                 """INSERT INTO payments 
-                (user_id, plan_id, amount, payment_date, payment_method, transaction_id, description, status) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (user_id, plan_id, amount, now, payment_method, transaction_id, description, status)
+                    (user_id, plan_id, amount, payment_date, payment_method, transaction_id, description, status, expires_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    user_id,
+                    plan_id,
+                    amount,
+                    now_iso,            # payment_date
+                    payment_method,
+                    transaction_id,
+                    description,
+                    status,
+                    expires_at_iso,
+                    now_iso,            # created_at
+                    now_iso,            # updated_at
+                ),
             )
             payment_id = db.cursor.lastrowid
             db.commit()

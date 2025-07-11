@@ -5,6 +5,7 @@ Registration handlers for the Daraei Academy Telegram bot
 import logging
 
 import re
+from utils.phone_utils import normalize_phone_number
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
@@ -110,14 +111,16 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
     user_id = user.id
-    phone = None  # Initialize phone
+    raw_phone = None  # Raw input
 
     if update.message.contact:
-        phone = update.message.contact.phone_number
+        raw_phone = update.message.contact.phone_number
+        
         logger.info(f"Received phone via contact: {phone}")
         if not phone.startswith('+'):
             phone = '+' + phone
     elif update.message.text:
+        raw_phone = update.message.text.strip()
         logger.info(f"Received phone via text: '{update.message.text}'")
         
         # Explicitly handle "back" button text to avoid processing it as a phone number
@@ -128,15 +131,20 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return GET_PHONE
 
-        phone = update.message.text.strip()
-        if not phone.startswith('+'):
-            phone = '+' + phone
+        
     else:
         logger.warning(f"No contact or text message received in GET_PHONE for user {user_id}. Re-prompting.")
         await update.message.reply_text("لطفاً شماره تماس خود را به اشتراک بگذارید یا از دکمه زیر استفاده کنید.", reply_markup=get_contact_button())
         return GET_PHONE
     
-    logger.info(f"Processed phone number: {phone} for user {user_id}")
+    phone = normalize_phone_number(raw_phone)
+    if not phone:
+        await update.message.reply_text(
+            "❌ شماره تلفن وارد شده معتبر نیست. لطفاً یک شماره موبایل ایرانی به صورت صحیح وارد کنید مانند 09123456789 یا +989123456789.",
+            reply_markup=get_contact_button()
+        )
+        return GET_PHONE
+    logger.info(f"Normalized phone number: {phone} for user {user_id}")
 
     if not Database.user_exists(user_id):
         logger.info(f"User {user_id} does not exist. Adding new user.")

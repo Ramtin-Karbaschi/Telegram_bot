@@ -1,58 +1,5 @@
-"""Helper to guarantee existence of 30-day free subscription plan."""
 
-import sqlite3
-import logging
-
-# Assuming the database path is constant
-DB_PATH = "database/data/app.db"
-PLAN_NAME = "Free 20-Day Plan"
-
-logger = logging.getLogger(__name__)
-
-def ensure_free_plan() -> int | None:
-    """
-    Checks if the free plan exists in the database and creates it if not.
-    Returns the plan_id.
-    """
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-
-        # Check if the plan already exists
-        cursor.execute("SELECT plan_id, duration_days FROM plans WHERE plan_name = ?", (PLAN_NAME,))
-        result = cursor.fetchone()
-
-        if result:
-            plan_id, duration = result
-            if duration != 20:
-                cursor.execute("UPDATE plans SET duration_days = ?, description = ? WHERE plan_id = ?", (20, "20-day free trial provided by admin.", plan_id))
-                conn.commit()
-                logger.info(f"Updated existing free plan '{PLAN_NAME}' duration to 20 days.")
-            else:
-                logger.info(f"Free plan '{PLAN_NAME}' already exists with correct duration (ID: {plan_id}).")
-            return plan_id
-        else:
-            # Plan does not exist, so create it
-            logger.info(f"Creating new free plan: '{PLAN_NAME}'")
-            cursor.execute(
-                """INSERT INTO plans (plan_name, price, duration_days, is_active, description) 
-                   VALUES (?, ?, ?, ?, ?)""",
-                (PLAN_NAME, 0, 20, 1, "20-day free trial provided by admin.")
-            )
-            conn.commit()
-            new_plan_id = cursor.lastrowid
-            logger.info(f"Successfully created free plan with ID: {new_plan_id}")
-            return new_plan_id
-
-    except sqlite3.Error as e:
-        logger.error(f"Database error in ensure_free_plan: {e}", exc_info=True)
-        return None
-    finally:
-        if conn:
-            conn.close()
-
-"""Helper to guarantee existence of 30-day free subscription plan."""
+"""Helper to guarantee existence of 20-day free subscription plan."""
 
 import sqlite3
 import logging

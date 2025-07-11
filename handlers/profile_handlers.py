@@ -16,6 +16,7 @@ from database.queries import DatabaseQueries
 from utils import constants
 from utils import keyboards
 from utils.validators import is_valid_persian_birth_date, parse_persian_birth_date
+from utils.phone_utils import normalize_phone_number
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Explicitly set level for this specific logger
@@ -331,16 +332,22 @@ async def confirm_occupation_selection(update: Update, context: ContextTypes.DEF
     return constants.SELECT_FIELD_TO_EDIT
 
 async def handle_phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
-    def is_valid_phone(value):
-        if value:
-            cleaned_value = value.replace("+", "").strip()
-            return cleaned_value.isdigit() and 9 <= len(cleaned_value) <= 15
-        return False
+    """Handle phone number input during profile edit."""
 
-    return await _handle_text_or_contact_input(update, context, 
-                                             is_valid_value_func=is_valid_phone,
-                                             error_message="شماره تلفن وارد شده معتبر نیست. لطفاً شماره صحیح را وارد کنید یا با دکمه اشتراک بگذارید.",
-                                             success_field_name_override="شماره تلفن")
+    def _normalize(value: str):
+        return normalize_phone_number(value)
+
+    def _is_valid_phone(value: str) -> bool:
+        return _normalize(value) is not None
+
+    return await _handle_text_or_contact_input(
+        update,
+        context,
+        is_valid_value_func=_is_valid_phone,
+        error_message="شماره تلفن وارد شده معتبر نیست. لطفاً شماره صحیح را وارد کنید یا با دکمه اشتراک بگذارید.",
+        transform_value_func=_normalize,
+        success_field_name_override="شماره تلفن"
+    )
 
 async def cancel_current_field_edit_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     query = update.callback_query
