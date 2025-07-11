@@ -129,9 +129,10 @@ class AdminProductHandler:
         "features": "ویژگی‌ها (JSON)",
         "plan_type": "نوع پلن",
         "expiration_date": "تاریخ انقضا (YYYY-MM-DD)",
+        "fixed_end_date": "تاریخ پایان ثابت (YYYY-MM-DD)",
         "display_order": "ترتیب نمایش",
         "is_active": "فعال؟ (1/0)",
-        "is_public": "عمومی؟ (1/0)"
+        "is_public": "عمومی؟ (1/0)",
     }
 
     def _build_fields_keyboard(self, context: ContextTypes.DEFAULT_TYPE, mode: str) -> InlineKeyboardMarkup:
@@ -274,25 +275,39 @@ class AdminProductHandler:
             await update.message.reply_text("خطا: فیلدی انتخاب نشده است.")
             return FIELD_VALUE
         val_text = update.message.text.strip()
-        # Convert to proper type where possible
-        parsed_val: Any = val_text
+        # Handle skip to clear value
+        if val_text == '/skip':
+            parsed_val = None
+        else:
+            parsed_val: Any = val_text
         try:
             if field_key in {"price", "original_price_irr", "price_tether", "original_price_usdt"}:
                 parsed_val = float(val_text)
             elif field_key in {"duration_days", "capacity", "display_order"}:
-                parsed_val = int(val_text)
+                from utils.locale_utils import to_int
+                parsed_val = to_int(val_text)
             elif field_key in {"is_active", "is_public"}:
                 parsed_val = 1 if val_text in {"1", "true", "True", "yes", "Yes"} else 0
+            elif field_key in {"expiration_date", "fixed_end_date"}:
+                try:
+                    datetime.strptime(parsed_val, "%Y-%m-%d")
+                except ValueError:
+                    raise ValueError("invalid_date_format")
             # else keep string (e.g., json, dates)
-        except ValueError:
-            await update.message.reply_text("فرمت مقدار وارد شده اشتباه است. دوباره تلاش کنید.")
+        except ValueError as e:
+            if str(e) == "invalid_date_format":
+                await update.message.reply_text("فرمت تاریخ اشتباه است. لطفاً تاریخ را به فرمت YYYY-MM-DD وارد کنید یا /skip بزنید.")
+            else:
+                await update.message.reply_text("فرمت مقدار وارد شده اشتباه است. دوباره تلاش کنید (YYYY-MM-DD برای تاریخ یا /skip).")
             return FIELD_VALUE
+        # store value
         mode = context.user_data.get('extra_mode')
         prefix = 'new_plan_' if mode == 'add' else 'edit_plan_'
         context.user_data[f"{prefix}{field_key}"] = parsed_val
         context.user_data.pop('current_field_key', None)
-        await update.message.reply_text("مقدار ذخیره شد. برای تنظیم فیلد دیگر یک گزینه انتخاب کنید یا دکمه اتمام را بزنید.")
-        # Re-show menu
+        # Refresh menu so admin can continue or finish
+        summary_text = self._generate_summary_text(context, mode) + "\n\nستون مورد نظر را برای مقداردهی انتخاب کنید:"
+        await update.message.reply_text(summary_text, reply_markup=self._build_fields_keyboard(context, mode))
         return FIELD_VALUE
 
     async def save_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -405,8 +420,18 @@ class AdminProductHandler:
 
     async def handle_toggle_plan_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
-        plan_id = int(query.data.split('_')[-1])
-        await self.toggle_plan_status(query, plan_id)
+        data_parts = query.data.split('_')
+        plan_id = int(data_parts[-1])
+        if 'confirm' in data_parts:
+            # second step -> execute
+            await self.toggle_plan_status(query, plan_id)
+            return
+        # First click – ask for confirmation
+        keyboard = [
+            [InlineKeyboardButton("✅ بله، تغییر وضعیت", callback_data=f"toggle_plan_active_confirm_{plan_id}")],
+            [InlineKeyboardButton("❌ خیر", callback_data=f"view_plan_{plan_id}")]
+        ]
+        await query.edit_message_text("آیا از تغییر وضعیت فعال/غیرفعال این پلن اطمینان دارید؟", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def toggle_plan_status(self, query: Update.callback_query, plan_id: int):
         """Toggles the is_active status of a plan."""
@@ -424,8 +449,16 @@ class AdminProductHandler:
 
     async def handle_toggle_plan_visibility(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
-        plan_id = int(query.data.split('_')[-1])
-        await self.toggle_plan_visibility(query, plan_id)
+        parts = query.data.split('_')
+        plan_id = int(parts[-1])
+        if 'confirm' in parts:
+            await self.toggle_plan_visibility(query, plan_id)
+            return
+        keyboard = [
+            [InlineKeyboardButton("✅ بله، تغییر نمایش", callback_data=f"toggle_plan_public_confirm_{plan_id}")],
+            [InlineKeyboardButton("❌ خیر", callback_data=f"view_plan_{plan_id}")]
+        ]
+        await query.edit_message_text("آیا از تغییر وضعیت نمایش این پلن اطمینان دارید؟", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def toggle_plan_visibility(self, query: Update.callback_query, plan_id: int):
         """Toggles the is_public status of a plan."""
@@ -456,6 +489,10 @@ class AdminProductHandler:
         query = update.callback_query
         plan_id = int(query.data.split("_")[2])
         context.user_data['edit_plan_id'] = plan_id
+        # Store original updated_at for optimistic locking
+        original_plan = self.db_queries.get_plan_by_id(plan_id)
+        if original_plan and 'updated_at' in original_plan:
+            context.user_data['edit_original_updated_at'] = str(original_plan['updated_at'])
         await query.message.reply_text("لطفاً نام جدید پلن را وارد کنید (برای رد شدن، /skip را بزنید):")
         return EDIT_NAME
 
@@ -523,6 +560,14 @@ class AdminProductHandler:
         query = update.callback_query
         await query.answer()
         plan_id = context.user_data['edit_plan_id']
+        # Optimistic lock – abort if another admin changed the plan
+        db_plan = self.db_queries.get_plan_by_id(plan_id)
+        stored_ts = context.user_data.get('edit_original_updated_at')
+        if db_plan and 'updated_at' in db_plan and stored_ts is not None and str(db_plan['updated_at']) != stored_ts:
+            await query.edit_message_text("❌ این پلن توسط ادمین دیگری تغییر کرده است. لطفاً مجدداً بارگذاری کنید.")
+            context.user_data.clear()
+            return ConversationHandler.END
+
         update_kwargs = {
             'name': context.user_data.get('edit_plan_name'),
             'price': None,  # will derive again
