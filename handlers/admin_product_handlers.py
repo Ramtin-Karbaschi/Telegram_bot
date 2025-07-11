@@ -616,6 +616,4 @@ class AdminProductHandler:
 
         return [add_plan_handler, edit_plan_handler]
 
-    # Update edit handler mapping similarly omitted for brevity
 
-    return [add_plan_handler, edit_plan_handler]
