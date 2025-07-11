@@ -501,6 +501,14 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
     # --- Handle free plans or plans discounted to zero ---
     if price_irr is None or price_irr <= 0:
+        # Prevent duplicate activation of free plan (including plans discounted to zero)
+        if Database.has_user_used_free_plan(user_id=telegram_id, plan_id=plan_id):
+            await query.message.edit_text(
+                "شما قبلاً از این طرح رایگان استفاده کرده‌اید و امکان فعال‌سازی مجدد آن وجود ندارد.",
+                reply_markup=get_main_menu_keyboard(telegram_id)
+            )
+            return ConversationHandler.END
+
         logger.info(f"Plan {plan_id} has zero price ({price_irr}). Activating for user {telegram_id} without payment.")
         success, msg = await activate_or_extend_subscription(
             user_id=user_db_id,

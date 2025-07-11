@@ -4,14 +4,20 @@ from utils.price_utils import get_usdt_to_irr_rate
 from utils.helpers import admin_only_decorator as admin_only
 from database.queries import DatabaseQueries
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
 # Adding capacity states
-(ADD_NAME, ADD_PRICE, ADD_DURATION, ADD_CAPACITY, ADD_DESCRIPTION, ADD_CONFIRMATION) = range(6)
-(EDIT_NAME, EDIT_PRICE, EDIT_DURATION, EDIT_CAPACITY, EDIT_DESCRIPTION, EDIT_CONFIRMATION) = range(6, 12)
+# Conversation state definitions
+# Add \u0026 Edit flows share a common FIELD_VALUE state for entering arbitrary field values
+(
+    ADD_NAME, ADD_PRICE, ADD_DURATION, ADD_CAPACITY, ADD_DESCRIPTION, ADD_CONFIRMATION,
+    EDIT_NAME, EDIT_PRICE, EDIT_DURATION, EDIT_CAPACITY, EDIT_DESCRIPTION, EDIT_CONFIRMATION,
+    FIELD_VALUE,
+) = range(13)
 
 class AdminProductHandler:
     def __init__(self, db_queries: DatabaseQueries, admin_config=None):
@@ -106,6 +112,54 @@ class AdminProductHandler:
         await update.message.reply_text("توضیحات پلن را وارد کنید (اختیاری):")
         return ADD_DESCRIPTION
 
+    # ---------------------------- Extra-field helper methods ---------------------------- #
+    _PLAN_FIELD_LABELS: dict[str, str] = {
+        "price": "قیمت ریالی (price)",
+        "original_price_irr": "قیمت ریالی اصلی",
+        "price_tether": "قیمت تتر (USDT)",
+        "original_price_usdt": "قیمت تتر اصلی",
+        "duration_days": "مدت (روز)",
+        "capacity": "ظرفیت",
+        "features": "ویژگی‌ها (JSON)",
+        "plan_type": "نوع پلن",
+        "expiration_date": "تاریخ انقضا (YYYY-MM-DD)",
+        "display_order": "ترتیب نمایش",
+        "is_active": "فعال؟ (1/0)",
+        "is_public": "عمومی؟ (1/0)"
+    }
+
+    def _build_fields_keyboard(self) -> InlineKeyboardMarkup:
+        """Return an inline keyboard with <=3 buttons per row for all editable plan columns."""
+        buttons: list[list[InlineKeyboardButton]] = []
+        row: list[InlineKeyboardButton] = []
+        for idx, (field, label) in enumerate(self._PLAN_FIELD_LABELS.items(), start=1):
+            row.append(InlineKeyboardButton(label, callback_data=f"set_field_{field}"))
+            if idx % 3 == 0:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        # control buttons
+        buttons.append([
+            InlineKeyboardButton("✅ اتمام", callback_data="fields_done"),
+            InlineKeyboardButton("🔙 بازگشت", callback_data="fields_back")
+        ])
+        return InlineKeyboardMarkup(buttons)
+
+    async def _show_fields_menu(self, query, context: ContextTypes.DEFAULT_TYPE, mode: str):
+        """Show the menu for selecting which additional field to set (add/edit)."""
+        context.user_data['extra_mode'] = mode  # 'add' or 'edit'
+        await query.edit_message_text(
+            "ستون مورد نظر را برای مقداردهی انتخاب کنید:",
+            reply_markup=self._build_fields_keyboard()
+        )
+
+    async def _prompt_for_field_value(self, query: Update.callback_query, field_key: str):
+        label = self._PLAN_FIELD_LABELS.get(field_key, field_key)
+        await query.edit_message_text(f"مقدار جدید برای «{label}» را وارد کنید:")
+
+    # ---------------------------- Existing methods ---------------------------- #
+
     async def get_plan_description(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Collect description and show confirmation with USDT & IRR prices."""
         context.user_data['new_plan_description'] = update.message.text
@@ -129,9 +183,94 @@ class AdminProductHandler:
             f"ظرفیت: {plan_data.get('new_plan_capacity', 'نامحدود')}\n"
             f"توضیحات: {plan_data['new_plan_description']}"
         )
-        keyboard = [[InlineKeyboardButton("✅ تایید و افزودن", callback_data="confirm_add_plan"), InlineKeyboardButton("❌ لغو", callback_data="cancel_add_plan")]]
+        keyboard = [[
+        InlineKeyboardButton("✅ تایید و افزودن", callback_data="confirm_add_plan"),
+        InlineKeyboardButton("⚙️ تنظیم سایر فیلدها", callback_data="add_more_fields"),
+        InlineKeyboardButton("❌ لغو", callback_data="cancel_add_plan")
+    ]]
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         return ADD_CONFIRMATION
+
+    async def _handle_fields_done(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """User finished editing extra fields; show confirmation again."""
+        query = update.callback_query
+        await query.answer()
+        mode = context.user_data.get('extra_mode')
+        if mode == 'add':
+            # regenerate confirmation similar to get_plan_description but using existing data
+            plan_data = context.user_data
+            usdt_price = plan_data.get('new_plan_price_usdt')
+            irr_price = None
+            if usdt_price is not None:
+                usdt_rate = await get_usdt_to_irr_rate()
+                if usdt_rate:
+                    irr_price = int(usdt_price * usdt_rate * 10)
+            price_line = f"قیمت: {usdt_price} USDT" if usdt_price is not None else "قیمت مشخص نشده"
+            if irr_price is not None:
+                price_line += f" (~{irr_price:,} ریال)"
+            text = (
+                f"آیا از افزودن پلن زیر اطمینان دارید؟\n\n"
+                f"نام: {plan_data.get('new_plan_name')}\n"
+                f"{price_line}\n"
+                f"مدت: {plan_data.get('new_plan_duration')} روز\n"
+                f"ظرفیت: {plan_data.get('new_plan_capacity', 'نامحدود')}\n"
+                f"توضیحات: {plan_data.get('new_plan_description')}"
+            )
+            keyboard = [[
+                InlineKeyboardButton("✅ تایید و افزودن", callback_data="confirm_add_plan"),
+                InlineKeyboardButton("⚙️ تنظیم سایر فیلدها", callback_data="add_more_fields"),
+                InlineKeyboardButton("❌ لغو", callback_data="cancel_add_plan")
+            ]]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            return ADD_CONFIRMATION
+        else:
+            # For edit flow we can simply go back to existing single plan view or edit confirmation
+            await query.answer("پشتیبانی از ویرایش سایر فیلدها در حال حاضر تکمیل نشده است.", show_alert=True)
+            return FIELD_VALUE
+
+    async def _handle_add_more_fields(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Callback from confirmation step to open extra-fields menu before saving."""
+        query = update.callback_query
+        await query.answer()
+        await self._show_fields_menu(query, context, mode="add")
+        return FIELD_VALUE  # We stay in conversation until done
+
+    async def _handle_set_field(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Admin selected a specific field to set."""
+        query = update.callback_query
+        await query.answer()
+        field_key = query.data.replace("set_field_", "")
+        context.user_data['current_field_key'] = field_key
+        await self._prompt_for_field_value(query, field_key)
+        return FIELD_VALUE
+
+    async def _handle_field_value_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Receives value for previously selected field and stores it in user_data."""
+        field_key: str = context.user_data.get('current_field_key')
+        if not field_key:
+            await update.message.reply_text("خطا: فیلدی انتخاب نشده است.")
+            return FIELD_VALUE
+        val_text = update.message.text.strip()
+        # Convert to proper type where possible
+        parsed_val: Any = val_text
+        try:
+            if field_key in {"price", "original_price_irr", "price_tether", "original_price_usdt"}:
+                parsed_val = float(val_text)
+            elif field_key in {"duration_days", "capacity", "display_order"}:
+                parsed_val = int(val_text)
+            elif field_key in {"is_active", "is_public"}:
+                parsed_val = 1 if val_text in {"1", "true", "True", "yes", "Yes"} else 0
+            # else keep string (e.g., json, dates)
+        except ValueError:
+            await update.message.reply_text("فرمت مقدار وارد شده اشتباه است. دوباره تلاش کنید.")
+            return FIELD_VALUE
+        mode = context.user_data.get('extra_mode')
+        prefix = 'new_plan_' if mode == 'add' else 'edit_plan_'
+        context.user_data[f"{prefix}{field_key}"] = parsed_val
+        context.user_data.pop('current_field_key', None)
+        await update.message.reply_text("مقدار ذخیره شد. برای تنظیم فیلد دیگر یک گزینه انتخاب کنید یا دکمه اتمام را بزنید.")
+        # Re-show menu
+        return FIELD_VALUE
 
     async def save_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         plan_data = context.user_data
@@ -153,6 +292,13 @@ class AdminProductHandler:
             if usdt_rate:
                 irr_price = int(usdt_price * usdt_rate * 10)
 
+                # Collect extra fields dynamically
+        extra_kwargs = {}
+        for field in self._PLAN_FIELD_LABELS.keys():
+            key = f"new_plan_{field}"
+            if key in plan_data:
+                extra_kwargs[field] = plan_data[key]
+
         plan_id = self.db_queries.add_plan(
             name=name,
             price_tether=plan_data.get('new_plan_price_usdt'),
@@ -162,7 +308,8 @@ class AdminProductHandler:
             capacity=plan_data.get('new_plan_capacity'),
             description=plan_data['new_plan_description'],
             is_active=is_active,
-            is_public=is_public
+            is_public=is_public,
+        **extra_kwargs
         )
         query = update.callback_query
         await query.answer("پلن با موفقیت افزوده شد.")
@@ -353,8 +500,13 @@ class AdminProductHandler:
             'price_tether': context.user_data.get('edit_plan_price_usdt'),
             'duration_days': context.user_data.get('edit_plan_duration'),
             'capacity': context.user_data.get('edit_plan_capacity'),
-        'description': context.user_data.get('edit_plan_description'),
+            'description': context.user_data.get('edit_plan_description'),
         }
+        # Collect values for any additional fields that were set via the extra-fields menu
+        for field in self._PLAN_FIELD_LABELS.keys():
+            val = context.user_data.get(f'edit_plan_{field}')
+            if val is not None:
+                update_kwargs[field] = val
         # Filter out None values
         # compute IRR price if tether provided
         if update_kwargs.get('price_tether') is not None:
@@ -425,9 +577,16 @@ class AdminProductHandler:
                 ],
                 ADD_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_plan_description)],
                 ADD_CONFIRMATION: [
-                    CallbackQueryHandler(self.save_plan, pattern='^confirm_add_plan$'),
-                    CallbackQueryHandler(self.cancel_add_plan, pattern='^cancel_add_plan$')
-                ]
+                     CallbackQueryHandler(self.save_plan, pattern='^confirm_add_plan$'),
+                     CallbackQueryHandler(self._handle_add_more_fields, pattern='^add_more_fields$'),
+                     CallbackQueryHandler(self.cancel_add_plan, pattern='^cancel_add_plan$')
+                 ],
+                 FIELD_VALUE: [
+                     CallbackQueryHandler(self._handle_set_field, pattern='^set_field_'),
+                     CallbackQueryHandler(self._handle_fields_done, pattern='^fields_done$'),
+                     CallbackQueryHandler(self._show_fields_menu, pattern='^fields_back$'),
+                     MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_field_value_input)
+                 ]
             },
             fallbacks=[CallbackQueryHandler(self.cancel_add_plan, pattern='^cancel_add_plan$')],
             per_user=True,
@@ -456,3 +615,7 @@ class AdminProductHandler:
         )
 
         return [add_plan_handler, edit_plan_handler]
+
+    # Update edit handler mapping similarly omitted for brevity
+
+    return [add_plan_handler, edit_plan_handler]
