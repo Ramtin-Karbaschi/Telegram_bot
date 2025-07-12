@@ -510,18 +510,31 @@ class AdminTicketHandler:
     async def _show_tickets_inline(self, query, page: int = 0):
         """Show tickets in inline message"""
         try:
-            # Get all pending tickets
+            # Get all pending tickets and sort them so that pagination is deterministic.
             tickets = self._get_pending_tickets()
-            
+            # Always sort descending by ticket id (most recent first). This guarantees
+            # that subsequent calls with a different page number will return a
+            # different slice instead of an arbitrary ordering from the DB cursor.
+            tickets = sorted(
+                tickets,
+                key=lambda t: (t.get("ticket_id") or t.get("id") or 0),
+                reverse=True,
+            )
+
             if not tickets:
                 await query.edit_message_text("هیچ تیکت باز یافت نشد.")
                 return
-            
+
+            # Pagination bookkeeping
+            per_page = 10
+            total_pages = (len(tickets) - 1) // per_page + 1
+            # Clamp page index to valid range to avoid empty pages if ticket count changed
+            page = max(0, min(page, total_pages - 1))
+
             # Create ticket list with inline keyboard
             keyboard = []
             message_text = "📋 لیست تیکت‌های باز:\n\n"
             
-            per_page = 10
             start = page * per_page
             end = start + per_page
             tickets_page = tickets[start:end]
@@ -559,11 +572,12 @@ class AdminTicketHandler:
             if row:
                 keyboard.append(row)
             
-            # Navigation row
+            # Navigation row with current page indicator
             nav_row = []
             if page > 0:
                 nav_row.append(InlineKeyboardButton("« قبلی", callback_data=f"tickets_page_{page-1}"))
-            if end < len(tickets):
+            nav_row.append(InlineKeyboardButton(f"صفحه {page+1}/{total_pages}", callback_data="noop"))
+            if page < total_pages - 1:
                 nav_row.append(InlineKeyboardButton("بعدی »", callback_data=f"tickets_page_{page+1}"))
             if nav_row:
                 keyboard.append(nav_row)

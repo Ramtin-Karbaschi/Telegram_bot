@@ -20,6 +20,15 @@ from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, fi
 ) = range(13)
 
 class AdminProductHandler:
+    async def _handle_fields_back(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Return to the fields menu after admin pressed the back button."""
+        query = update.callback_query
+        await query.answer()
+        mode = context.user_data.get('extra_mode', 'add')
+        await self._show_fields_menu(query, context, mode=mode)
+        return FIELD_VALUE
+
+
     def __init__(self, db_queries: DatabaseQueries, admin_config=None):
         """Handler for managing product plans.
 
@@ -718,7 +727,7 @@ class AdminProductHandler:
                  FIELD_VALUE: [
                      CallbackQueryHandler(self._handle_set_field, pattern='^set_field_'),
                      CallbackQueryHandler(self._handle_fields_done, pattern='^fields_done$'),
-                     CallbackQueryHandler(self._show_fields_menu, pattern='^fields_back$'),
+                     CallbackQueryHandler(self._handle_fields_back, pattern='^fields_back$'),
                      MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_field_value_input)
                  ]
             },
@@ -736,18 +745,18 @@ class AdminProductHandler:
                 EDIT_CAPACITY: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_new_plan_capacity),
                     CommandHandler('skip', self.get_new_plan_capacity)
-                ],
-                EDIT_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_new_plan_description)],
-                FIELD_VALUE: [
-                    CallbackQueryHandler(self._handle_set_field, pattern='^set_field_'),
-                    CallbackQueryHandler(self._handle_fields_done, pattern='^fields_done$'),
-                    CallbackQueryHandler(self._show_fields_menu, pattern='^fields_back$'),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_field_value_input)
-                ],
-                EDIT_CONFIRMATION: [
-                    CallbackQueryHandler(self.update_plan, pattern='^confirm_edit_plan$'),
-                    CallbackQueryHandler(self.cancel_edit_plan, pattern='^cancel_edit_plan$')
-                ]
+                 ],
+                 EDIT_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_new_plan_description)],
+                 FIELD_VALUE: [
+                     CallbackQueryHandler(self._handle_set_field, pattern='^set_field_'),
+                     CallbackQueryHandler(self._handle_fields_done, pattern='^fields_done$'),
+                     CallbackQueryHandler(self._handle_fields_back, pattern='^fields_back$'),
+                     MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_field_value_input)
+                 ],
+                 EDIT_CONFIRMATION: [
+                     CallbackQueryHandler(self.update_plan, pattern='^confirm_edit_plan$'),
+                     CallbackQueryHandler(self.cancel_edit_plan, pattern='^cancel_edit_plan$')
+                 ]
             },
             fallbacks=[CallbackQueryHandler(self.cancel_edit_plan, pattern='^cancel_edit_plan$')],
             per_user=True,
