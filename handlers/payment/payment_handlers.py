@@ -365,7 +365,7 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             logger.info(f"User {user_id} tried to select plan {plan_id} which is at full capacity.")
             await query.message.edit_text(
                 text="ظرفیت این محصول تکمیل شده است.",
-                reply_markup=get_main_menu_keyboard(user_id)
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
             )
             return ConversationHandler.END
     logger.info(f"[select_plan_handler] Selected plan: {plan_dict}")
