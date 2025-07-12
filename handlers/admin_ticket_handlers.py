@@ -69,6 +69,7 @@ class AdminTicketHandler:
                 CallbackQueryHandler(self.send_answer_callback, pattern="^send_answer_\\d+$"),
                 CallbackQueryHandler(self.close_ticket_callback, pattern="^close_ticket_\\d+$"),
                 CallbackQueryHandler(self.paginate_tickets_callback, pattern=r'^tickets_page_\\d+$'),
+        CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern=r'^ignore$'),
                 CallbackQueryHandler(self.refresh_tickets_callback, pattern="^refresh_tickets$"),
                 CallbackQueryHandler(self.refresh_all_tickets_callback, pattern="^refresh_all_tickets$")
             ],
@@ -571,7 +572,7 @@ class AdminTicketHandler:
             nav_row = []
             if page > 0:
                 nav_row.append(InlineKeyboardButton("« قبلی", callback_data=f"tickets_page_{page-1}"))
-            nav_row.append(InlineKeyboardButton(f"صفحه {page+1}/{total_pages}", callback_data="noop"))
+            nav_row.append(InlineKeyboardButton(f"صفحه {page+1}/{total_pages}", callback_data="ignore"))
             if page < total_pages - 1:
                 nav_row.append(InlineKeyboardButton("بعدی »", callback_data=f"tickets_page_{page+1}"))
             if nav_row:

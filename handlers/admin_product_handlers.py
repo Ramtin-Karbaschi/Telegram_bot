@@ -5,6 +5,7 @@ from utils.helpers import admin_only_decorator as admin_only
 from database.queries import DatabaseQueries
 import logging
 from typing import Any
+import telegram  # Needed for telegram.error.BadRequest
 
 logger = logging.getLogger(__name__)
 
