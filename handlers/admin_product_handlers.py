@@ -67,9 +67,14 @@ class AdminProductHandler:
             await query.edit_message_text("خطا در نمایش لیست پلن‌ها.")
 
     async def add_plan_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Starts the conversation to add a new plan."""
-        await update.callback_query.message.reply_text("لطفاً نام پلن جدید را وارد کنید:")
-        return ADD_NAME
+        """Starts adding a new plan by opening the selective field menu instead of a linear prompt."""
+        query = update.callback_query
+        # Clear any previous temp data and mark mode
+        context.user_data.clear()
+        context.user_data['extra_mode'] = 'add'
+        # Show interactive field-selection menu
+        await self._show_fields_menu(query, context, mode="add")
+        return FIELD_VALUE
 
     async def get_plan_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['new_plan_name'] = update.message.text
