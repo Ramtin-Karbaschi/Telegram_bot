@@ -594,9 +594,11 @@ class AdminProductHandler:
 
         # Fetch plan once for optimistic lock & initial values
         original_plan = self.db_queries.get_plan_by_id(plan_id)
-        if not original_plan:
+        if original_plan is None:
             await query.answer("پلن یافت نشد.", show_alert=True)
             return ConversationHandler.END
+        # Ensure we have a plain dict so .get works everywhere
+        original_plan = dict(original_plan)
 
         # Save timestamp for optimistic locking later
         if 'updated_at' in original_plan:

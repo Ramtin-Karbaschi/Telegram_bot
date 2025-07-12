@@ -522,6 +522,7 @@ class AdminTicketHandler:
                 return
 
             # Pagination bookkeeping
+            logger.debug(f"_show_tickets_inline: total_tickets={len(tickets)}, requested_page={page}")
             per_page = 10
             total_pages = (len(tickets) - 1) // per_page + 1
             # Clamp page index to valid range to avoid empty pages if ticket count changed
@@ -828,6 +829,7 @@ class AdminTicketHandler:
             page = int(query.data.split('_')[-1])
         except ValueError:
             page = 0
+        logger.debug(f"paginate_tickets_callback: user={query.from_user.id} requested page {page}")
         await self._show_tickets_inline(query, page=page)
 
     async def refresh_all_tickets_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
