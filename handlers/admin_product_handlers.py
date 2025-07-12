@@ -176,10 +176,17 @@ class AdminProductHandler:
     async def _show_fields_menu(self, query, context: ContextTypes.DEFAULT_TYPE, mode: str):
         """Show the menu for selecting which additional field to set (add/edit)."""
         context.user_data['extra_mode'] = mode  # 'add' or 'edit'
-        await query.edit_message_text(
-            self._generate_summary_text(context, mode) + "\n\nستون مورد نظر را برای مقداردهی انتخاب کنید:",
-            reply_markup=self._build_fields_keyboard(context, mode)
+        text = (
+            self._generate_summary_text(context, mode)
+            + "\n\nستون مورد نظر را برای مقداردهی انتخاب کنید:"
         )
+        reply_markup = self._build_fields_keyboard(context, mode)
+        try:
+            await query.edit_message_text(text, reply_markup=reply_markup)
+        except telegram.error.BadRequest as e:
+            # Ignore harmless error when content is identical to current message
+            if "Message is not modified" not in str(e):
+                raise
 
     def _generate_summary_text(self, context: ContextTypes.DEFAULT_TYPE, mode: str) -> str:
         """Build a Persian summary of all currently filled fields for the admin."""
