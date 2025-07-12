@@ -526,6 +526,7 @@ class AdminTicketHandler:
             end = start + per_page
             tickets_page = tickets[start:end]
             
+            row = []
             for ticket in tickets_page:  # Show max 10 tickets at once
                 ticket = dict(ticket)  # تبدیل Row به دیکشنری
                 ticket_id = ticket.get('ticket_id') or ticket.get('id')
@@ -541,15 +542,22 @@ class AdminTicketHandler:
                 message_text += f"کاربر: {user_display}\n"
                 message_text += f"موضوع: {subject}\n"
                 message_text += f"تاریخ: {created_at}\n"
-                message_text += "─────────────────\n\n"
+                message_text += "───────────────────\n\n"
                 
-                # Build button and group by 3 per row
-                keyboard.append([
+                # Add button to current row
+                row.append(
                     InlineKeyboardButton(
-                        f"تیکت#{ticket_id}", 
+                        f"تیکت#{ticket_id}",
                         callback_data=f"view_ticket_{ticket_id}"
                     )
-                ])
+                )
+                # If row full (3 buttons), push to keyboard
+                if len(row) == 3:
+                    keyboard.append(row)
+                    row = []
+            # leftover row
+            if row:
+                keyboard.append(row)
             
             # Navigation row
             nav_row = []
