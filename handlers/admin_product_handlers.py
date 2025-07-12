@@ -22,12 +22,55 @@ from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, fi
 
 class AdminProductHandler:
     async def _handle_fields_back(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Return to the fields menu after admin pressed the back button."""
+        """Handle back button from the extra-fields menu.
+
+        Behaviour depends on the current extra_mode:
+        • add  -> abort extra-fields editing and go back to add confirmation screen (or cancel if no confirmation yet).
+        • edit -> return to edit confirmation screen so admin can review changes.
+        """
         query = update.callback_query
         await query.answer()
         mode = context.user_data.get('extra_mode', 'add')
-        await self._show_fields_menu(query, context, mode=mode)
-        return FIELD_VALUE
+
+        if mode == 'add':
+            # If add flow was started from confirmation step, we can re-show it; otherwise cancel.
+            if 'new_plan_name' in context.user_data:
+                # Recreate the confirmation step similar to _handle_fields_done (but without finishing)
+                plan_data = context.user_data
+                usdt_price = plan_data.get('new_plan_price_usdt')
+                irr_price = None
+                if usdt_price is not None:
+                    usdt_rate = await get_usdt_to_irr_rate()
+                    if usdt_rate:
+                        irr_price = int(usdt_price * usdt_rate * 10)
+
+                price_line = f"قیمت: {usdt_price} USDT" if usdt_price is not None else "قیمت: تعیین نشده"
+                if irr_price is not None:
+                    price_line += f"  (~{irr_price:,} ریال)"
+
+                text = (
+                    "🔖 *تایید اطلاعات پلن:*\n\n"
+                    f"نام: {plan_data.get('new_plan_name', '—')}\n"
+                    f"{price_line}\n"
+                    f"مدت: {plan_data.get('new_plan_duration', '—')} روز\n"
+                    f"ظرفیت: {plan_data.get('new_plan_capacity', 'نامحدود')}\n"
+                    f"توضیحات: {plan_data.get('new_plan_description', '—')}"
+                )
+                keyboard = [[
+                    InlineKeyboardButton("✅ تایید و افزودن", callback_data="confirm_add_plan"),
+                    InlineKeyboardButton("⚙️ تنظیم سایر فیلدها", callback_data="add_more_fields"),
+                    InlineKeyboardButton("❌ لغو", callback_data="cancel_add_plan")
+                ]]
+                await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+                return ADD_CONFIRMATION
+            else:
+                # No data yet – treat as cancel
+                await self.cancel_add_plan(update, context)
+                return ConversationHandler.END
+        else:
+            # edit mode – show edit confirmation similar to _handle_fields_done
+            await self._handle_fields_done(update, context)
+            return EDIT_CONFIRMATION
 
 
     def __init__(self, db_queries: DatabaseQueries, admin_config=None):
