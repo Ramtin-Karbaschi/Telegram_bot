@@ -510,16 +510,11 @@ class AdminTicketHandler:
     async def _show_tickets_inline(self, query, page: int = 0):
         """Show tickets in inline message"""
         try:
-            # Get all pending tickets and sort them so that pagination is deterministic.
-            tickets = self._get_pending_tickets()
-            # Always sort descending by ticket id (most recent first). This guarantees
-            # that subsequent calls with a different page number will return a
-            # different slice instead of an arbitrary ordering from the DB cursor.
-            tickets = sorted(
-                tickets,
-                key=lambda t: (t.get("ticket_id") or t.get("id") or 0),
-                reverse=True,
-            )
+            # Get all pending tickets and convert rows to dicts so we can access with .get
+            tickets_raw = self._get_pending_tickets()
+            tickets = [dict(t) for t in tickets_raw]
+            # Sort descending by ticket id (newest first) to keep ordering stable.
+            tickets.sort(key=lambda t: (t.get("ticket_id") or t.get("id") or 0), reverse=True)
 
             if not tickets:
                 await query.edit_message_text("هیچ تیکت باز یافت نشد.")
