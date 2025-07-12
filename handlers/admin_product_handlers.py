@@ -248,9 +248,42 @@ class AdminProductHandler:
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return ADD_CONFIRMATION
         else:
-            # For edit flow we can simply go back to existing single plan view or edit confirmation
-            await query.answer("پشتیبانی از ویرایش سایر فیلدها در حال حاضر تکمیل نشده است.", show_alert=True)
-            return FIELD_VALUE
+            # Build confirmation summary for edit flow
+            plan_id = context.user_data.get('edit_plan_id')
+            original_plan = dict(self.db_queries.get_plan_by_id(plan_id)) if plan_id else {}
+
+            # Helper to fetch updated value or fallback to original
+            def val(key, orig_key):
+                return context.user_data.get(f'edit_plan_{key}', original_plan.get(orig_key))
+
+            name = val('name', 'name')
+            usdt_price = context.user_data.get('edit_plan_price_usdt', original_plan.get('price_tether'))
+            irr_price_line = ""
+            if usdt_price is not None:
+                usdt_rate = await get_usdt_to_irr_rate()
+                if usdt_rate:
+                    irr_equiv = int(usdt_price * usdt_rate * 10)
+                    irr_price_line = f" (~{irr_equiv:,} ریال)"
+            price_line = f"قیمت: {usdt_price} USDT{irr_price_line}" if usdt_price is not None else "قیمت: —"
+            duration = val('duration', 'duration_days')
+            capacity = val('capacity', 'capacity') or 'نامحدود'
+            description = val('description', 'description')
+
+            text = (
+                "📝 لطفاً تغییرات زیر را تایید کنید:\n\n"
+                f"نام: {name}\n"
+                f"{price_line}\n"
+                f"مدت: {duration} روز\n"
+                f"ظرفیت: {capacity}\n"
+                f"توضیحات: {description}"
+            )
+            keyboard = [[
+                InlineKeyboardButton("✅ تایید و ذخیره", callback_data="confirm_edit_plan"),
+                InlineKeyboardButton("⚙️ ویرایش مجدد فیلدها", callback_data="fields_back"),
+                InlineKeyboardButton("❌ لغو", callback_data="cancel_edit_plan")
+            ]]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            return EDIT_CONFIRMATION
 
     async def _handle_add_more_fields(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Callback from confirmation step to open extra-fields menu before saving."""
@@ -486,15 +519,37 @@ class AdminProductHandler:
     # --- Edit Plan Conversation --- #
 
     async def edit_plan_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Entry point for editing a plan – presents field selection menu for selective editing."""
         query = update.callback_query
         plan_id = int(query.data.split("_")[2])
+
+        # Clear any previous temp data then set base identifiers
+        context.user_data.clear()
         context.user_data['edit_plan_id'] = plan_id
-        # Store original updated_at for optimistic locking
+
+        # Fetch plan once for optimistic lock & initial values
         original_plan = self.db_queries.get_plan_by_id(plan_id)
-        if original_plan and 'updated_at' in original_plan:
+        if not original_plan:
+            await query.answer("پلن یافت نشد.", show_alert=True)
+            return ConversationHandler.END
+
+        # Save timestamp for optimistic locking later
+        if 'updated_at' in original_plan:
             context.user_data['edit_original_updated_at'] = str(original_plan['updated_at'])
-        await query.message.reply_text("لطفاً نام جدید پلن را وارد کنید (برای رد شدن، /skip را بزنید):")
-        return EDIT_NAME
+
+        # Pre-fill current values so they appear checked in the menu & summary
+        context.user_data.update({
+            'edit_plan_name': original_plan.get('name'),
+            'edit_plan_price_usdt': original_plan.get('price_tether'),
+            'edit_plan_duration': original_plan.get('duration_days'),
+            'edit_plan_capacity': original_plan.get('capacity'),
+            'edit_plan_description': original_plan.get('description'),
+        })
+
+        # Show interactive menu for field selection
+        await self._show_fields_menu(query, context, mode="edit")
+        return FIELD_VALUE
+
 
     async def get_new_plan_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message.text != '/skip':
@@ -678,6 +733,12 @@ class AdminProductHandler:
                     CommandHandler('skip', self.get_new_plan_capacity)
                 ],
                 EDIT_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_new_plan_description)],
+                FIELD_VALUE: [
+                    CallbackQueryHandler(self._handle_set_field, pattern='^set_field_'),
+                    CallbackQueryHandler(self._handle_fields_done, pattern='^fields_done$'),
+                    CallbackQueryHandler(self._show_fields_menu, pattern='^fields_back$'),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_field_value_input)
+                ],
                 EDIT_CONFIRMATION: [
                     CallbackQueryHandler(self.update_plan, pattern='^confirm_edit_plan$'),
                     CallbackQueryHandler(self.cancel_edit_plan, pattern='^cancel_edit_plan$')
