@@ -68,6 +68,7 @@ class AdminTicketHandler:
                 CallbackQueryHandler(self.edit_answer_callback, pattern="^edit_answer_\\d+$"),
                 CallbackQueryHandler(self.send_answer_callback, pattern="^send_answer_\\d+$"),
                 CallbackQueryHandler(self.close_ticket_callback, pattern="^close_ticket_\\d+$"),
+                CallbackQueryHandler(self.paginate_tickets_callback, pattern=r'^tickets_page_\\d+$'),
                 CallbackQueryHandler(self.refresh_tickets_callback, pattern="^refresh_tickets$"),
                 CallbackQueryHandler(self.refresh_all_tickets_callback, pattern="^refresh_all_tickets$")
             ],
@@ -98,7 +99,13 @@ class AdminTicketHandler:
             row = []
             message_text = "📋 لیست تیکت‌های باز:\n\n"
             
-            for ticket in tickets[:10]:  # Show max 10 tickets at once
+            per_page = 10
+            page = 0
+            start = page * per_page
+            end = start + per_page
+            tickets_page = tickets[start:end]
+            
+            for ticket in tickets_page:  # Show max 10 tickets at once
                 ticket = dict(ticket)  # تبدیل Row به دیکشنری
                 ticket_id = ticket.get('ticket_id') or ticket.get('id')
                 user_id_ticket = ticket.get('user_id')
@@ -132,6 +139,13 @@ class AdminTicketHandler:
             if row:
                 keyboard.append(row)
 
+            # Navigation row
+            nav_row = []
+            if end < len(tickets):
+                nav_row.append(InlineKeyboardButton("بعدی »", callback_data="tickets_page_1"))
+            if nav_row:
+                keyboard.append(nav_row)
+
             # Add refresh button on its own row
             keyboard.append([
                 InlineKeyboardButton("به‌روزرسانی لیست تیکت‌ها", callback_data="refresh_tickets")
@@ -146,7 +160,7 @@ class AdminTicketHandler:
         except Exception as e:
             logger.error(f"Error showing tickets: {e}")
             await update.message.reply_text("خطا در نمایش تیکت‌ها.")
-    
+
     async def view_ticket_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show detailed view of a specific ticket"""
         query = update.callback_query
@@ -470,7 +484,15 @@ class AdminTicketHandler:
 
         # Delegate to the inline implementation that already handles
         # the 'Message is not modified' BadRequest gracefully.
-        await self._show_tickets_inline(query)
+        await self._show_tickets_inline(query, page=0)
+
+    async def paginate_tickets_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Paginate tickets"""
+        query = update.callback_query
+        await query.answer()
+
+        page = int(query.data.split('_')[-1])
+        await self._show_tickets_inline(query, page)
 
     def get_handlers(self):
         """Return all handlers for the ticket management module."""
@@ -481,10 +503,11 @@ class AdminTicketHandler:
             CallbackQueryHandler(self.edit_answer_callback, pattern=r'^edit_answer_'),
             CallbackQueryHandler(self.close_ticket_callback, pattern=r'^close_ticket_'),
             CallbackQueryHandler(self.refresh_tickets_callback, pattern=r'^refresh_tickets$'),
+            CallbackQueryHandler(self.paginate_tickets_callback, pattern=r'^tickets_page_\d+$'),
             MessageHandler(filters.REPLY & filters.TEXT & (~filters.COMMAND), self.receive_edited_answer),
         ]
     
-    async def _show_tickets_inline(self, query):
+    async def _show_tickets_inline(self, query, page: int = 0):
         """Show tickets in inline message"""
         try:
             # Get all pending tickets
@@ -498,7 +521,12 @@ class AdminTicketHandler:
             keyboard = []
             message_text = "📋 لیست تیکت‌های باز:\n\n"
             
-            for ticket in tickets[:10]:  # Show max 10 tickets at once
+            per_page = 10
+            start = page * per_page
+            end = start + per_page
+            tickets_page = tickets[start:end]
+            
+            for ticket in tickets_page:  # Show max 10 tickets at once
                 ticket = dict(ticket)  # تبدیل Row به دیکشنری
                 ticket_id = ticket.get('ticket_id') or ticket.get('id')
                 user_id_ticket = ticket.get('user_id')
@@ -523,6 +551,15 @@ class AdminTicketHandler:
                     )
                 ])
             
+            # Navigation row
+            nav_row = []
+            if page > 0:
+                nav_row.append(InlineKeyboardButton("« قبلی", callback_data=f"tickets_page_{page-1}"))
+            if end < len(tickets):
+                nav_row.append(InlineKeyboardButton("بعدی »", callback_data=f"tickets_page_{page+1}"))
+            if nav_row:
+                keyboard.append(nav_row)
+
             # Add refresh button
             keyboard.append([
                 InlineKeyboardButton("به‌روزرسانی", callback_data="refresh_tickets")
@@ -762,6 +799,19 @@ class AdminTicketHandler:
             logger.error(f"Error showing all tickets: {e}")
             await update.message.reply_text("❌ خطا در نمایش تیکت‌ها.")
 
+    async def paginate_tickets_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle pagination for pending tickets list"""
+        query = update.callback_query
+        await query.answer()
+        if not self._is_admin(query.from_user.id):
+            await query.edit_message_text("❌ شما دسترسی لازم برای این عملیات را ندارید.")
+            return
+        try:
+            page = int(query.data.split('_')[-1])
+        except ValueError:
+            page = 0
+        await self._show_tickets_inline(query, page=page)
+
     async def refresh_all_tickets_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Refresh all tickets list"""
         query = update.callback_query
@@ -837,6 +887,7 @@ class AdminTicketHandler:
             CallbackQueryHandler(self.edit_answer_callback, pattern=r'^edit_answer_\d+$'),
             CallbackQueryHandler(self.close_ticket_callback, pattern=r'^close_ticket_\d+$'),
             CallbackQueryHandler(self.refresh_tickets_callback, pattern=r'^refresh_tickets$'),
+            CallbackQueryHandler(self.paginate_tickets_callback, pattern=r'^tickets_page_\d+$'),
             CallbackQueryHandler(self.refresh_all_tickets_callback, pattern=r'^refresh_all_tickets$'),
             MessageHandler(filters.TEXT & (~filters.COMMAND), self.receive_edited_answer),
         ]
