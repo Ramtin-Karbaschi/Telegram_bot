@@ -583,10 +583,14 @@ async def ticket_history_handler(update: Update, context: ContextTypes.DEFAULT_T
     user_id = update.effective_user.id
     tickets = Database.get_user_tickets(user_id)
     if not tickets:
-        await query.message.edit_text(
-            "شما تاکنون تیکتی ثبت نکرده‌اید.",
-            reply_markup=get_support_menu_keyboard([])
-        )
+        try:
+            await query.message.edit_text(
+                "شما تاکنون تیکتی ثبت نکرده‌اید.",
+                reply_markup=get_support_menu_keyboard([])
+            )
+        except telegram.error.BadRequest as e:
+            if "Message is not modified" not in str(e):
+                raise
         return SUPPORT_MENU
     status_to_emoji = {
         'open': '🟢',
