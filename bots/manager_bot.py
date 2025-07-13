@@ -158,8 +158,8 @@ class ManagerBot:
         job_queue = self.application.job_queue
         job_queue.run_repeating(
             self.validate_memberships,
-            interval=60,  # Run every 60 seconds
-            first=10,     # Start 10 seconds after the bot starts
+            interval=900,  # Run every 15 minutes
+            first=60,     # Start 60 seconds after the bot starts
             name="validate_memberships_job"
         )
 
