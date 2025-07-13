@@ -416,8 +416,10 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         if success:
             await query.message.edit_text(
-                text=f"✅ اشتراک پلن «{plan_dict['name']}» با موفقیت فعال شد. لینک‌های دسترسی برای شما ارسال گردید.",
-                reply_markup=get_main_menu_keyboard(user_id),
+                text=(
+                    f"✅ اشتراک پلن «{plan_dict['name']}» با موفقیت فعال شد. لینک‌های دسترسی برای شما ارسال گردید.\n\n"
+                    "⚠️ توجه: لینک‌های دسترسی فقط ۵ دقیقه اعتبار دارند."
+                ),
                 parse_mode=ParseMode.HTML
             )
         else:
