@@ -40,7 +40,22 @@ from utils.invite_link_manager import InviteLinkManager
 
 async def send_channel_links_and_confirmation(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_name: str):
     """Sends a confirmation message with channel links and schedules it for deletion."""
-    message_text = f"✅ اشتراک پلن «{plan_name}» برای شما با موفقیت فعال شد.\n\n🎉 اکنون می‌توانید از طریق لینک‌های زیر به کانال‌ها و گروه‌های ویژه دسترسی داشته باشید:"
+    # First, send success confirmation with 5-minute expiry warning (no inline keyboard)
+    success_text = (
+        f"✅ اشتراک پلن «{plan_name}» برای شما با موفقیت فعال شد.\n\n"
+        "⚠️ توجه: لینک‌های دسترسی فقط ۵ دقیقه اعتبار دارند."
+    )
+    try:
+        await context.bot.send_message(
+            chat_id=telegram_id,
+            text=success_text,
+            parse_mode=ParseMode.HTML  # Ensure proper formatting
+        )
+    except Exception as e:
+        logger.error("Failed to send success+warning message to user %s: %s", telegram_id, e)
+
+    # Prepare second message that contains the channel invitation links
+    message_text = "🎉 اکنون می‌توانید از طریق لینک‌های زیر به کانال‌ها و گروه‌های ویژه دسترسی داشته باشید:"
     
     # ------------------------------------------------------------------
     # Create / fetch one-time invite links for this user
