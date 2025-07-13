@@ -382,7 +382,7 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         if Database.has_user_used_free_plan(user_id=user_id, plan_id=plan_id):
             await query.message.edit_text(
                 text="شما قبلاً از این طرح رایگان استفاده کرده‌اید و امکان فعال‌سازی مجدد آن وجود ندارد.",
-                reply_markup=get_main_menu_keyboard(user_id)
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
             )
             return ConversationHandler.END
 
@@ -501,7 +501,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         if Database.has_user_used_free_plan(user_id=telegram_id, plan_id=plan_id):
             await query.message.edit_text(
                 "شما قبلاً از این طرح رایگان استفاده کرده‌اید و امکان فعال‌سازی مجدد آن وجود ندارد.",
-                reply_markup=get_main_menu_keyboard(telegram_id)
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
             )
             return ConversationHandler.END
 
@@ -518,9 +518,9 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             payment_table_id=None
         )
         if success:
-            await query.message.edit_text(f"✅ پلن «{plan_name}» به صورت رایگان برای شما فعال شد.", reply_markup=get_main_menu_keyboard(telegram_id))
+            await query.message.edit_text(f"✅ پلن «{plan_name}» به صورت رایگان برای شما فعال شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
         else:
-            await query.message.edit_text(f"❌ {msg}", reply_markup=get_main_menu_keyboard(telegram_id))
+            await query.message.edit_text(f"❌ {msg}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
         UserAction.log_user_action(telegram_id, 'free_plan_activated', {'plan_id': plan_id})
         return ConversationHandler.END
 
@@ -546,7 +546,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
         if not payment_db_id:
             logger.error(f"Failed to create initial Zarinpal payment record for user {telegram_id}, plan {plan_id}.")
-            await query.message.edit_text(PAYMENT_ERROR_MESSAGE, reply_markup=get_main_menu_keyboard(telegram_id))
+            await query.message.edit_text(PAYMENT_ERROR_MESSAGE, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
             UserAction.log_user_action(telegram_id, 'zarinpal_payment_db_creation_failed', {'plan_id': plan_id})
             return ConversationHandler.END
 
@@ -654,7 +654,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
                 action_type='crypto_placeholder_creation_failed',
                 details={'plan_id': plan_id, 'rial_amount': rial_amount, 'user_db_id': user_db_id})
             logger.error(f"Failed to create placeholder crypto payment request for user_db_id {user_db_id}, plan {plan_id}.")
-            await query.message.edit_text(PAYMENT_ERROR_MESSAGE, reply_markup=get_main_menu_keyboard(telegram_id))
+            await query.message.edit_text(PAYMENT_ERROR_MESSAGE, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
             return ConversationHandler.END  # Or SELECT_PAYMENT_METHOD
 
         # مبلغ USDT برابر با قیمت پایهٔ پلن (بدون آفست)
@@ -676,7 +676,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
                 details={'payment_request_id': crypto_payment_request_db_id, 'usdt_amount': usdt_amount_requested, 'user_db_id': user_db_id}
             )
             logger.error(f"Failed to update crypto payment request {crypto_payment_request_db_id} with USDT amount {usdt_amount_requested}. telegram_id: {telegram_id}")
-            await query.message.edit_text("خطای سیستمی هنگام ثبت مبلغ تتر. لطفاً با پشتیبانی تماس بگیرید.", reply_markup=get_main_menu_keyboard(telegram_id))
+            await query.message.edit_text("خطای سیستمی هنگام ثبت مبلغ تتر. لطفاً با پشتیبانی تماس بگیرید.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
             return ConversationHandler.END # Or SELECT_PAYMENT_METHOD
 
         if not crypto_payment_request_db_id:
@@ -1068,7 +1068,7 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
         logger.error(f"Missing Zarinpal payment data in context for user {telegram_id}: authority={zarinpal_authority}, amount={rial_amount}, plan_id={plan_id}, payment_db_id={payment_db_id}")
         await query.message.edit_text(
             "خطا: اطلاعات پرداخت شما ناقص است. لطفاً مراحل پرداخت را از ابتدا طی کنید.",
-            reply_markup=get_main_menu_keyboard(telegram_id)
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
         )
         UserAction.log_user_action(telegram_id, 'zarinpal_verification_failed', {'reason': 'missing_context_data'})
         return ConversationHandler.END
@@ -1103,7 +1103,7 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
             logger.info(f"Zarinpal payment {payment_db_id} for authority {zarinpal_authority} already marked as completed for user {telegram_id}.")
             await query.message.edit_text(
                 "پرداخت شما قبلاً با موفقیت تایید و اشتراک شما فعال شده است.",
-                reply_markup=get_main_menu_keyboard(telegram_id)
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
             )
             return ConversationHandler.END
 
@@ -1126,7 +1126,7 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
                 plan_name=selected_plan_name,
                 expiry_date=activation_details.get('new_expiry_date_jalali', 'N/A')
             )
-            await query.message.edit_text(success_message, reply_markup=get_main_menu_keyboard(telegram_id))
+            await query.message.edit_text(success_message, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
             UserAction.log_user_action(telegram_id, 'zarinpal_payment_verified', {'payment_db_id': payment_db_id, 'plan_id': plan_id, 'amount': rial_amount, 'zarinpal_authority': zarinpal_authority, 'zarinpal_ref_id': ref_id, 'subscription_details': activation_details})
             for key in ['zarinpal_authority', 'rial_amount_for_zarinpal', 'selected_plan_id', 'payment_db_id_zarinpal', 'selected_plan_name']:
                 context.user_data.pop(key, None)
@@ -1149,13 +1149,13 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
                     payment_table_id=payment_db_id
                 )
                 success_message = PAYMENT_SUCCESS_MESSAGE.format(plan_name=selected_plan_name, expiry_date=activation_details.get('new_expiry_date_jalali', 'N/A'))
-                await query.message.edit_text(success_message, reply_markup=get_main_menu_keyboard(telegram_id))
+                await query.message.edit_text(success_message, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
                 UserAction.log_user_action(telegram_id, 'zarinpal_payment_verified_status_101', {'payment_db_id': payment_db_id, 'zarinpal_ref_id': ref_id, 'subscription_details': activation_details})
                 for key in ['zarinpal_authority', 'rial_amount_for_zarinpal', 'selected_plan_id', 'payment_db_id_zarinpal', 'selected_plan_name']:
                     context.user_data.pop(key, None)
                 return ConversationHandler.END
             else:
-                await query.message.edit_text("این پرداخت قبلاً تایید شده است.", reply_markup=get_main_menu_keyboard(telegram_id))
+                await query.message.edit_text("این پرداخت قبلاً تایید شده است.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
                 return ConversationHandler.END
         else:
             error_code = verification_result.get('status', 'N/A')
@@ -1175,7 +1175,7 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
             return VERIFY_PAYMENT
     except Exception as e:
         logger.exception(f"Exception in payment_verify_zarinpal_handler for user {telegram_id}, authority {zarinpal_authority}: {e}")
-        await query.message.edit_text("خطایی در هنگام بررسی پرداخت رخ داد. لطفاً با پشتیبانی تماس بگیرید.", reply_markup=get_main_menu_keyboard(telegram_id))
+        await query.message.edit_text("خطایی در هنگام بررسی پرداخت رخ داد. لطفاً با پشتیبانی تماس بگیرید.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
         UserAction.log_user_action(telegram_id, 'zarinpal_verification_exception', {'zarinpal_authority': zarinpal_authority, 'error': str(e)})
         if payment_db_id:
             Database.update_payment_status(payment_db_id, 'error', error_code='handler_exception')
@@ -1411,7 +1411,7 @@ async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
         # TODO: Activate subscription (reuse activate_or_extend_subscription)
         await update.message.reply_text(
             f"✅ تراکنش با مبلغ {amount:.2f} USDT تأیید شد.",
-            reply_markup=get_main_menu_keyboard(telegram_id)
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
         )
         return ConversationHandler.END
     else:
@@ -1446,7 +1446,7 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
         await query.message.edit_text(
             text=f"✅ تراکنش شما تأیید شد.\nشناسه تراکنش:\n<code>{tx_hash}</code>",
             parse_mode=ParseMode.HTML,
-            reply_markup=get_main_menu_keyboard(telegram_id)
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
         )
         return ConversationHandler.END
     else:
