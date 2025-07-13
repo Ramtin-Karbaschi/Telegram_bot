@@ -415,13 +415,9 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             payment_table_id=0
         )
         if success:
-            await query.message.edit_text(
-                text=(
-                    f"✅ اشتراک پلن «{plan_dict['name']}» با موفقیت فعال شد. لینک‌های دسترسی برای شما ارسال گردید.\n\n"
-                    "⚠️ توجه: لینک‌های دسترسی فقط ۵ دقیقه اعتبار دارند."
-                ),
-                parse_mode=ParseMode.HTML
-            )
+            # Success message and links will be sent by send_channel_links_and_confirmation inside
+            # activate_or_extend_subscription. No need to send another message here to avoid duplication.
+            logger.debug("Free plan subscription activated; confirmation will be handled separately.")
         else:
             await query.message.edit_text(
                 text=f"❌ {err_msg}",
