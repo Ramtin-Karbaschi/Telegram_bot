@@ -17,29 +17,37 @@ class UserAction:
         Returns:
             True if the log was successfully added, False otherwise.
         """
-        details_json = None
-        if details is not None:
-            try:
-                details_json = json.dumps(details)
-            except TypeError as e:
-                print(f"Error serializing details to JSON for user {telegram_id}, action {action_type}: {e}")
-                # Optionally, log a simplified version or skip details
-                details_json = json.dumps({'error': 'Failed to serialize details'})
-
-        # Attempt to get user_db_id if not provided and user exists
-        # This might be redundant if the caller is expected to provide it when available.
-        # For now, we rely on the caller to pass user_db_id if known.
-        # if user_db_id is None:
-        #     user_record = DatabaseQueries.get_user_details(telegram_id) # Assuming get_user_details uses telegram_id
-        #     if user_record and 'id' in user_record: # Check if 'id' is the PK column name
-        #         user_db_id = user_record['id']
+        # Ensure we always store something useful in details
+        if details is None:
+            details = {}
+        # Attempt safe JSON serialization
+        try:
+            details_json = json.dumps(details, ensure_ascii=False, default=str)  # Allow non-ASCII & fallback str
+        except TypeError as e:
+            # Fallback: stringify the dict
+            print(f"Error serializing details to JSON for user {telegram_id}, action {action_type}: {e}")
+            details_json = json.dumps({"raw": str(details)[:500]})
 
         dbq = DatabaseQueries()
+
+        # Auto-resolve user_db_id if missing
+        if user_db_id is None:
+            try:
+                # users.user_id column stores Telegram ID in our schema
+                if dbq.user_exists_static(telegram_id):
+                    user_db_id = telegram_id
+                else:
+                    # Minimal insert so FK constraint passes
+                    dbq.add_user(telegram_id)
+                    user_db_id = telegram_id
+            except Exception as fetch_exc:
+                print(f"UserAction: could not resolve/save user record for {telegram_id}: {fetch_exc}")
+
         success = dbq.add_user_activity_log(
             telegram_id=telegram_id,
             action_type=action_type,
             details=details_json,
-            user_id=user_db_id
+            user_id=user_db_id,
         )
 
         if not success:
