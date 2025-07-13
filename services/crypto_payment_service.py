@@ -36,6 +36,57 @@ class CryptoPaymentService:
     TRONGRID_ENDPOINT = "https://api.trongrid.io"  # Mainnet; change for testnet if needed
 
     @staticmethod
+    def verify_payment_by_hash(tx_hash: str, min_amount: float, wallet_address: str) -> tuple[bool, float]:
+        """Validate a single transaction by its hash.
+
+        Args:
+            tx_hash: Transaction hash provided by the user.
+            min_amount: Minimum USDT amount that should have been transferred.
+            wallet_address: Our destination wallet address.
+
+        Returns
+        -------
+        (True, amount) if the hash is valid, sent **to** our wallet, and *amount >= min_amount*.
+        Otherwise returns (False, 0.0).
+        """
+        if not (tx_hash and wallet_address and min_amount > 0):
+            logger.warning("verify_payment_by_hash called with invalid arguments")
+            return False, 0.0
+
+        headers = {"TRON-PRO-API-KEY": config.TRONGRID_API_KEY} if getattr(config, "TRONGRID_API_KEY", None) else {}
+        url = f"{CryptoPaymentService.TRONGRID_ENDPOINT}/v1/transactions/{tx_hash}/events"
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            events = resp.json().get("data", [])
+        except requests.RequestException as e:
+            logger.error("TronGrid tx lookup failed: %s", e)
+            return False, 0.0
+        except ValueError:
+            logger.error("Invalid JSON from TronGrid when fetching tx %s", tx_hash)
+            return False, 0.0
+
+        contract_addr = config.USDT_TRC20_CONTRACT_ADDRESS
+        for ev in events:
+            if ev.get("event_name") != "Transfer":
+                continue
+            res = ev.get("result", {})
+            if res.get("contract_address") != contract_addr:
+                continue
+            if res.get("to") != wallet_address:
+                continue
+            try:
+                raw_val = int(res.get("value", "0"))
+                amount = raw_val / (10 ** USDT_DECIMALS)
+            except (TypeError, ValueError):
+                continue
+            if amount >= min_amount:
+                logger.info("Tx %s valid: %.6f USDT to our wallet", tx_hash, amount)
+                return True, amount
+        logger.info("Tx %s not matched or insufficient amount", tx_hash)
+        return False, 0.0
+
+    @staticmethod
     def _fetch_trc20_transfers(wallet_address: str, contract_address: str, min_timestamp: int, api_key: str, limit: int = 200):
         """Query TronGrid for TRC-20 transfers **to** *wallet_address* since *min_timestamp* (unix ms).
 

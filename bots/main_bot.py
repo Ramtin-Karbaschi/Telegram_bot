@@ -263,8 +263,37 @@ from utils.constants import (
 
 # Global function for logging all updates
 async def log_all_updates(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Log any update received by the bot for debugging purposes."""
+    """Log any update received by the bot for debugging purposes and persist a user activity log entry."""
     logger.critical(f"CRITICAL_LOG: UNHANDLED_UPDATE_RECEIVED: Type={type(update)}, Content={update}")
+
+    # --- Persist user activity in DB (non-blocking, fire-and-forget) ---
+    try:
+        from utils.user_actions import UserAction  # Local import to avoid circular deps
+
+        telegram_id = update.effective_user.id if update.effective_user else None
+        if telegram_id is None:
+            return  # Bot/system update, skip
+
+        if update.message:
+            action_type = "message"
+            details = {
+                "text": update.message.text or update.message.caption or "<non-text message>",
+                "chat_type": update.message.chat.type,
+            }
+        elif update.callback_query:
+            action_type = "callback_query"
+            details = {
+                "data": update.callback_query.data,
+                "inline_message_id": update.callback_query.inline_message_id,
+            }
+        else:
+            action_type = "update"
+            details = {"raw": str(update)[:500]}
+
+        # Non-blocking logging; ignore result
+        UserAction.log_user_action(telegram_id=telegram_id, action_type=action_type, details=details)
+    except Exception as e:
+        logger.error(f"Failed to persist user activity log: {e}")
 
 class MainBot:
     """Main Telegram bot for Daraei Academy"""

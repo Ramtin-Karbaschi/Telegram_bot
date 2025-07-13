@@ -120,7 +120,7 @@ from utils.user_actions import UserAction
 from handlers.subscription.subscription_handlers import activate_or_extend_subscription
 
 # Conversation states
-SELECT_PLAN, ASK_DISCOUNT, VALIDATE_DISCOUNT, SELECT_PAYMENT_METHOD, VERIFY_PAYMENT = range(5)
+SELECT_PLAN, ASK_DISCOUNT, VALIDATE_DISCOUNT, SELECT_PAYMENT_METHOD, VERIFY_PAYMENT, WAIT_FOR_TX_HASH = range(6)
 
 async def back_to_main_menu_from_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بازگشت به منوی اصلی و پاک‌سازی context پرداخت"""
@@ -656,27 +656,14 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             UserAction.log_user_action(
                 telegram_id=telegram_id, 
                 action_type='crypto_placeholder_creation_failed',
-                details={'plan_id': plan_id, 'rial_amount': rial_amount, 'user_db_id': user_db_id}
-            )
+                details={'plan_id': plan_id, 'rial_amount': rial_amount, 'user_db_id': user_db_id})
             logger.error(f"Failed to create placeholder crypto payment request for user_db_id {user_db_id}, plan {plan_id}.")
             await query.message.edit_text(PAYMENT_ERROR_MESSAGE, reply_markup=get_main_menu_keyboard(telegram_id))
             return ConversationHandler.END  # Or SELECT_PAYMENT_METHOD
 
-        # -- Calculate unique USDT amount for this request -------------------
-        try:
-            usdt_amount_requested = CryptoPaymentService.get_final_usdt_payment_amount(
-                base_usdt_amount_rounded_to_3_decimals=live_calculated_usdt_price,
-                payment_request_id=crypto_payment_request_db_id
-            )
-            context.user_data['usdt_amount_requested'] = usdt_amount_requested
-        except Exception as e:
-            logger.exception(
-                f"Error calculating USDT amount for payment_request_id {crypto_payment_request_db_id}. telegram_id: {telegram_id}")
-            await query.message.edit_text(
-                "خطا در سیستم تبدیل ارز. لطفاً لحظاتی دیگر تلاش کنید یا با پشتیبانی تماس بگیرید.",
-                reply_markup=get_payment_methods_keyboard()
-            )
-            return SELECT_PAYMENT_METHOD
+        # مبلغ USDT برابر با قیمت پایهٔ پلن (بدون آفست)
+        usdt_amount_requested = live_calculated_usdt_price
+        context.user_data['usdt_amount_requested'] = usdt_amount_requested
 
 
         # Step 3: Update the crypto payment request record with the calculated USDT amount.
@@ -726,7 +713,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
         keyboard_buttons = [
             [InlineKeyboardButton("📷 نمایش QR کد", callback_data=f"show_qr_code_{crypto_payment_request_db_id}")],
-            [InlineKeyboardButton("تراکنش را انجام دادم، بررسی شود", callback_data="payment_verify_crypto")]
+            [InlineKeyboardButton("🔗 ارسال Tx Hash", callback_data="payment_send_tx")]
         ]
         # Always use the standard 'back to payment methods' button
         keyboard_buttons.append([get_back_to_payment_methods_button()]) 
@@ -1384,6 +1371,56 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
 
 
 # ================= Crypto Transaction Verification =================
+async def ask_for_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Prompt user to send Tx Hash after clicking the button."""
+    query = update.callback_query
+    await query.answer()
+    telegram_id = update.effective_user.id
+
+    help_text = (
+        "✅ پرداخت را در کیف‌پول خود انجام دهید، سپس کد «TxID / Transaction Hash»"
+        " تراکنش USDT (شبکه TRON) را ارسال کنید.\n\n"
+        "• معمولاً به‌صورت رشته‌ای ۶۴ نویسه‌ای شامل حروف و ارقام است.\n"
+        "• فقط خود کد را بدون توضیح اضافی بفرستید.\n"
+        "• مثال:\n<code>ab12cd34ef56...</code>\n\n"
+        "در صورتی که مبلغ پرداختی کمتر از قیمت پلن باشد، تراکنش مردود می‌شود؛"
+        " مبلغ مساوی یا بیشتر قابل قبول است."
+    )
+    await query.message.edit_text(help_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([
+        [get_back_to_payment_methods_button()]
+    ]))
+    return WAIT_FOR_TX_HASH
+
+async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive Tx Hash from user, verify via TronGrid, handle success/failure."""
+    telegram_id = update.effective_user.id
+    tx_hash = update.message.text.strip()
+    crypto_payment_id = context.user_data.get('crypto_payment_id')
+    if not crypto_payment_id:
+        await update.message.reply_text("پرداختی برای بررسی یافت نشد.")
+        return ConversationHandler.END
+
+    payment_record = Database.get_payment_by_id(crypto_payment_id)
+    if not payment_record:
+        await update.message.reply_text("اطلاعات پرداخت در پایگاه‌داده یافت نشد.")
+        return ConversationHandler.END
+
+    min_amount = payment_record['usdt_amount_requested']
+    wallet_address = payment_record['wallet_address'] or config.CRYPTO_WALLET_ADDRESS
+
+    verified, amount = CryptoPaymentService.verify_payment_by_hash(tx_hash, min_amount, wallet_address)
+    if verified:
+        # موفق
+        Database.update_crypto_payment_on_success(payment_record['payment_id'], tx_hash, amount)
+        # TODO: Activate subscription (reuse activate_or_extend_subscription)
+        await update.message.reply_text(
+            f"✅ تراکنش با مبلغ {amount:.2f} USDT تأیید شد.",
+            reply_markup=get_main_menu_keyboard(telegram_id)
+        )
+        return ConversationHandler.END
+    else:
+        await update.message.reply_text("تراکنش نامعتبر بود یا مبلغ کافی نیست. دوباره بررسی و کد صحیح را ارسال کنید.")
+        return WAIT_FOR_TX_HASH
 async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Verifies USDT (TRC20) payment via TronGrid when user presses the corresponding button."""
     query = update.callback_query
@@ -1445,10 +1482,14 @@ payment_conversation = ConversationHandler(
         ],
         VERIFY_PAYMENT: [
             CallbackQueryHandler(verify_payment_status, pattern='^payment_verify$'),
-            CallbackQueryHandler(payment_verify_crypto_handler, pattern='^payment_verify_crypto$'),
+            CallbackQueryHandler(ask_for_tx_hash_handler, pattern='^payment_send_tx$'),
             CallbackQueryHandler(payment_verify_zarinpal_handler, pattern=f'^{VERIFY_ZARINPAL_PAYMENT_CALLBACK}$'),
             CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$'),
             MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان)$"), start_subscription_flow),
+        ],
+        WAIT_FOR_TX_HASH: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_tx_hash_handler),
+            CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$'),
         ],
     },
     fallbacks=[
