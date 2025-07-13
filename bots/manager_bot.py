@@ -186,8 +186,49 @@ class ManagerBot:
         self.logger.info("Manager Bot started")
 
     async def log_all_updates(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Logs all incoming updates for debugging purposes."""
-        self.logger.info(f"GENERIC_UPDATE_HANDLER: Received update of type {type(update)}: {update}")
+        """Log every received update and persist the corresponding user action in the DB."""
+        # Console / file log for generic debugging
+        self.logger.info(
+            f"GENERIC_UPDATE_HANDLER: Received update of type {type(update)}: {update}"
+        )
+
+        # --- Persist user activity in DB (fire-and-forget) ---
+        try:
+            # Local import to avoid any potential circular dependencies
+            from utils.user_actions import UserAction
+
+            telegram_id = update.effective_user.id if update.effective_user else None
+            if telegram_id is None:
+                return  # Probably a service-related update (e.g., MyChatMember)
+
+            if update.message:
+                action_type = "manager_message"
+                details = {
+                    "text": update.message.text or update.message.caption or "<non-text>",
+                    "chat_type": update.message.chat.type,
+                }
+            elif update.callback_query:
+                action_type = "manager_callback_query"
+                details = {
+                    "data": update.callback_query.data,
+                    "inline_message_id": update.callback_query.inline_message_id,
+                }
+            else:
+                action_type = "manager_update"
+                details = {"raw": str(update)[:500]}
+
+            # Non-blocking insert (DB layer commits internally)
+            UserAction.log_user_action(
+                telegram_id=telegram_id,
+                action_type=action_type,
+                details=details,
+            )
+        except Exception as exc:
+            # Never crash the update handler because of logging failures
+            self.logger.error(
+                f"Failed to persist manager bot user action: {exc}",
+                exc_info=True,
+            )
 
     def is_user_authorized(self, user_id: int) -> bool:
         """Check if a user has an active subscription."""
