@@ -210,6 +210,7 @@ class ManagerBot:
                     "is_command": bool(msg_text.startswith("/")) if isinstance(msg_text, str) else False,
                     "chat_type": update.message.chat.type,
                     "date": str(update.message.date),
+                    "handler": self.log_all_updates.__name__,
                 }
             elif update.callback_query:
                 action_type = "manager_callback_query"
@@ -217,10 +218,11 @@ class ManagerBot:
                     "data": update.callback_query.data,
                     "message_id": update.callback_query.message.message_id if update.callback_query.message else None,
                     "chat_id": update.callback_query.message.chat_id if update.callback_query.message else None,
+                    "handler": self.log_all_updates.__name__,
                 }
             else:
                 action_type = "manager_update"
-                details = {"raw": str(update)[:500]}
+                details = {"raw": str(update)[:500], "handler": self.log_all_updates.__name__}
 
             # Non-blocking insert (DB layer commits internally)
             # The UserAction helper will auto-resolve the internal user_db_id when not provided
