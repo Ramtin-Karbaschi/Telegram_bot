@@ -95,6 +95,26 @@ class AdminTicketHandler:
             return f"{name} ({username})"
         return name or username or str(user_info.get("user_id", "نامشخص"))
 
+    # -----------------------------------------------------------------
+    # Contact info helper
+    # -----------------------------------------------------------------
+
+    def _get_contact_info(self, user_info: dict) -> str:
+        """Return contact information string for a user (username / phone)."""
+        if not user_info:
+            return "نامشخص"
+        parts = []
+        username = user_info.get("username")
+        if username:
+            parts.append(f"@{username}")
+        phone = user_info.get("phone") or user_info.get("phone_number")
+        if phone:
+            parts.append(phone)
+        email = user_info.get("email")
+        if email:
+            parts.append(email)
+        return " | ".join(parts) if parts else "نامشخص"
+
     # --------------------------- Misc helpers -----------------------------
     _STATUS_EMOJI_MAP = {
         "open": "🟢",
