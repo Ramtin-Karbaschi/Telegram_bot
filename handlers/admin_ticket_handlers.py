@@ -727,13 +727,14 @@ class AdminTicketHandler:
                 subject = ticket.get('subject', 'بدون موضوع')
                 created_at = ticket.get('created_at', '')
                 status = ticket.get('status', '')
-                readable_status = str(status).replace('_', ' ')
+                readable_status = escape_markdown(str(status).replace('_', ' '), version=1)
                 emoji = self._get_status_emoji(status)
                 
                 message_text += f"{emoji} *تیکت #{ticket_id}* ({readable_status})\n"
-                message_text += f"👤 کاربر: {self._format_user_info(self._get_user_info(user_id_ticket))}\n"
-                message_text += f"📝 موضوع: {subject}\n"
-                message_text += f"📅 تاریخ: {created_at}\n"
+                user_display = escape_markdown(self._format_user_info(self._get_user_info(user_id_ticket)), version=1)
+                message_text += f"👤 کاربر: {user_display}\n"
+                message_text += f"📝 موضوع: {escape_markdown(subject, version=1)}\n"
+                message_text += f"📅 تاریخ: {escape_markdown(created_at, version=1)}\n"
                 message_text += "───────────────────\n\n"
                 
                 # Add button to current row
@@ -826,11 +827,11 @@ class AdminTicketHandler:
             for ticket in page_tickets:
                 ticket_id = ticket.get('ticket_id') or ticket.get('id')
                 user_info = self._get_user_info(ticket.get('user_id'))
-                user_display = self._format_user_info(user_info)
-                subject = ticket.get('subject', 'بدون موضوع')
-                created_at = ticket.get('created_at', '')
+                user_display = escape_markdown(self._format_user_info(user_info), version=1)
+                subject = escape_markdown(ticket.get('subject', 'بدون موضوع'), version=1)
+                created_at = escape_markdown(ticket.get('created_at', ''), version=1)
                 status = ticket.get('status', '')
-                readable_status = str(status).replace('_', ' ')
+                readable_status = escape_markdown(str(status).replace('_', ' '), version=1)
                 emoji = self._get_status_emoji(status)
                 message_text += f"{emoji} *تیکت #{ticket_id}* ({readable_status})\n"
                 message_text += f"👤 کاربر: {user_display}\n"
