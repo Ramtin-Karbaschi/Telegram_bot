@@ -115,6 +115,45 @@ class AdminTicketHandler:
             parts.append(email)
         return " | ".join(parts) if parts else "نامشخص"
 
+    # -----------------------------------------------------------------
+    # Ticket messages helpers
+    # -----------------------------------------------------------------
+
+    def _get_original_question(self, ticket_id: int) -> str:
+        """Return the first *user* message for given ticket (original question)."""
+        try:
+            msgs = DatabaseQueries.get_ticket_messages(ticket_id)
+            if not msgs:
+                return "-"
+            # Find first non-admin message
+            for m in msgs:
+                # dict or sqlite row
+                msg_dict = dict(m)
+                if not msg_dict.get("is_admin"):
+                    return msg_dict.get("message", "-") or "-"
+            # Fallback to first message
+            return dict(msgs[0]).get("message", "-")
+        except Exception:
+            return "-"
+
+        # -----------------------------------------------------------------
+    # UI origin helper
+    # -----------------------------------------------------------------
+    def _determine_origin_list(self, query) -> str:
+        """Return 'all' if the current inline message originates from *all tickets* list, else 'pending'."""
+        try:
+            kbd = query.message.reply_markup
+            if not kbd:
+                return 'pending'
+            for row in kbd.inline_keyboard:
+                for btn in row:
+                    cb = getattr(btn, 'callback_data', '') or ''
+                    if cb.startswith('all_tickets_page_') or cb == 'refresh_all_tickets':
+                        return 'all'
+        except Exception:
+            pass
+        return 'pending'
+
     # --------------------------- Misc helpers -----------------------------
     _STATUS_EMOJI_MAP = {
         "open": "🟢",
@@ -249,7 +288,7 @@ class AdminTicketHandler:
 
             # Add refresh button on its own row
             keyboard.append([
-                InlineKeyboardButton("به‌روزرسانی لیست تیکت‌ها", callback_data="refresh_tickets")
+                InlineKeyboardButton("به‌روزرسانی لیست تیکت‌ها", callback_data=back_cb)
             ])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -291,7 +330,7 @@ class AdminTicketHandler:
 
             user_id_ticket = ticket.get('user_id')
             subject = ticket.get('subject', 'بدون موضوع')
-            message = ticket.get('message', 'پیام موجود نیست')
+            message = ticket.get('message') or self._get_original_question(ticket_id)
             created_at = ticket.get('created_at', 'نامشخص')
             status = ticket.get('status', 'نامشخص')
 
@@ -321,6 +360,8 @@ class AdminTicketHandler:
 
 
 
+            # Determine which list we should return to (all vs pending)
+            back_cb = "refresh_all_tickets" if self._determine_origin_list(query) == "all" else "refresh_tickets"
             # Create action buttons
             keyboard = [
                 [  # First row: generate AI answer
@@ -331,7 +372,7 @@ class AdminTicketHandler:
                     InlineKeyboardButton("بستن تیکت", callback_data=f"close_ticket_{ticket_id}")
                 ],
                 [  # Third row: Back to list
-                    InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data="refresh_tickets")
+                    InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data=back_cb)
                 ]
             ]
 
@@ -403,7 +444,7 @@ class AdminTicketHandler:
                 InlineKeyboardButton("بستن تیکت", callback_data=f"close_ticket_{ticket_id}")
             ],
             [
-                InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data="refresh_tickets")
+                InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data=back_cb)
             ]
         ]
         await query.edit_message_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -431,7 +472,7 @@ class AdminTicketHandler:
             return
 
         try:
-            original_question = ticket.get('message', '') or '-'
+            original_question = ticket.get('message') or self._get_original_question(ticket_id)
             user_reply_text = (
                 f"سوال شما:\n{original_question}\n\n"
                 f"پاسخ:\n{ai_answer}"
@@ -509,7 +550,7 @@ class AdminTicketHandler:
         target_user_id = ticket.get('user_id')
         text = update.message.text
         try:
-            original_question = ticket.get('message', '') or '-'
+            original_question = ticket.get('message') or self._get_original_question(ticket_id)
             combined_text = (
                 f"❔ سوال شما:\n{original_question}\n\n"
                 f"✅ پاسخ:\n{text}"
@@ -695,7 +736,7 @@ class AdminTicketHandler:
 
             # Add refresh button
             keyboard.append([
-                InlineKeyboardButton("به‌روزرسانی", callback_data="refresh_tickets")
+                InlineKeyboardButton("به‌روزرسانی", callback_data=back_cb)
             ])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
