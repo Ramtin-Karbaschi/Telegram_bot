@@ -648,29 +648,7 @@ class ManagerBot:
         if not self.application or not self.application.bot:
             self.logger.error("send_new_ticket_notification called but bot application not initialized.")
             return
-        # Extract admin chat IDs from admin_config (dict or list) or fallback to config.MANAGER_BOT_ADMIN_IDS
-        admin_ids: list[int] = []
-        if isinstance(self.admin_config, dict):
-            admin_ids = [int(k) for k in self.admin_config.keys()]
-        elif isinstance(self.admin_config, list):
-            try:
-                # list of dicts [{'chat_id':123,...}]
-                admin_ids = [int(a.get('chat_id')) for a in self.admin_config if a.get('chat_id')]
-            except Exception:
-                admin_ids = [int(a) for a in self.admin_config if a]
-        if not admin_ids:
-            admin_ids = getattr(config, 'MANAGER_BOT_ADMIN_IDS', []) or []
-        if not admin_ids:
-            self.logger.warning("No admin IDs configured – cannot deliver ticket notification.")
-            return
-        sent_count = 0
-        for adm in admin_ids:
-            try:
-                await self.application.bot.send_message(chat_id=adm, text=notification_text, parse_mode=ParseMode.HTML)
-                sent_count += 1
-            except Exception as e:
-                self.logger.error(f"Failed to send ticket notification to admin {adm}: {e}")
-        self.logger.info(f"Ticket notification delivered to {sent_count}/{len(admin_ids)} admins.")
+
     
     async def _admin_reply_keyboard_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.logger.info(f"Admin reply keyboard handler triggered with text: {update.message.text} from user {update.effective_user.id}")
@@ -796,28 +774,45 @@ async def send_new_ticket_notification(self, notification_text: str):
         self.logger.error("send_new_ticket_notification called but bot application not initialized.")
         return
     # Extract admin chat IDs from admin_config (dict or list) or fallback to config.MANAGER_BOT_ADMIN_IDS
+    # ---------------- Collect recipients ----------------
     admin_ids: list[int] = []
+    # 1) Manager bot admins from passed admin_config
     if isinstance(self.admin_config, dict):
         admin_ids = [int(k) for k in self.admin_config.keys()]
     elif isinstance(self.admin_config, list):
         try:
-            # list of dicts [{'chat_id':123,...}]
-            admin_ids = [int(a.get('chat_id')) for a in self.admin_config if a.get('chat_id')]
+            # When admin_config is a list of dicts e.g. [{"chat_id": 123, ...}]
+            admin_ids = [int(a.get("chat_id")) for a in self.admin_config if a.get("chat_id")]
         except Exception:
+            # Fallback: assume list of plain integers
             admin_ids = [int(a) for a in self.admin_config if a]
+
+    # 2) Manager bot admins from config (legacy support)
     if not admin_ids:
-        admin_ids = getattr(config, 'MANAGER_BOT_ADMIN_IDS', []) or []
-    if not admin_ids:
-        self.logger.warning("No admin IDs configured – cannot deliver ticket notification.")
+        admin_ids = getattr(config, "MANAGER_BOT_ADMIN_IDS", []) or []
+
+    # 3) Support staff defined for the main bot (not necessarily managers) – they should also receive ticket alerts.
+    support_staff_ids: list[int] = []
+    try:
+        support_staff_ids = [int(staff.get("chat_id")) for staff in getattr(config, "MAIN_BOT_SUPPORT_STAFF_LIST", []) if staff.get("chat_id")]
+    except Exception as e:
+        self.logger.error(f"Failed to extract support staff IDs from config.MAIN_BOT_SUPPORT_STAFF_LIST: {e}")
+        support_staff_ids = []
+
+    # Union of admin and support IDs, preserving uniqueness
+    recipient_ids: list[int] = list({*admin_ids, *support_staff_ids})
+
+    if not recipient_ids:
+        self.logger.warning("No admin or support IDs configured – cannot deliver ticket notification.")
         return
     sent_count = 0
-    for adm in admin_ids:
+    for adm in recipient_ids:
         try:
             await self.application.bot.send_message(chat_id=adm, text=notification_text, parse_mode=ParseMode.HTML)
             sent_count += 1
         except Exception as e:
             self.logger.error(f"Failed to send ticket notification to admin {adm}: {e}")
-    self.logger.info(f"Ticket notification delivered to {sent_count}/{len(admin_ids)} admins.")
+    self.logger.info(f"Ticket notification delivered to {sent_count}/{len(recipient_ids)} recipients (admins/support).")
     
 async def _admin_reply_keyboard_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
     self.logger.info(f"Admin reply keyboard handler triggered with text: {update.message.text} from user {update.effective_user.id}")
