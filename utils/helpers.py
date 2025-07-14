@@ -145,12 +145,20 @@ def admin_only_decorator(func):
             user = update.from_user  # type: ignore[attr-defined]
         else:
             user = getattr(update, 'effective_user', None)
-        if user is None or not is_user_in_admin_list(user.id, self.admin_config):
+
+        # Determine if user is admin or support
+        is_admin_flag = user is not None and is_user_in_admin_list(user.id, self.admin_config)
+        from database.queries import DatabaseQueries
+        is_support_flag = user is not None and DatabaseQueries.is_support_user(user.id)
+
+        if not (is_admin_flag or is_support_flag):
+            # Unauthorized – show appropriate message / alert
             if update.effective_message:
                 await update.effective_message.reply_text("پیام های پشتیبانی در این ربات برای شما ارسال می شود.")
             elif update.callback_query:
                 await update.callback_query.answer("شما اجازه دسترسی به این عمل را ندارید.", show_alert=True)
             return
+        # Authorized (admin or support) – proceed
         return await func(self, update, context, *args, **kwargs)
     return wrapper
 
