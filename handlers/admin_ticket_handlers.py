@@ -150,7 +150,8 @@ class AdminTicketHandler:
                 CallbackQueryHandler(self.paginate_tickets_callback, pattern=r'^tickets_page_\d+$'),
                 CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern=r'^ignore$'),
                 CallbackQueryHandler(self.refresh_tickets_callback, pattern="^refresh_tickets$"),
-                CallbackQueryHandler(self.refresh_all_tickets_callback, pattern="^refresh_all_tickets$")
+                CallbackQueryHandler(self.refresh_all_tickets_callback, pattern="^refresh_all_tickets$"),
+                CallbackQueryHandler(self.paginate_all_tickets_callback, pattern=r'^all_tickets_page_\d+$')
             ],
             states={
                 # Add states as needed
