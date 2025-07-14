@@ -27,6 +27,85 @@ logger = logging.getLogger(__name__)
 
 class AdminTicketHandler:
     """Handle ticket management for admins"""
+
+    # ---------------------------------------------------------------------
+    # Helper methods
+    # ---------------------------------------------------------------------
+    def _is_admin(self, telegram_id: int) -> bool:
+        """Return True if the given Telegram user id is an *admin* OR *support* user.
+
+        This logic mirrors the `admin_only_decorator` so that callback / internal
+        code paths can quickly verify permissions without applying the decorator
+        again. We purposefully allow *support* users (stored in the `support_users`
+        table) to access the handler in addition to configured admins.
+        """
+        from utils.helpers import is_user_in_admin_list
+        is_admin_flag = is_user_in_admin_list(telegram_id, self.admin_config)
+        is_support_flag = DatabaseQueries.is_support_user(telegram_id)
+        return bool(is_admin_flag or is_support_flag)
+
+    # --------------------------- Ticket look-ups --------------------------
+    def _get_all_tickets(self):
+        """Return *all* tickets as a list of dicts (newest first)."""
+        return DatabaseQueries.get_all_tickets()
+
+    def _get_pending_tickets(self):
+        """Return open / pending tickets that need admin attention."""
+        # Prefer dedicated helper if available; fall back to generic open tickets.
+        if hasattr(DatabaseQueries, "get_open_tickets"):
+            return DatabaseQueries.get_open_tickets()
+        # Fallback – select tickets with status not closed.
+        tickets = DatabaseQueries.get_all_tickets()
+        return [t for t in tickets if (t.get("status") or "").lower() != "closed"]
+
+    def _get_ticket_by_id(self, ticket_id: int):
+        """Fetch a single ticket row (dict) by its id, or None."""
+        row = DatabaseQueries.get_ticket(ticket_id)
+        if row and not isinstance(row, dict):
+            # Convert sqlite3.Row or tuple using column description if needed
+            try:
+                # Attempt to construct from row keys (sqlite3.Row is mapping-like)
+                row = dict(row)
+            except Exception:
+                pass
+        return row
+
+    # --------------------------- User helpers -----------------------------
+    def _get_user_info(self, user_id: int):
+        """Return minimal user info dict for display (full_name / username)."""
+        if user_id is None:
+            return {}
+        info = DatabaseQueries.get_user_by_telegram_id(user_id)
+        if info and not isinstance(info, dict):
+            try:
+                info = dict(info)
+            except Exception:
+                pass
+        return info or {}
+
+    def _format_user_info(self, user_info: dict) -> str:
+        """Return a human-readable representation of a user for ticket lists."""
+        if not user_info:
+            return "نامشخص"
+        name = user_info.get("full_name") or ""
+        username = user_info.get("username") or ""
+        if username:
+            username = f"@{username}"
+        if name and username:
+            return f"{name} ({username})"
+        return name or username or str(user_info.get("user_id", "نامشخص"))
+
+    # --------------------------- Misc helpers -----------------------------
+    _STATUS_EMOJI_MAP = {
+        "open": "🟢",
+        "pending_admin_reply": "🟡",
+        "pending_user_reply": "🟠",
+        "closed": "🔴",
+    }
+
+    def _get_status_emoji(self, status: str) -> str:
+        """Map internal ticket status to an emoji used in UIs."""
+        return self._STATUS_EMOJI_MAP.get(str(status).lower(), "❔")
     
     def __init__(self):
         """Initialize the handler and set `admin_config` required by permission decorators."""
