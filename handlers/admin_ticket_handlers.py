@@ -288,7 +288,7 @@ class AdminTicketHandler:
 
             # Add refresh button on its own row
             keyboard.append([
-                InlineKeyboardButton("به‌روزرسانی لیست تیکت‌ها", callback_data=back_cb)
+                InlineKeyboardButton("به‌روزرسانی لیست تیکت‌ها", callback_data="refresh_tickets")
             ])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -372,7 +372,7 @@ class AdminTicketHandler:
                     InlineKeyboardButton("بستن تیکت", callback_data=f"close_ticket_{ticket_id}")
                 ],
                 [  # Third row: Back to list
-                    InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data=back_cb)
+                    InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data="refresh_tickets")
                 ]
             ]
 
@@ -444,7 +444,7 @@ class AdminTicketHandler:
                 InlineKeyboardButton("بستن تیکت", callback_data=f"close_ticket_{ticket_id}")
             ],
             [
-                InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data=back_cb)
+                InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data="refresh_tickets")
             ]
         ]
         await query.edit_message_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -736,7 +736,7 @@ class AdminTicketHandler:
 
             # Add refresh button
             keyboard.append([
-                InlineKeyboardButton("به‌روزرسانی", callback_data=back_cb)
+                InlineKeyboardButton("به‌روزرسانی", callback_data="refresh_tickets")
             ])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
