@@ -622,6 +622,14 @@ class AdminTicketHandler:
                     return True
             # Check support users table
             from database.queries import DatabaseQueries
+            # Check support staff list defined in config (e.g., MAIN_BOT_SUPPORT_STAFF_LIST)
+            try:
+                support_staff_list = getattr(config, 'MAIN_BOT_SUPPORT_STAFF_LIST', [])
+                if isinstance(support_staff_list, (list, tuple, set)) and user_id in support_staff_list:
+                    return True
+            except Exception as e:
+                logger.warning(f"Could not read MAIN_BOT_SUPPORT_STAFF_LIST from config: {e}")
+
             if DatabaseQueries.is_support_user(user_id):
                 return True  # Treat support users as authorized for ticket handling
             return False
