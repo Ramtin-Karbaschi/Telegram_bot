@@ -154,6 +154,32 @@ class AdminTicketHandler:
             pass
         return 'pending'
 
+        # -----------------------------------------------------------------
+    # Admin reply keyboard helper
+    # -----------------------------------------------------------------
+    def _get_admin_reply_keyboard(self, user_id):
+        """Return main admin/support reply keyboard markup so it never disappears."""
+        from telegram import ReplyKeyboardMarkup, KeyboardButton
+        from utils.helpers import is_user_in_admin_list
+        from handlers.admin_menu_handlers import AdminMenuHandler  # avoid circular at import time
+
+        # We only need the static texts; instantiate dummy handler once
+        texts = AdminMenuHandler(None).button_texts  # db arg not needed for texts
+
+        if is_user_in_admin_list(user_id):
+            keyboard = [
+                [KeyboardButton(texts['users']), KeyboardButton(texts['products'])],
+                [KeyboardButton(texts['tickets']), KeyboardButton(texts['payments'])],
+                [KeyboardButton(texts['broadcast']), KeyboardButton(texts['stats'])],
+                [KeyboardButton(texts['settings']), KeyboardButton(texts['back_to_main'])],
+            ]
+        else:  # support
+            keyboard = [
+                [KeyboardButton(texts['tickets']), KeyboardButton(texts['payments'])],
+                [KeyboardButton(texts['back_to_main'])],
+            ]
+        return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
     # --------------------------- Misc helpers -----------------------------
     _STATUS_EMOJI_MAP = {
         "open": "🟢",
@@ -484,6 +510,7 @@ class AdminTicketHandler:
             await query.edit_message_text(
                 f"💠 پاسخ برای کاربر ارسال شد و تیکت بسته شد.\n\nسوال:\n{original_question}\n\nپاسخ ارسال شده:\n{ai_answer}"
             )
+            await query.message.reply_text("✅ عملیات انجام شد.", reply_markup=self._get_admin_reply_keyboard(user_id))
         except Exception as e:
             logger.error(f"Error sending AI answer: {e}")
             await query.edit_message_text("خطا در ارسال پاسخ به کاربر.")
@@ -561,7 +588,8 @@ class AdminTicketHandler:
             DatabaseQueries.update_ticket_status(ticket_id, 'closed')
             await update.message.reply_text(
                 "💠 پاسخ برای کاربر ارسال شد و تیکت بسته شد.\n\n"
-                f"❔ سوال:\n{original_question}\n\n✅ پاسخ ارسال شده:\n{text}"
+                f"❔ سوال:\n{original_question}\n\n✅ پاسخ ارسال شده:\n{text}",
+                reply_markup=self._get_admin_reply_keyboard(user_id)
             )
         except Exception as e:
             logger.error(f"Error forwarding edited answer: {e}")
