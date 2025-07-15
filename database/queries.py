@@ -1226,6 +1226,45 @@ class DatabaseQueries:
         return []
 
     @staticmethod
+    def add_support_user(telegram_id: int, added_by: int | None = None) -> bool:
+        """Add a support user to the DB. Returns True if a new row was inserted."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute(
+                    "INSERT OR IGNORE INTO support_users (telegram_id, added_by) VALUES (?, ?)",
+                    (telegram_id, added_by),
+                )
+                db.commit()
+                affected = db.cursor.rowcount  # 1 if inserted, 0 if already existed
+                db.close()
+                return affected > 0
+            except Exception as exc:
+                logging.error("SQLite error in add_support_user: %s", exc)
+                return False
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def remove_support_user(telegram_id: int) -> bool:
+        """Remove support user. Returns True if a row was deleted."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("DELETE FROM support_users WHERE telegram_id = ?", (telegram_id,))
+                db.commit()
+                affected = db.cursor.rowcount
+                db.close()
+                return affected > 0
+            except Exception as exc:
+                logging.error("SQLite error in remove_support_user: %s", exc)
+                return False
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
     def is_support_user(telegram_id: int) -> bool:
         """Return True if telegram_id exists in support_users table and is active."""
         db = Database()
