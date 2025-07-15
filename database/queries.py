@@ -1205,6 +1205,43 @@ class DatabaseQueries:
                 db.close()
         return None
 
+    # ------------------------------------------------------------------
+    # Support users helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def get_all_support_users():
+        """Return list of rows for all registered support users."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT telegram_id, full_name FROM support_users WHERE is_active = 1")
+                rows = db.fetchall()
+                db.close()
+                return rows or []
+            except Exception as exc:
+                logging.error("SQLite error in get_all_support_users: %s", exc)
+                return []
+            finally:
+                db.close()
+        return []
+
+    @staticmethod
+    def is_support_user(telegram_id: int) -> bool:
+        """Return True if telegram_id exists in support_users table and is active."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT 1 FROM support_users WHERE telegram_id = ? AND is_active = 1", (telegram_id,))
+                result = db.fetchone()
+                db.close()
+                return bool(result)
+            except Exception as exc:
+                logging.error("SQLite error in is_support_user: %s", exc)
+                return False
+            finally:
+                db.close()
+        return False
+
     @staticmethod
     def get_plan(plan_id: int):
         return DatabaseQueries.get_plan_by_id(plan_id)
