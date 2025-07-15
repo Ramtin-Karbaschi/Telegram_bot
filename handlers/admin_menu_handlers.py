@@ -1353,7 +1353,7 @@ class AdminMenuHandler:
 
         end_date_str = sub_row["end_date"] if isinstance(sub_row, dict) else sub_row[5]  # assuming column order
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime
             end_dt = datetime.fromisoformat(end_date_str)
         except Exception:
             from datetime import datetime
@@ -1362,9 +1362,9 @@ class AdminMenuHandler:
             except Exception:
                 end_dt = None
         if end_dt:
-            from datetime import datetime, timezone, timedelta
-            iran_tz = timezone(timedelta(hours=3, minutes=30))
-            # Convert/substitute timezone to Iran (+03:30)
+            from zoneinfo import ZoneInfo
+            iran_tz = ZoneInfo("Asia/Tehran")
+            # ensure both datetimes Tehran tz
             if end_dt.tzinfo is None:
                 end_dt = end_dt.replace(tzinfo=iran_tz)
             else:
