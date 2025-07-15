@@ -681,9 +681,16 @@ class ManagerBot:
             from database.queries import DatabaseQueries
             db_rows = DatabaseQueries.get_all_support_users()
             for row in db_rows or []:
-                tg_id = row[0] if isinstance(row, (list, tuple)) else row.get("telegram_id")
-                if tg_id:
-                    support_staff_ids.append(int(tg_id))
+                try:
+                    if isinstance(row, int):
+                        support_staff_ids.append(row)
+                    elif isinstance(row, (list, tuple)):
+                        support_staff_ids.append(int(row[0]))
+                    else:
+                        # sqlite3.Row or dict-like
+                        support_staff_ids.append(int(row["telegram_id"]))
+                except (KeyError, IndexError, TypeError, ValueError):
+                    continue
         except Exception as e:
             self.logger.error("Failed to fetch support users from DB: %s", e)
 
