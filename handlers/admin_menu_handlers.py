@@ -452,7 +452,11 @@ class AdminMenuHandler:
         """Lists all discount codes with simple view."""
         discounts = DatabaseQueries.get_all_discounts()
         if not discounts:
-            await query.edit_message_text("هیچ کد تخفیفی یافت نشد.")
+            # query may be CallbackQuery or DummyQuery; fall back to reply_text if needed
+            if hasattr(query, "edit_message_text"):
+                await query.edit_message_text("هیچ کد تخفیفی یافت نشد.")
+            else:
+                await query.message.reply_text("هیچ کد تخفیفی یافت نشد.")
             return
         text = "📜 *لیست کدهای تخفیف*:\n"
         keyboard = []
@@ -469,7 +473,10 @@ class AdminMenuHandler:
         if row:
             keyboard.append(row)
         keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="discounts_menu")])
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        if hasattr(query, "edit_message_text"):
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await query.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _show_single_discount(self, query, discount_id: int):
         d = DatabaseQueries.get_discount_by_id(discount_id) if hasattr(DatabaseQueries, 'get_discount_by_id') else None
@@ -1354,11 +1361,20 @@ class AdminMenuHandler:
             if end_dt.tzinfo is None:
                 end_dt = end_dt.replace(tzinfo=timezone.utc)
             now = datetime.now(tz=end_dt.tzinfo)
-            remaining_days = (end_dt - now).days
-            msg = (
-                f"اعتبار اشتراک کاربر تا تاریخ {end_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-                f"(حدود {remaining_days} روز باقی مانده)"
-            )
+            delta = end_dt - now
+            if delta.total_seconds() <= 0:
+                msg = "اشتراک کاربر منقضی شده است."
+            else:
+                days = delta.days
+                hours = delta.seconds // 3600
+                minutes = (delta.seconds % 3600) // 60
+                human_rem = f"{days} روز"
+                if hours or minutes:
+                    human_rem += f" و {hours} ساعت و {minutes} دقیقه"
+                msg = (
+                    f"اعتبار اشتراک کاربر تا تاریخ {end_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+                    f"(حدود {human_rem} باقی مانده)"
+                )
         else:
             msg = f"تاریخ پایان اشتراک: {end_date_str}"
         await update.message.reply_text(msg)
