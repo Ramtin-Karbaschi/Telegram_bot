@@ -1215,9 +1215,20 @@ class DatabaseQueries:
         if db.connect():
             try:
                 db.execute("SELECT telegram_id FROM support_users")
-                rows = db.fetchall()
+                fetched = db.fetchall()
                 db.close()
-                return rows or []
+                # Convert to simple list[int] regardless of row factory
+                ids: list[int] = []
+                for item in fetched or []:
+                    try:
+                        if isinstance(item, (tuple, list)):
+                            ids.append(int(item[0]))
+                        else:
+                            # sqlite3.Row or dict-like
+                            ids.append(int(item["telegram_id"]))
+                    except (KeyError, IndexError, TypeError, ValueError):
+                        continue
+                return ids
             except Exception as exc:
                 logging.error("SQLite error in get_all_support_users: %s", exc)
                 return []
