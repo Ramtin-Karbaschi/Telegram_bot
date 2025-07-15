@@ -2228,7 +2228,14 @@ class DatabaseQueries:
                 except Exception:
                     current_end = get_current_time()
 
-            now_ts = get_current_time()
+            # Ensure both datetimes are timezone-aware in Tehran tz
+            from pytz import timezone as _tz
+            tehran_tz = _tz(config.TEHRAN_TIMEZONE)
+            if current_end.tzinfo is None:
+                current_end = tehran_tz.localize(current_end)
+            else:
+                current_end = current_end.astimezone(tehran_tz)
+            now_ts = get_current_time()  # already Tehran tz
             base_date = current_end if current_end > now_ts else now_ts
             new_end = base_date + timedelta(days=additional_days)
             new_end_str = new_end.strftime("%Y-%m-%d %H:%M:%S")
