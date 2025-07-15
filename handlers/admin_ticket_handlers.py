@@ -380,7 +380,7 @@ class AdminTicketHandler:
 
 
 
-            # Determine which list we should return to (all vs pending)
+                        # Determine which list we should return to (all vs pending)
             back_cb = "refresh_all_tickets" if self._determine_origin_list(query) == "all" else "refresh_tickets"
             # Create action buttons
             keyboard = [
@@ -392,7 +392,7 @@ class AdminTicketHandler:
                     InlineKeyboardButton("بستن تیکت", callback_data=f"close_ticket_{ticket_id}")
                 ],
                 [  # Third row: Back to list
-                    InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data="refresh_tickets")
+                    InlineKeyboardButton("بازگشت به لیست تیکت‌ها", callback_data=back_cb)
                 ]
             ]
 
@@ -405,6 +405,18 @@ class AdminTicketHandler:
         except Exception as e:
             logger.error(f"Error viewing ticket: {e}")
             await query.edit_message_text("خطا در نمایش تیکت.")
+
+    def _determine_origin_list(self, query) -> str:
+        """Return 'all' if ticket view originated from the all-tickets list, else 'pending'.
+        We inspect the text of the message containing the list.
+        """
+        try:
+            msg_text = query.message.text or ""
+            if "تمام تیکت‌ها" in msg_text:
+                return "all"
+        except Exception:
+            pass
+        return "pending"
 
     async def generate_answer_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Generate AI suggested answer on demand and update the ticket view"""
