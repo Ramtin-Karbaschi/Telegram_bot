@@ -127,7 +127,6 @@ class AdminTicketHandler:
                 return "-"
             # Find first non-admin message
             for m in msgs:
-                # dict or sqlite row
                 msg_dict = dict(m)
                 if not msg_dict.get("is_admin"):
                     return msg_dict.get("message", "-") or "-"
@@ -135,6 +134,21 @@ class AdminTicketHandler:
             return dict(msgs[0]).get("message", "-")
         except Exception:
             return "-"
+
+    def _get_admin_reply(self, ticket_id: int) -> str | None:
+        """Return the latest admin/support reply for the given ticket, or None if not found."""
+        try:
+            msgs = DatabaseQueries.get_ticket_messages(ticket_id)
+            if not msgs:
+                return None
+            # Iterate from newest to oldest to get last admin message
+            for m in reversed(msgs):
+                msg_dict = dict(m)
+                if msg_dict.get("is_admin"):
+                    return msg_dict.get("message")
+            return None
+        except Exception:
+            return None
 
         # -----------------------------------------------------------------
     # UI origin helper
@@ -347,6 +361,10 @@ class AdminTicketHandler:
             subject_html = html.escape(subject)
             message_html = html.escape(message)
 
+            # Retrieve last admin reply if exists
+            admin_reply = self._get_admin_reply(ticket_id)
+            admin_reply_html = html.escape(admin_reply) if admin_reply else None
+
             # Format ticket details
             message_text = (
                 f"جزئیات تیکت #{ticket_id}\n\n"
@@ -354,9 +372,11 @@ class AdminTicketHandler:
                 f"موضوع: {subject_html}\n"
                 f"تاریخ ایجاد: {created_at}\n"
                 f"وضعیت: {self._get_status_emoji(status)} {status}\n\n"
-                f"پیام:\n{message_html}\n\n"
-                f"اطلاعات تماس: {contact_info}"
+                f"پیام:\n{message_html}\n"
             )
+            if admin_reply_html:
+                message_text += f"\nپاسخ پشتیبانی:\n{admin_reply_html}\n"
+            message_text += f"\nاطلاعات تماس: {contact_info}"
 
 
 

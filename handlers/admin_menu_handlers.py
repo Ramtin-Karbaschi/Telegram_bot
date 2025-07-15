@@ -1362,11 +1362,14 @@ class AdminMenuHandler:
             except Exception:
                 end_dt = None
         if end_dt:
-            from datetime import datetime, timezone
-            # Ensure both datetimes are timezone-aware with the same tzinfo
+            from datetime import datetime, timezone, timedelta
+            iran_tz = timezone(timedelta(hours=3, minutes=30))
+            # Convert/substitute timezone to Iran (+03:30)
             if end_dt.tzinfo is None:
-                end_dt = end_dt.replace(tzinfo=timezone.utc)
-            now = datetime.now(tz=end_dt.tzinfo)
+                end_dt = end_dt.replace(tzinfo=iran_tz)
+            else:
+                end_dt = end_dt.astimezone(iran_tz)
+            now = datetime.now(tz=iran_tz)
             delta = end_dt - now
             if delta.total_seconds() <= 0:
                 # Possibly incorrect record; attempt to find a future subscription
@@ -1383,7 +1386,9 @@ class AdminMenuHandler:
                             except Exception:
                                 continue
                         if alt_dt.tzinfo is None:
-                            alt_dt = alt_dt.replace(tzinfo=timezone.utc)
+                            alt_dt = alt_dt.replace(tzinfo=iran_tz)
+                        else:
+                            alt_dt = alt_dt.astimezone(iran_tz)
                         if alt_dt > now:
                             end_dt = alt_dt
                             delta = end_dt - now
