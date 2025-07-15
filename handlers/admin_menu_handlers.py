@@ -1302,7 +1302,12 @@ class AdminMenuHandler:
         else:
             await update.message.reply_text("❌ تمدید اشتراک ناموفق بود. کاربر ممکن است اشتراک فعالی نداشته باشد.")
         # After completion, show users submenu again
-        await self._users_submenu(update)
+        class _DummyQuery:
+            def __init__(self, message):
+                self.message = message
+            async def edit_message_text(self, *args, **kwargs):
+                await self.message.reply_text(*args, **kwargs)
+        await self._users_submenu(_DummyQuery(update.message))
         return ConversationHandler.END
 
     async def cancel_extend_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1333,6 +1338,7 @@ class AdminMenuHandler:
                 identifier = identifier[1:]
             results = DatabaseQueries.search_users(identifier)
             if results:
+                # Take first match
                 row = results[0]
                 user_id = row["user_id"] if isinstance(row, dict) else row[0]
         if not user_id:
@@ -1378,7 +1384,14 @@ class AdminMenuHandler:
         else:
             msg = f"تاریخ پایان اشتراک: {end_date_str}"
         await update.message.reply_text(msg)
-        await self._users_submenu(update)
+
+        # Wrap message in a lightweight DummyQuery so _users_submenu works
+        class _DummyQuery:
+            def __init__(self, message):
+                self.message = message
+            async def edit_message_text(self, *args, **kwargs):
+                await self.message.reply_text(*args, **kwargs)
+        await self._users_submenu(_DummyQuery(update.message))
         return ConversationHandler.END
 
     def get_handlers(self):
