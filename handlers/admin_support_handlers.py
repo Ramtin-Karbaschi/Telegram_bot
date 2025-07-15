@@ -21,10 +21,10 @@ class SupportUserManager:
 
     def __init__(self, admin_config=None):
         # Save admin list for permission checks used by @admin_only decorator
-        from config import MANAGER_BOT_ADMINS_DICT, MANAGER_BOT_ADMIN_IDS
+        from config import MANAGER_BOT_ADMINS_DICT
         if admin_config is None:
-            # fallback to config constants
-            admin_config = MANAGER_BOT_ADMINS_DICT if 'MANAGER_BOT_ADMINS_DICT' in dir(__import__('config')) else MANAGER_BOT_ADMIN_IDS
+            # fallback to config constant: a dict {chat_id: alias}. Convert to list of ids for decorator.
+            admin_config = list(MANAGER_BOT_ADMINS_DICT.keys())
         self.admin_config = admin_config
 
     # ---------- Public commands ----------
