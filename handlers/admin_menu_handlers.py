@@ -1351,7 +1351,7 @@ class AdminMenuHandler:
             await self._users_submenu(update)
             return ConversationHandler.END
 
-        end_date_str = sub_row["end_date"] if isinstance(sub_row, dict) else sub_row[4]  # assuming column order
+        end_date_str = sub_row["end_date"] if isinstance(sub_row, dict) else sub_row[5]  # assuming column order
         try:
             from datetime import datetime, timezone
             end_dt = datetime.fromisoformat(end_date_str)
@@ -1374,7 +1374,7 @@ class AdminMenuHandler:
                 if other_active:
                     # Expect list of rows sorted by end_date DESC; pick first with future end_date
                     for row in other_active:
-                        end_str = row['end_date'] if isinstance(row, dict) else row[4]
+                        end_str = row['end_date'] if isinstance(row, dict) else row[5]
                         try:
                             alt_dt = datetime.fromisoformat(end_str)
                         except Exception:
