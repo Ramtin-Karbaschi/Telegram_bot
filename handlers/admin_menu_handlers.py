@@ -411,12 +411,10 @@ class AdminMenuHandler:
 
     async def _users_submenu(self, query):
         keyboard = [
-            [InlineKeyboardButton("🔗 ایجاد لینک دعوت", callback_data=self.CREATE_INVITE_LINK)],
-            [InlineKeyboardButton("➕ افزایش مدت اشتراک", callback_data=self.EXTEND_SUB_CALLBACK)],
-            [InlineKeyboardButton("📆 مشاهده اعتبار اشتراک", callback_data=self.CHECK_SUB_STATUS)],
-            [InlineKeyboardButton("🎁 فعال‌سازی ۲۰ روزه رایگان", callback_data=self.FREE20_CALLBACK)],
-            [InlineKeyboardButton("📋 لیست کاربران فعال", callback_data="users_list_active")],
+            [InlineKeyboardButton("🔗 لینک دعوت", callback_data=self.CREATE_INVITE_LINK), InlineKeyboardButton("➕ افزایش اشتراک", callback_data=self.EXTEND_SUB_CALLBACK)],
+            [InlineKeyboardButton("📆 مشاهده اعتبار", callback_data=self.CHECK_SUB_STATUS), InlineKeyboardButton("📋 کاربران فعال", callback_data="users_list_active")],
             [InlineKeyboardButton("🔎 جستجوی کاربر", callback_data="users_search"), InlineKeyboardButton("🛑 مسدود/آزاد کردن", callback_data=self.BAN_UNBAN_USER)],
+            [InlineKeyboardButton("🎁 فعال‌سازی ۲۰ روزه رایگان", callback_data=self.FREE20_CALLBACK)],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text("👥 *مدیریت کاربران*:\nچه کاری می‌خواهید انجام دهید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -438,16 +436,14 @@ class AdminMenuHandler:
 
     async def _products_submenu(self, query):
         keyboard = [
-            [InlineKeyboardButton("➕ افزودن محصول جدید", callback_data="products_add")],
-            [InlineKeyboardButton("📜 مشاهده و ویرایش محصولات", callback_data="products_list")],
+            [InlineKeyboardButton("➕ محصول جدید", callback_data="products_add"), InlineKeyboardButton("📜 محصولات", callback_data="products_list")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text("📦 *مدیریت محصولات*:\nچه کاری می‌خواهید انجام دهید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _discounts_submenu(self, query):
         keyboard = [
-            [InlineKeyboardButton("➕ ایجاد کد تخفیف", callback_data="discounts_add")],
-            [InlineKeyboardButton("📜 لیست کدهای تخفیف", callback_data="discounts_list")],
+            [InlineKeyboardButton("➕ کد تخفیف جدید", callback_data="discounts_add"), InlineKeyboardButton("📜 کدهای تخفیف", callback_data="discounts_list")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text("💸 *مدیریت کدهای تخفیف*:\nچه کاری می‌خواهید انجام دهید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1354,9 +1350,15 @@ class AdminMenuHandler:
                 end_dt = None
         if end_dt:
             from datetime import datetime, timezone
-            now = datetime.now(tz=end_dt.tzinfo or timezone.utc)
+            # Ensure both datetimes are timezone-aware with the same tzinfo
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=timezone.utc)
+            now = datetime.now(tz=end_dt.tzinfo)
             remaining_days = (end_dt - now).days
-            msg = f"اعتبار اشتراک کاربر تا تاریخ {end_dt.strftime('%Y-%m-%d %H:%M:%S')}\n(حدود {remaining_days} روز باقی مانده)"
+            msg = (
+                f"اعتبار اشتراک کاربر تا تاریخ {end_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+                f"(حدود {remaining_days} روز باقی مانده)"
+            )
         else:
             msg = f"تاریخ پایان اشتراک: {end_date_str}"
         await update.message.reply_text(msg)
