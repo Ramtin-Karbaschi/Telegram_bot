@@ -664,16 +664,31 @@ class ManagerBot:
         if not admin_ids:
             admin_ids = getattr(config, "MANAGER_BOT_ADMIN_IDS", []) or []
 
-        # 3) اعضای تیم پشتیبانی (که ممکن است ادمین ManagerBot نباشند)
+        # 3) اعضای تیم پشتیبانی (ثابت در config و همچنین کاربران ثبت‌شده در DB)
         support_staff_ids: list[int] = []
         try:
-            support_staff_ids = [int(staff.get("chat_id"))
-                                 for staff in getattr(config, "MAIN_BOT_SUPPORT_STAFF_LIST", [])
-                                 if staff.get("chat_id")]
+            # From static config list
+            support_staff_ids.extend(
+                [int(staff.get("chat_id"))
+                 for staff in getattr(config, "MAIN_BOT_SUPPORT_STAFF_LIST", [])
+                 if staff.get("chat_id")]
+            )
         except Exception as e:
-            self.logger.error("Failed to extract support staff IDs: %s", e)
+            self.logger.error("Failed to extract support staff IDs from config: %s", e)
+
+        # Retrieve dynamic support users stored in database
+        try:
+            from database.queries import DatabaseQueries
+            db_rows = DatabaseQueries.get_all_support_users()
+            for row in db_rows or []:
+                tg_id = row[0] if isinstance(row, (list, tuple)) else row.get("telegram_id")
+                if tg_id:
+                    support_staff_ids.append(int(tg_id))
+        except Exception as e:
+            self.logger.error("Failed to fetch support users from DB: %s", e)
 
         recipient_ids: list[int] = list({*admin_ids, *support_staff_ids})
+        self.logger.info(f"Preparing to send ticket notification to recipients: admins={admin_ids}, support_staff={support_staff_ids}")
         if not recipient_ids:
             self.logger.warning("No admin/support IDs configured – cannot deliver ticket notification.")
             return

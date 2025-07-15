@@ -158,12 +158,16 @@ class AdminMenuHandler:
     TICKETS_HISTORY = "tickets_history_input"
     MAIN_MENU_CALLBACK = BACK_MAIN
     BAN_UNBAN_USER = "users_ban_unban"
+    EXTEND_SUB_CALLBACK = "users_extend_subscription"
+    CHECK_SUB_STATUS = "users_check_subscription"
 
     # Conversation states
     (GET_INVITE_LINK_USER_ID,) = range(100, 101)
     (AWAIT_BROADCAST_MESSAGE, AWAIT_BROADCAST_CONFIRMATION) = range(101, 103)
     (AWAIT_FREE20_USER_ID,) = range(103, 104)
     (AWAIT_USER_ID_FOR_BAN, AWAIT_BAN_CHOICE) = range(104, 106)
+    (AWAIT_EXTEND_USER_ID, AWAIT_EXTEND_DAYS) = range(106, 108)
+    (AWAIT_CHECK_USER_ID,) = range(108, 109)
 
     @staff_only
     async def show_admin_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -408,6 +412,8 @@ class AdminMenuHandler:
     async def _users_submenu(self, query):
         keyboard = [
             [InlineKeyboardButton("🔗 ایجاد لینک دعوت", callback_data=self.CREATE_INVITE_LINK)],
+            [InlineKeyboardButton("➕ افزایش مدت اشتراک", callback_data=self.EXTEND_SUB_CALLBACK)],
+            [InlineKeyboardButton("📆 مشاهده اعتبار اشتراک", callback_data=self.CHECK_SUB_STATUS)],
             [InlineKeyboardButton("🎁 فعال‌سازی ۲۰ روزه رایگان", callback_data=self.FREE20_CALLBACK)],
             [InlineKeyboardButton("📋 لیست کاربران فعال", callback_data="users_list_active")],
             [InlineKeyboardButton("🔎 جستجوی کاربر", callback_data="users_search"), InlineKeyboardButton("🛑 مسدود/آزاد کردن", callback_data=self.BAN_UNBAN_USER)],
@@ -1229,6 +1235,134 @@ class AdminMenuHandler:
         keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data=self.SUPPORT_MENU)])
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
+    # ---- Extend Subscription Duration Flow ----
+    @staff_only
+    async def start_extend_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Entry point: ask admin for target user identifier (username or Telegram ID)."""
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text(
+            "لطفاً شناسه عددی یا نام کاربری (بدون @) کاربر مورد نظر را ارسال کنید:\n\nبرای لغو /cancel را بزنید.",
+            parse_mode="Markdown",
+        )
+        return self.AWAIT_EXTEND_USER_ID
+
+    async def receive_extend_user_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        identifier = (update.message.text or "").strip()
+        user_id = None
+        # Convert Persian digits to English if helper exists
+        try:
+            from utils.locale_utils import fa_to_en_digits
+            identifier = fa_to_en_digits(identifier)
+        except Exception:
+            pass
+
+        if identifier.isdigit():
+            user_id = int(identifier)
+        else:
+            # strip leading @ if present
+            if identifier.startswith("@"):
+                identifier = identifier[1:]
+            # Search user by username
+            results = DatabaseQueries.search_users(identifier)
+            if results:
+                # Take first match
+                row = results[0]
+                user_id = row["user_id"] if isinstance(row, dict) else row[0]
+        if not user_id:
+            await update.message.reply_text("کاربر یافت نشد. دوباره تلاش کنید یا /cancel را بزنید.")
+            return self.AWAIT_EXTEND_USER_ID
+
+        context.user_data["extend_target_user_id"] = user_id
+        await update.message.reply_text("تعداد روزهایی که می‌خواهید به اشتراک کاربر اضافه شود را وارد کنید:")
+        return self.AWAIT_EXTEND_DAYS
+
+    async def receive_extend_days(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        days_str = (update.message.text or "").strip()
+        try:
+            days = int(days_str)
+        except ValueError:
+            await update.message.reply_text("لطفاً یک عدد معتبر وارد کنید.")
+            return self.AWAIT_EXTEND_DAYS
+        if days <= 0:
+            await update.message.reply_text("تعداد روز باید بیشتر از ۰ باشد.")
+            return self.AWAIT_EXTEND_DAYS
+
+        user_id = context.user_data.get("extend_target_user_id")
+        if not user_id:
+            await update.message.reply_text("خطا: شناسه کاربر در حافظه یافت نشد. لطفاً از ابتدا دوباره تلاش کنید.")
+            return ConversationHandler.END
+
+        success = DatabaseQueries.extend_subscription_duration(user_id, days)
+        if success:
+            await update.message.reply_text(f"✅ اشتراک کاربر {user_id} به‌مدت {days} روز تمدید شد.")
+        else:
+            await update.message.reply_text("❌ تمدید اشتراک ناموفق بود. کاربر ممکن است اشتراک فعالی نداشته باشد.")
+        # After completion, show users submenu again
+        await self._users_submenu(update)
+        return ConversationHandler.END
+
+    async def cancel_extend_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text("عملیات لغو شد.")
+        await self._users_submenu(update)
+        return ConversationHandler.END
+
+    # ---- Check Subscription Status Flow ----
+    @staff_only
+    async def start_check_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text("لطفاً شناسه عددی یا نام کاربری کاربر را وارد کنید:")
+        return self.AWAIT_CHECK_USER_ID
+
+    async def receive_check_user_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        identifier = (update.message.text or "").strip()
+        try:
+            from utils.locale_utils import fa_to_en_digits
+            identifier = fa_to_en_digits(identifier)
+        except Exception:
+            pass
+        user_id = None
+        if identifier.isdigit():
+            user_id = int(identifier)
+        else:
+            if identifier.startswith("@"):
+                identifier = identifier[1:]
+            results = DatabaseQueries.search_users(identifier)
+            if results:
+                row = results[0]
+                user_id = row["user_id"] if isinstance(row, dict) else row[0]
+        if not user_id:
+            await update.message.reply_text("کاربر یافت نشد. دوباره تلاش کنید یا /cancel.")
+            return self.AWAIT_CHECK_USER_ID
+
+        sub_row = DatabaseQueries.get_user_active_subscription(user_id)
+        if not sub_row:
+            await update.message.reply_text("این کاربر اشتراک فعالی ندارد.")
+            await self._users_submenu(update)
+            return ConversationHandler.END
+
+        end_date_str = sub_row["end_date"] if isinstance(sub_row, dict) else sub_row[4]  # assuming column order
+        try:
+            from datetime import datetime, timezone
+            end_dt = datetime.fromisoformat(end_date_str)
+        except Exception:
+            from datetime import datetime
+            try:
+                end_dt = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                end_dt = None
+        if end_dt:
+            from datetime import datetime, timezone
+            now = datetime.now(tz=end_dt.tzinfo or timezone.utc)
+            remaining_days = (end_dt - now).days
+            msg = f"اعتبار اشتراک کاربر تا تاریخ {end_dt.strftime('%Y-%m-%d %H:%M:%S')}\n(حدود {remaining_days} روز باقی مانده)"
+        else:
+            msg = f"تاریخ پایان اشتراک: {end_date_str}"
+        await update.message.reply_text(msg)
+        await self._users_submenu(update)
+        return ConversationHandler.END
+
     def get_handlers(self):
         """Return telegram.ext handlers to register in the dispatcher."""
         handlers = [
@@ -1246,6 +1380,31 @@ class AdminMenuHandler:
             per_chat=True,
         )
         handlers.append(invite_link_conv_handler)
+
+        # Conversation handler for extending subscription duration
+        extend_sub_conv_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.start_extend_subscription, pattern=f'^{self.EXTEND_SUB_CALLBACK}$')],
+            states={
+                self.AWAIT_EXTEND_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_extend_user_id)],
+                self.AWAIT_EXTEND_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_extend_days)],
+            },
+            fallbacks=[CommandHandler('cancel', self.cancel_extend_subscription)],
+            per_user=True,
+            per_chat=True,
+        )
+        handlers.append(extend_sub_conv_handler)
+
+        # Conversation handler for checking subscription status
+        check_sub_conv_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.start_check_subscription, pattern=f'^{self.CHECK_SUB_STATUS}$')],
+            states={
+                self.AWAIT_CHECK_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_check_user_id)],
+            },
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)],
+            per_user=True,
+            per_chat=True,
+        )
+        handlers.append(check_sub_conv_handler)
 
         ban_unban_handler = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.ban_unban_start, pattern=f'^{self.BAN_UNBAN_USER}$')],

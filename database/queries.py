@@ -2188,3 +2188,60 @@ class DatabaseQueries:
         except sqlite3.Error as e:
             logger.error(f"Database error in set_user_status for user {user_id}: {e}")
             return False
+
+    @staticmethod
+    def extend_subscription_duration(user_id: int, additional_days: int) -> bool:
+        """Extend a user's active subscription by the given number of additional days.
+
+        If the user has an active subscription, its `end_date` is advanced. If the
+        stored `end_date` is in the past, the extension starts from *now* so that
+        even already-expired but still marked *active* records are handled.
+        Returns True on success, False on failure or when no active subscription
+        exists for the user.
+        """
+        if additional_days <= 0:
+            logging.warning("extend_subscription_duration called with non-positive days: %s", additional_days)
+            return False
+
+        db = Database()
+        if not db.connect():
+            return False
+        try:
+            db.execute(
+                "SELECT id, end_date FROM subscriptions WHERE user_id = ? AND status = 'active' ORDER BY end_date DESC LIMIT 1",
+                (user_id,),
+            )
+            row = db.fetchone()
+            if not row:
+                logging.info("No active subscription found for user %s – cannot extend.", user_id)
+                return False
+
+            sub_id = row[0] if isinstance(row, (tuple, list)) else row["id"]
+            end_date_str = row[1] if isinstance(row, (tuple, list)) else row["end_date"]
+
+            # Parse end_date safely.
+            try:
+                current_end = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                try:
+                    current_end = datetime.fromisoformat(end_date_str)
+                except Exception:
+                    current_end = get_current_time()
+
+            now_ts = get_current_time()
+            base_date = current_end if current_end > now_ts else now_ts
+            new_end = base_date + timedelta(days=additional_days)
+            new_end_str = new_end.strftime("%Y-%m-%d %H:%M:%S")
+            updated_at_str = now_ts.strftime("%Y-%m-%d %H:%M:%S")
+
+            db.execute(
+                "UPDATE subscriptions SET end_date = ?, updated_at = ? WHERE id = ?",
+                (new_end_str, updated_at_str, sub_id),
+            )
+            db.commit()
+            return db.cursor.rowcount > 0
+        except sqlite3.Error as exc:
+            logging.error("SQLite error in extend_subscription_duration: %s", exc)
+            return False
+        finally:
+            db.close()
