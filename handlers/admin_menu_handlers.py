@@ -1369,8 +1369,31 @@ class AdminMenuHandler:
             now = datetime.now(tz=end_dt.tzinfo)
             delta = end_dt - now
             if delta.total_seconds() <= 0:
-                msg = "اشتراک کاربر منقضی شده است."
-            else:
+                # Possibly incorrect record; attempt to find a future subscription
+                other_active = DatabaseQueries.get_user_active_subscriptions(user_id) if hasattr(DatabaseQueries, 'get_user_active_subscriptions') else None
+                if other_active:
+                    # Expect list of rows sorted by end_date DESC; pick first with future end_date
+                    for row in other_active:
+                        end_str = row['end_date'] if isinstance(row, dict) else row[4]
+                        try:
+                            alt_dt = datetime.fromisoformat(end_str)
+                        except Exception:
+                            try:
+                                alt_dt = datetime.strptime(end_str, "%Y-%m-%d %H:%M:%S")
+                            except Exception:
+                                continue
+                        if alt_dt.tzinfo is None:
+                            alt_dt = alt_dt.replace(tzinfo=timezone.utc)
+                        if alt_dt > now:
+                            end_dt = alt_dt
+                            delta = end_dt - now
+                            break
+                if delta.total_seconds() <= 0:
+                    msg = "اشتراک کاربر منقضی شده است."
+                else:
+                    # fallthrough to human_rem below
+                    pass
+            if delta.total_seconds() > 0:
                 days = delta.days
                 hours = delta.seconds // 3600
                 minutes = (delta.seconds % 3600) // 60
