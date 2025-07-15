@@ -375,8 +375,13 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
             
             # Calculate remaining time
             try:
-                end_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S")
-                remaining = end_date - datetime.now()
+                from zoneinfo import ZoneInfo
+                tehran_tz = ZoneInfo("Asia/Tehran")
+                end_date_naive = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S")
+                # Treat stored datetime as Tehran local time
+                end_date = end_date_naive.replace(tzinfo=tehran_tz)
+                now_tehran = datetime.now(tz=tehran_tz)
+                remaining = end_date - now_tehran
                 if remaining.total_seconds() > 0:
                     days = remaining.days
                     hours, remainder = divmod(remaining.seconds, 3600)
