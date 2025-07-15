@@ -45,7 +45,7 @@ class AdminMenuHandler:
         # Product handler needs DB access as well as optional admin config
         self.product_handler = AdminProductHandler(self.db_queries, admin_config=self.admin_config)
         # Support user manager
-        self.support_manager = SupportUserManager()
+        self.support_manager = SupportUserManager(admin_config=self.admin_config)
         # Simple flag for maintenance mode toggle in misc settings
         self.maintenance_mode = False
         self.search_flag = None
