@@ -1214,7 +1214,7 @@ class DatabaseQueries:
         db = Database()
         if db.connect():
             try:
-                db.execute("SELECT telegram_id, full_name FROM support_users WHERE is_active = 1")
+                db.execute("SELECT telegram_id FROM support_users")
                 rows = db.fetchall()
                 db.close()
                 return rows or []
@@ -1231,7 +1231,7 @@ class DatabaseQueries:
         db = Database()
         if db.connect():
             try:
-                db.execute("SELECT 1 FROM support_users WHERE telegram_id = ? AND is_active = 1", (telegram_id,))
+                db.execute("SELECT 1 FROM support_users WHERE telegram_id = ?", (telegram_id,))
                 result = db.fetchone()
                 db.close()
                 return bool(result)
