@@ -12,7 +12,7 @@ ENV/
 
 # Database
 database/data/*.db
-migrate.py
+# migrate.py
 *.json
 *.docx
 *.pkl

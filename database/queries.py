@@ -4,8 +4,39 @@ Database queries for the Daraei Academy Telegram bot
 
 import sqlite3
 from datetime import datetime, timedelta
-from .models import Database
-import config
+from database.models import Database
+from database.schema import ALL_TABLES
+import logging
+
+# Migration to add custom_caption column if missing
+def _ensure_custom_caption_column():
+    """Ensure custom_caption column exists in plan_videos table."""
+    db = Database()
+    if not db.connect():
+        return False
+    
+    try:
+        cursor = db.conn.cursor()
+        # Check if column exists
+        cursor.execute("PRAGMA table_info(plan_videos)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        if 'custom_caption' not in columns:
+            logging.info("Adding custom_caption column to plan_videos table")
+            cursor.execute("ALTER TABLE plan_videos ADD COLUMN custom_caption TEXT")
+            db.conn.commit()
+            logging.info("Successfully added custom_caption column")
+        
+        return True
+    except Exception as e:
+        logging.error(f"Error adding custom_caption column: {e}")
+        return False
+    finally:
+        db.close()
+
+# Run migration on import
+_ensure_custom_caption_column()
+
 import logging
 from typing import Optional, Any
 from database.models import Database
@@ -15,6 +46,456 @@ from utils.helpers import get_current_time  # ensure Tehran-tz aware now
 class DatabaseQueries:
     """Class for handling database operations"""
 
+    # --- VIDEO MANAGEMENT HELPERS --------------------------------------------
+    @staticmethod
+    def get_all_videos():
+        """Get all videos from the database."""
+        db = Database()
+        if not db.connect():
+            return []
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT id, filename, display_name, file_path, file_size, 
+                       duration, telegram_file_id, is_active
+                FROM videos 
+                WHERE is_active = 1
+                ORDER BY display_name
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"Error getting videos: {e}")
+            return []
+        finally:
+            db.close()
+    
+    @staticmethod
+    def add_video(filename: str, display_name: str, file_path: str, file_size: int = None, duration: int = None):
+        """Add a new video to the database."""
+        db = Database()
+        if not db.connect():
+            return None
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                INSERT INTO videos (filename, display_name, file_path, file_size, duration)
+                VALUES (?, ?, ?, ?, ?)
+            """, (filename, display_name, file_path, file_size, duration))
+            db.conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            logging.error(f"Error adding video: {e}")
+            return None
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_video_by_id(video_id: int):
+        """Get a video by its ID."""
+        db = Database()
+        if not db.connect():
+            return None
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT id, filename, display_name, file_path, file_size, 
+                       duration, telegram_file_id, is_active
+                FROM videos 
+                WHERE id = ? AND is_active = 1
+            """, (video_id,))
+            result = cursor.fetchone()
+            return dict(result) if result else None
+        except Exception as e:
+            logging.error(f"Error getting video by id: {e}")
+            return None
+        finally:
+            db.close()
+    
+    @staticmethod
+    def update_video_telegram_file_id(video_id: int, telegram_file_id: str):
+        """Update the Telegram file ID for a video (for caching)."""
+        db = Database()
+        if not db.connect():
+            return False
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                UPDATE videos 
+                SET telegram_file_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (telegram_file_id, video_id))
+            db.conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logging.error(f"Error updating video telegram file ID: {e}")
+            return False
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_plan_videos(plan_id: int):
+        """Get all videos associated with a plan."""
+        db = Database()
+        if not db.connect():
+            return []
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT v.id, v.filename, v.display_name, v.file_path, v.file_size, 
+                       v.duration, v.telegram_file_id, v.is_active, pv.display_order, pv.custom_caption
+                FROM videos v
+                JOIN plan_videos pv ON v.id = pv.video_id
+                WHERE pv.plan_id = ? AND v.is_active = 1
+                ORDER BY pv.display_order, v.display_name
+            """, (plan_id,))
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"Error getting plan videos: {e}")
+            return []
+        finally:
+            db.close()
+    
+    @staticmethod
+    def add_video_to_plan(plan_id: int, video_id: int, display_order: int = 0, custom_caption: str | None = None):
+        """Associate a video with a plan with optional custom caption."""
+        db = Database()
+        if not db.connect():
+            return False
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO plan_videos (plan_id, video_id, display_order, custom_caption)
+                VALUES (?, ?, ?, ?)
+                """,
+                (plan_id, video_id, display_order, custom_caption)
+            )
+            db.conn.commit()
+            return True
+        except Exception as e:
+            logging.error(f"Error adding video to plan: {e}")
+            return False
+        finally:
+            db.close()
+    
+    @staticmethod
+    def remove_video_from_plan(plan_id: int, video_id: int):
+        """Remove a video from a plan."""
+        db = Database()
+        if not db.connect():
+            return False
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                DELETE FROM plan_videos 
+                WHERE plan_id = ? AND video_id = ?
+            """, (plan_id, video_id))
+            db.conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logging.error(f"Error removing video from plan: {e}")
+            return False
+        finally:
+            db.close()
+    
+    # --- SURVEY MANAGEMENT HELPERS -------------------------------------------
+    @staticmethod
+    def create_survey(plan_id: int, title: str, description: str = None):
+        """Create a new survey for a plan."""
+        db = Database()
+        if not db.connect():
+            return None
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                INSERT INTO surveys (plan_id, title, description)
+                VALUES (?, ?, ?)
+            """, (plan_id, title, description))
+            db.conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            logging.error(f"Error creating survey: {e}")
+            return None
+        finally:
+            db.close()
+    
+    @staticmethod
+    def add_survey_question(survey_id: int, question_text: str, question_type: str = 'text', 
+                           options: str = None, is_required: bool = True, display_order: int = 0):
+        """Add a question to a survey."""
+        db = Database()
+        if not db.connect():
+            return None
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                INSERT INTO survey_questions (survey_id, question_text, question_type, 
+                                            options, is_required, display_order)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (survey_id, question_text, question_type, options, int(is_required), display_order))
+            db.conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            logging.error(f"Error adding survey question: {e}")
+            return None
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_plan_survey(plan_id: int):
+        """Get the survey associated with a plan."""
+        db = Database()
+        if not db.connect():
+            return None
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT id, plan_id, title, description, created_at
+                FROM surveys 
+                WHERE plan_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (plan_id,))
+            result = cursor.fetchone()
+            return dict(result) if result else None
+        except Exception as e:
+            logging.error(f"Error getting plan survey: {e}")
+            return None
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_survey_by_id(survey_id: int):
+        """Get a survey by its ID."""
+        db = Database()
+        if not db.connect():
+            return None
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT id, plan_id, title, description, created_at
+                FROM surveys 
+                WHERE id = ?
+            """, (survey_id,))
+            result = cursor.fetchone()
+            return dict(result) if result else None
+        except Exception as e:
+            logging.error(f"Error getting survey by id: {e}")
+            return None
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_survey_questions(survey_id: int):
+        """Get all questions for a survey."""
+        db = Database()
+        if not db.connect():
+            return []
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT id, question_text, question_type, options, is_required, display_order
+                FROM survey_questions 
+                WHERE survey_id = ?
+                ORDER BY display_order, id
+            """, (survey_id,))
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"Error getting survey questions: {e}")
+            return []
+        finally:
+            db.close()
+    
+    @staticmethod
+    def save_survey_response(user_id: int, survey_id: int, question_id: int, response_text: str):
+        """Save a user's response to a survey question."""
+        db = Database()
+        if not db.connect():
+            return False
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO survey_responses 
+                (user_id, survey_id, question_id, response_text)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, survey_id, question_id, response_text))
+            db.conn.commit()
+            return True
+        except Exception as e:
+            logging.error(f"Error saving survey response: {e}")
+            return False
+        finally:
+            db.close()
+    
+    @staticmethod
+    def mark_survey_completed(user_id: int, survey_id: int, plan_id: int):
+        """Mark a survey as completed by a user."""
+        db = Database()
+        if not db.connect():
+            return False
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO user_survey_completions 
+                (user_id, survey_id, plan_id)
+                VALUES (?, ?, ?)
+            """, (user_id, survey_id, plan_id))
+            db.conn.commit()
+            return True
+        except Exception as e:
+            logging.error(f"Error marking survey completed: {e}")
+            return False
+        finally:
+            db.close()
+    
+    @staticmethod
+    def has_user_completed_survey(user_id: int, survey_id: int):
+        """Check if a user has completed a survey."""
+        db = Database()
+        if not db.connect():
+            return False
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT 1 FROM user_survey_completions 
+                WHERE user_id = ? AND survey_id = ?
+            """, (user_id, survey_id))
+            return cursor.fetchone() is not None
+        except Exception as e:
+            logging.error(f"Error checking survey completion: {e}")
+            return False
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_user_survey_responses(user_id: int, survey_id: int):
+        """Get all responses from a user for a survey."""
+        db = Database()
+        if not db.connect():
+            return []
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT sr.response_text, sq.question_text, sq.question_type
+                FROM survey_responses sr
+                JOIN survey_questions sq ON sr.question_id = sq.id
+                WHERE sr.user_id = ? AND sr.survey_id = ?
+                ORDER BY sq.display_order, sq.id
+            """, (user_id, survey_id))
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"Error getting user survey responses: {e}")
+            return []
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_plan_videos(plan_id: int):
+        """Get all videos associated with a plan."""
+        db = Database()
+        if not db.connect():
+            return []
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT v.id, v.filename, v.display_name, v.file_path, v.duration
+                FROM videos v
+                JOIN plan_videos pv ON v.id = pv.video_id
+                WHERE pv.plan_id = ?
+                ORDER BY pv.display_order, v.display_name
+            """, (plan_id,))
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"Error getting plan videos: {e}")
+            return []
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_video_by_id(video_id: int):
+        """Get video details by ID."""
+        db = Database()
+        if not db.connect():
+            return None
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT id, filename, display_name, file_path, duration
+                FROM videos
+                WHERE id = ?
+            """, (video_id,))
+            result = cursor.fetchone()
+            return dict(result) if result else None
+        except Exception as e:
+            logging.error(f"Error getting video by ID: {e}")
+            return None
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_video_plans(video_id: int):
+        """Get all plans that include a specific video."""
+        db = Database()
+        if not db.connect():
+            return []
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT pv.plan_id, p.name as plan_name
+                FROM plan_videos pv
+                JOIN plans p ON pv.plan_id = p.id
+                WHERE pv.video_id = ?
+            """, (video_id,))
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"Error getting video plans: {e}")
+            return []
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_user_active_subscriptions(user_id: int):
+        """Get all active subscriptions for a user."""
+        db = Database()
+        if not db.connect():
+            return []
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT s.id, s.plan_id, s.status, s.start_date, s.end_date,
+                       p.name as plan_name
+                FROM subscriptions s
+                JOIN plans p ON s.plan_id = p.id
+                WHERE s.user_id = ? AND s.status = 'active'
+                ORDER BY s.start_date DESC
+            """, (user_id,))
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"Error getting user active subscriptions: {e}")
+            return []
+        finally:
+            db.close()
+    
     # --- SALES STATS HELPERS -------------------------------------------------
     @staticmethod
     def get_sales_stats_per_plan(only_active: bool = True):
@@ -100,13 +581,13 @@ class DatabaseQueries:
                             logging.error(f"Error migrating days to duration_days: {copy_err}")
 
                 # Ensure is_active / is_public & capacity columns exist
-                if 'is_active' not in columns:
-                    self.db.execute("ALTER TABLE plans ADD COLUMN is_active BOOLEAN DEFAULT 1")
-                if 'is_public' not in columns:
-                    self.db.execute("ALTER TABLE plans ADD COLUMN is_public BOOLEAN DEFAULT 1")
-                # Add capacity INTEGER column (nullable) if missing
-                if 'capacity' not in columns:
-                    self.db.execute("ALTER TABLE plans ADD COLUMN capacity INTEGER")
+                    self.db.execute("ALTER TABLE plans ADD COLUMN auto_delete_links BOOLEAN DEFAULT 1")
+                # Add base_currency TEXT column for specifying the base currency (IRR or USDT)
+                if 'base_currency' not in columns:
+                    self.db.execute("ALTER TABLE plans ADD COLUMN base_currency TEXT DEFAULT 'IRR'")
+                # Add base_price REAL column for storing the base price in the base currency
+                if 'base_price' not in columns:
+                    self.db.execute("ALTER TABLE plans ADD COLUMN base_price REAL")
                 self.db.commit()
             except sqlite3.Error as e:
                 logging.error(f"Error checking/adding columns to plans table: {e}")
@@ -130,9 +611,117 @@ class DatabaseQueries:
         return False
 
     # -----------------------------------
+    # Survey Management
+    # -----------------------------------
+    @staticmethod
+    def upsert_plan_survey(plan_id: int, questions: list[dict[str, any]]):
+        """Create or replace survey and questions for plan."""
+        db = Database()
+        if not db.connect():
+            return False
+        import json, sqlite3, logging
+        try:
+            cur = db.conn.cursor()
+            # Remove existing survey (cascade will delete questions)
+            cur.execute("DELETE FROM surveys WHERE plan_id = ?", (plan_id,))
+            # Insert new survey
+            cur.execute("INSERT INTO surveys (plan_id, title) VALUES (?, ?)", (plan_id, f'Plan {plan_id} Survey'))
+            survey_id = cur.lastrowid
+            # Insert questions
+            for order, q in enumerate(questions, 1):
+                opts_json = json.dumps(q.get('options')) if q.get('options') else None
+                cur.execute(
+                    """INSERT INTO survey_questions (survey_id, question_text, question_type, options, display_order)
+                    VALUES (?,?,?,?,?)""",
+                    (survey_id, q['text'], q.get('type', 'text'), opts_json, order)
+                )
+            db.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logging.error(f"Error upserting plan survey: {e}")
+            return False
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_plan_survey(plan_id: int):
+        db = Database()
+        if not db.connect():
+            return None
+        try:
+            cur = db.conn.cursor()
+            cur.execute("SELECT * FROM surveys WHERE plan_id = ? AND is_active = 1 LIMIT 1", (plan_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logging.error(f"Error get_plan_survey: {e}")
+            return None
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_survey_questions(survey_id: int):
+        db = Database()
+        if not db.connect():
+            return []
+        import json
+        try:
+            cur = db.conn.cursor()
+            cur.execute("SELECT * FROM survey_questions WHERE survey_id = ? ORDER BY display_order", (survey_id,))
+            rows = [dict(r) for r in cur.fetchall()]
+            for r in rows:
+                if r.get('options'):
+                    try:
+                        r['options'] = json.loads(r['options'])
+                    except Exception:
+                        pass
+            return rows
+        except Exception as e:
+            logging.error(f"Error get_survey_questions: {e}")
+            return []
+        finally:
+            db.close()
+
+    @staticmethod
+    def has_user_completed_survey(user_id: int, survey_id: int) -> bool:
+        db = Database()
+        if not db.connect():
+            return False
+        try:
+            cur = db.conn.cursor()
+            cur.execute("SELECT COUNT(*) cnt FROM survey_questions WHERE survey_id = ?", (survey_id,))
+            total = cur.fetchone()['cnt']
+            cur.execute("SELECT COUNT(DISTINCT question_id) cnt FROM survey_responses WHERE user_id = ? AND survey_id = ?", (user_id, survey_id))
+            answered = cur.fetchone()['cnt']
+            return answered >= total and total > 0
+        except Exception as e:
+            logging.error(f"Error has_user_completed_survey: {e}")
+            return False
+        finally:
+            db.close()
+
+    @staticmethod
+    def add_survey_response(user_id: int, survey_id: int, question_id: int, response_text: str):
+        db = Database()
+        if not db.connect():
+            return False
+        import sqlite3
+        try:
+            cur = db.conn.cursor()
+            cur.execute("""INSERT OR REPLACE INTO survey_responses (user_id, survey_id, question_id, response_text)
+                          VALUES (?,?,?,?)""", (user_id, survey_id, question_id, response_text))
+            db.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            logging.error(f"Error add_survey_response: {e}")
+            return False
+        finally:
+            db.close()
+
+    # -----------------------------------
     # Product Management
     # -----------------------------------
-    def add_plan(self, name: str, price: float | None, duration_days: int, description: str | None = None, *, capacity: int | None = None, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None, is_active: bool = True, is_public: bool = True):
+    def add_plan(self, name: str, price: float | None, duration_days: int, description: str | None = None, *, capacity: int | None = None, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None, channels_json: str | None = None, auto_delete_links: bool = True, is_active: bool = True, is_public: bool = True, base_currency: str = 'IRR', base_price: float | None = None):
         """Add a new plan to the database with active and public status."""
         try:
             # Determine if legacy 'days' column exists
@@ -165,6 +754,16 @@ class DatabaseQueries:
                 column_names.append("capacity")
                 values.append(capacity)
 
+            # channels_json if supported
+            if 'channels_json' in columns and channels_json is not None:
+                column_names.append("channels_json")
+                values.append(channels_json)
+
+            # auto_delete_links if supported
+            if 'auto_delete_links' in columns:
+                column_names.append("auto_delete_links")
+                values.append(auto_delete_links)
+
             # USDT pricing columns if present in schema and provided
             if 'price_tether' in columns and price_tether is not None:
                 column_names.append("price_tether")
@@ -175,6 +774,14 @@ class DatabaseQueries:
             if 'original_price_usdt' in columns and original_price_usdt is not None:
                 column_names.append("original_price_usdt")
                 values.append(original_price_usdt)
+
+            # Base currency and price fields
+            if 'base_currency' in columns:
+                column_names.append("base_currency")
+                values.append(base_currency)
+            if 'base_price' in columns and base_price is not None:
+                column_names.append("base_price")
+                values.append(base_price)
 
             # Activation & visibility flags
             column_names.extend(["is_active", "is_public"])
@@ -214,7 +821,7 @@ class DatabaseQueries:
             logging.error(f"SQLite error in get_plan_by_id: {e}")
             return None
 
-    def update_plan(self, plan_id: int, *, name: str | None = None, price: float | None = None, duration_days: int | None = None, capacity: int | None = None, description: str | None = None, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None):
+    def update_plan(self, plan_id: int, *, name: str | None = None, price: float | None = None, duration_days: int | None = None, capacity: int | None = None, description: str | None = None, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None, channels_json: str | None = None, auto_delete_links: bool | None = None, base_currency: str | None = None, base_price: float | None = None):
         """Update an existing plan's details."""
         try:
             # Ensure both duration_days and legacy days are updated if applicable
@@ -246,6 +853,14 @@ class DatabaseQueries:
                 add_field("original_price_irr", original_price_irr)
             if 'original_price_usdt' in cols:
                 add_field("original_price_usdt", original_price_usdt)
+            if 'channels_json' in cols:
+                add_field("channels_json", channels_json)
+            if 'auto_delete_links' in cols:
+                add_field("auto_delete_links", auto_delete_links)
+            if 'base_currency' in cols:
+                add_field("base_currency", base_currency)
+            if 'base_price' in cols:
+                add_field("base_price", base_price)
 
             if not set_clauses:
                 return False  # Nothing to update
@@ -1294,7 +1909,7 @@ class DatabaseQueries:
 
     @staticmethod
     def get_plan(plan_id: int):
-        return DatabaseQueries.get_plan_by_id(plan_id)
+        return DatabaseQueries.add_video(plan_id, video_id(plan_id))
 
     # ---- User Subscription Summary Helpers ----
     @staticmethod
@@ -2337,5 +2952,50 @@ class DatabaseQueries:
         except sqlite3.Error as exc:
             logging.error("SQLite error in extend_subscription_duration: %s", exc)
             return False
+        finally:
+            db.close()
+    
+    @staticmethod
+    def has_user_used_free_plan(user_id: int, plan_id: int) -> bool:
+        """Check if user has already used this specific free plan."""
+        db = Database()
+        if not db.connect():
+            return False
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*) FROM subscriptions 
+                WHERE user_id = ? AND plan_id = ? AND payment_method = 'free'
+            """, (user_id, plan_id))
+            count = cursor.fetchone()[0]
+            return count > 0
+        except Exception as e:
+            logging.error(f"Error checking if user {user_id} used free plan {plan_id}: {e}")
+            return False
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_plan_videos(plan_id: int):
+        """Get all videos associated with a plan."""
+        db = Database()
+        if not db.connect():
+            return []
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT v.id, v.filename, v.display_name, v.file_path, v.file_size, 
+                       v.duration, v.telegram_file_id, v.is_active, pv.display_order, pv.custom_caption
+                FROM videos v
+                JOIN plan_videos pv ON v.id = pv.video_id
+                WHERE pv.plan_id = ? AND v.is_active = 1
+                ORDER BY pv.display_order, v.display_name
+            """, (plan_id,))
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"Error getting videos for plan {plan_id}: {e}")
+            return []
         finally:
             db.close()

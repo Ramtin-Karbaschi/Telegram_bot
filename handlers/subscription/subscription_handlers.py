@@ -16,6 +16,7 @@ from utils.keyboards import get_main_menu_keyboard, get_subscription_plans_keybo
 from utils.constants import (
     SUBSCRIPTION_STATUS_NONE, SUBSCRIPTION_STATUS_ACTIVE,
     SUBSCRIPTION_STATUS_EXPIRED,
+    TEXT_MAIN_MENU_BUY_SUBSCRIPTION, TEXT_MAIN_MENU_FREE_PACKAGE,
     CALLBACK_START_PROFILE_EDIT  # Added for profile edit callback
 )
 from utils.helpers import calculate_days_left, is_admin
@@ -37,14 +38,65 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Failed to delete message {message_id} from chat {chat_id}: {e}")
 
 from utils.invite_link_manager import InviteLinkManager
+from services.video_service import video_service
+# Import extension for get_plan_survey method
+import database.queries_plan_survey
 
-async def send_channel_links_and_confirmation(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_name: str):
-    """Sends a confirmation message with channel links and schedules it for deletion."""
-    # First, send success confirmation with 5-minute expiry warning (no inline keyboard)
-    success_text = (
-        f"✅ اشتراک پلن «{plan_name}» برای شما با موفقیت فعال شد.\n\n"
-        "⚠️ توجه: لینک‌های دسترسی فقط ۵ دقیقه اعتبار دارند."
-    )
+async def handle_post_subscription_flow(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_details: dict, plan_name: str):
+    """Handle survey and video delivery after subscription activation."""
+    plan_id = plan_details['id']
+    logger.info(f"Starting post subscription flow for user {telegram_id}, plan {plan_id}")
+    
+    # Check if plan has a survey
+    from database.queries import DatabaseQueries
+    survey = DatabaseQueries.get_plan_survey(plan_id)
+    logger.info(f"Survey found for plan {plan_id}: {survey}")
+    if survey:
+        # Check if user has already completed the survey
+        survey_id = survey['id']
+        if not DatabaseQueries.has_user_completed_survey(telegram_id, survey_id):
+            # User must complete survey first
+            await context.bot.send_message(
+                chat_id=telegram_id,
+                text=f"📋 برای دریافت محتوای «{plan_name}» ابتدا باید نظرسنجی را تکمیل کنید.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📋 شروع نظرسنجی", callback_data=f"start_survey_{survey_id}")]
+                ])
+            )
+            return
+    
+    # If no survey or survey completed, send videos immediately
+    await send_plan_videos(telegram_id, context, plan_id, plan_name)
+
+async def send_plan_videos(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_id: int, plan_name: str):
+    """Send all videos for a plan to the user with caching."""
+    try:
+        success = await video_service.send_plan_videos(context.bot, telegram_id, plan_id)
+        if not success:
+            await context.bot.send_message(
+                chat_id=telegram_id,
+                text="⚠️ خطا در ارسال ویدیوها. لطفاً بعداً تلاش کنید."
+            )
+    except Exception as e:
+        logger.error(f"Error sending videos for plan {plan_id} to user {telegram_id}: {e}")
+        await context.bot.send_message(
+            chat_id=telegram_id,
+            text="⚠️ خطا در ارسال ویدیوها. لطفاً بعداً تلاش کنید."
+        )
+
+async def send_channel_links_and_confirmation(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_name: str, channels_json: str | None = None, auto_delete_links: bool = True):
+    """Sends a confirmation message with channel links and optionally schedules it for deletion."""
+    # First, send success confirmation with appropriate warning message
+    if auto_delete_links:
+        success_text = (
+            f"✅ اشتراک پلن «{plan_name}» برای شما با موفقیت فعال شد.\n\n"
+            "⚠️ توجه: لینک‌های دسترسی فقط ۵ دقیقه اعتبار دارند."
+        )
+    else:
+        success_text = (
+            f"✅ اشتراک پلن «{plan_name}» برای شما با موفقیت فعال شد.\n\n"
+            "🔗 لینک‌های دسترسی برای همیشه در دسترس شما خواهند بود."
+        )
     try:
         await context.bot.send_message(
             chat_id=telegram_id,
@@ -58,9 +110,22 @@ async def send_channel_links_and_confirmation(telegram_id: int, context: Context
     message_text = "🎉 اکنون می‌توانید از طریق لینک‌های زیر به کانال‌ها و گروه‌های ویژه دسترسی داشته باشید:"
     
     # ------------------------------------------------------------------
+    # Determine channel list based on plan configuration
+    custom_channels: list[dict] | None = None
+    if channels_json:
+        try:
+            custom_channels = json.loads(channels_json)
+        except json.JSONDecodeError as e:
+            logger.error("Invalid channels_json for plan in send_channel_links: %s", e)
+    target_channels = custom_channels if custom_channels else None
+    # If admin explicitly provided an empty list → do NOT send any links.
+    if channels_json is not None and custom_channels == []:
+        logger.info("Plan-specific channels_json is empty list → skipping channel link delivery for user %s", telegram_id)
+        return
+
     # Create / fetch one-time invite links for this user
     try:
-        invite_links = await InviteLinkManager.ensure_one_time_links(context.bot, telegram_id)
+        invite_links = await InviteLinkManager.ensure_one_time_links(context.bot, telegram_id, channels_info=target_channels)
     except Exception as exc:
         logger.exception("Failed to generate invite links for user %s – %s", telegram_id, exc)
         invite_links = None
@@ -80,17 +145,20 @@ async def send_channel_links_and_confirmation(telegram_id: int, context: Context
             channels_info = []
 
     # Build buttons with invite links if we have successfully generated them
-    if invite_links and channels_info and len(invite_links) == len(channels_info):
+    # Use target_channels (plan-specific) instead of all channels_info
+    target_channels_for_display = target_channels if target_channels else channels_info
+    
+    if invite_links and target_channels_for_display and len(invite_links) == len(target_channels_for_display):
         first_row = []
-        for chat_info, link in zip(channels_info, invite_links):
+        for chat_info, link in zip(target_channels_for_display, invite_links):
             first_row.append(InlineKeyboardButton(chat_info['title'], url=link))
         if first_row:
             keyboard.append(first_row)
     else:
         # Fallback to any static links provided (legacy behaviour)
-        if channels_info:
+        if target_channels_for_display:
             first_row = []
-            for channel in channels_info:
+            for channel in target_channels_for_display or []:
                 if isinstance(channel, dict) and 'title' in channel and 'link' in channel:
                     first_row.append(InlineKeyboardButton(channel['title'], url=channel['link']))
             if first_row:
@@ -117,14 +185,25 @@ async def send_channel_links_and_confirmation(telegram_id: int, context: Context
         )
         logger.info(f"Sent channel links to user {telegram_id}. Message ID: {sent_message.message_id}")
 
-        context.job_queue.run_once(
-            delete_message_job,
-            300,  # 5 minutes
-            chat_id=telegram_id,
-            data={'message_id': sent_message.message_id},
-            name=f"delete_msg_{telegram_id}_{sent_message.message_id}"
-        )
-        logger.info(f"Scheduled message {sent_message.message_id} for deletion in 5 minutes for user {telegram_id}.")
+        # Only schedule deletion if auto_delete_links is True
+        if auto_delete_links:
+            context.job_queue.run_once(
+                delete_message_job,
+                300,  # 5 minutes
+                chat_id=telegram_id,
+                data={'message_id': sent_message.message_id},
+                name=f"delete_msg_{telegram_id}_{sent_message.message_id}"
+            )
+            logger.info(f"Scheduled message {sent_message.message_id} for deletion in 5 minutes for user {telegram_id}.")
+        else:
+            logger.info(f"Message {sent_message.message_id} will NOT be auto-deleted for user {telegram_id} (auto_delete_links=False).")
+
+        # After links/confirmation, trigger survey & video flow
+        try:
+            from handlers.subscription.subscription_handlers import handle_post_subscription_flow as _post_flow
+            await _post_flow(telegram_id, context, plan_details, plan_name)
+        except Exception as exc:
+            logger.error(f"Error in post subscription flow for user {telegram_id}: {exc}")
 
     except Exception as e:
         logger.error(f"Failed to send channel links message to user {telegram_id}: {e}")
@@ -219,9 +298,33 @@ async def activate_or_extend_subscription(
 
         logger.info(f"Successfully activated/extended subscription_id: {subscription_id} for user_id: {user_id}.")
         
-        # Only send channel links for actual subscription plans, not one-time content
-        if plan_details['plan_type'] != 'one_time_content':
-            await send_channel_links_and_confirmation(telegram_id=telegram_id, context=context, plan_name=plan_name)
+        # Check if plan has a survey first
+        from database.queries import DatabaseQueries
+        survey = DatabaseQueries.get_plan_survey(plan_id)
+        has_pending_survey = False
+        
+        if survey:
+            survey_id = survey['id']
+            if not DatabaseQueries.has_user_completed_survey(telegram_id, survey_id):
+                has_pending_survey = True
+        
+        # Only send success message and channel links if no pending survey
+        if not has_pending_survey:
+            # Only send channel links for actual subscription plans, not one-time content
+            if plan_details['plan_type'] != 'one_time_content':
+                channels_json = plan_details.get('channels_json')
+                # Parse auto_delete_links properly - it might be stored as string or int
+                auto_delete_raw = plan_details.get('auto_delete_links', 1)
+                if isinstance(auto_delete_raw, str):
+                    auto_delete_links = auto_delete_raw not in ['0', '۰', 'false', 'False']
+                else:
+                    auto_delete_links = bool(auto_delete_raw)
+                
+                logger.info(f"Plan {plan_id} auto_delete_links: {auto_delete_raw} -> {auto_delete_links}")
+                await send_channel_links_and_confirmation(telegram_id=telegram_id, context=context, plan_name=plan_name, channels_json=channels_json, auto_delete_links=auto_delete_links)
+        
+        # Handle survey flow and content delivery
+        await handle_post_subscription_flow(telegram_id, context, plan_details, plan_name)
         
         # Return success
         return True, ""
@@ -247,7 +350,7 @@ async def start_subscription_status(update: Update, context: ContextTypes.DEFAUL
     if not subscription:
         # No active subscription
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎫 عضویت رایگان", callback_data="start_subscription_flow")], # Changed text and callback
+            [InlineKeyboardButton(TEXT_MAIN_MENU_BUY_SUBSCRIPTION, callback_data="start_subscription_flow")], # Changed text and callback
             [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="back_to_main_menu")] # Consistent callback
         ])
         
@@ -430,7 +533,10 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
         else:  # No active subscription (None or expired)
             # Provide button for buying/renewing subscription
             keyboard_buttons.append(
-                [InlineKeyboardButton("🎫 عضویت رایگان", callback_data="start_subscription_flow")]
+                [
+                    InlineKeyboardButton(TEXT_MAIN_MENU_BUY_SUBSCRIPTION, callback_data="start_subscription_flow"),
+                    InlineKeyboardButton(TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow")
+                ]
             )
         
         # Common buttons for all regular users

@@ -172,35 +172,74 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
     return SELECT_PLAN
 
 async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays the payment methods with the final price."""
+    """Displays the payment methods with the final price using new base currency system."""
     query = update.callback_query
     await query.answer()
 
     selected_plan = context.user_data.get('selected_plan_details')
-    usdt_price = selected_plan.get('price_tether') or selected_plan.get('original_price_usdt')
+    if not selected_plan:
+        await query.edit_message_text("خطا: پلن انتخاب شده یافت نشد.")
+        return ConversationHandler.END
+    
+    # Get current exchange rate
     usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
-    irr_price_dynamic = convert_usdt_to_irr(usdt_price, usdt_rate) if (usdt_price and usdt_rate) else None
-
-    # Persist dynamic IRR price in context for later payment creation steps
-    context.user_data['dynamic_irr_price'] = irr_price_dynamic
-    context.user_data['live_usdt_price'] = usdt_price  # base USDT price (no markup)
-    final_price = irr_price_dynamic
-
-    plan_price_irr_formatted = f"{int(final_price):,}" if final_price is not None else "N/A"
-    plan_price_usdt_formatted = f"{usdt_price:.5f}" if usdt_price is not None else "N/A"
+    if not usdt_rate:
+        await query.edit_message_text("خطا در دریافت نرخ ارز. لطفاً دوباره تلاش کنید.")
+        return SELECT_PAYMENT_METHOD
+    
+    # Get base currency and price from plan
+    base_currency = selected_plan.get('base_currency', 'IRR')
+    base_price = selected_plan.get('base_price')
+    
+    if base_price is None:
+        # Fallback to legacy fields for backward compatibility
+        if selected_plan.get('price_tether') is not None:
+            base_currency = 'USDT'
+            base_price = selected_plan['price_tether']
+        elif selected_plan.get('price') is not None:
+            base_currency = 'IRR'
+            base_price = selected_plan['price']
+        else:
+            await query.edit_message_text("خطا: قیمت پلن تعریف نشده است.")
+            return ConversationHandler.END
+    
+    # Calculate prices in both currencies
+    if base_currency == 'USDT':
+        usdt_price = float(base_price)
+        irr_price = int(usdt_price * usdt_rate * 10)  # Convert to Rial (with 10x multiplier)
+    else:  # base_currency == 'IRR'
+        irr_price = int(float(base_price))
+        usdt_price = irr_price / (usdt_rate * 10)  # Convert to USDT
+    
+    # Store calculated prices with expiry time (30 minutes)
+    from datetime import datetime, timedelta
+    expiry_time = datetime.utcnow() + timedelta(minutes=30)
+    context.user_data.update({
+        'live_usdt_price': usdt_price,
+        'live_irr_price': irr_price,
+        'price_expiry': expiry_time.isoformat(),
+        'base_currency': base_currency,
+        'base_price': base_price
+    })
+    
+    # Format prices for display
+    plan_price_irr_formatted = f"{irr_price:,}"
+    plan_price_usdt_formatted = f"{usdt_price:.5f}"
+    
+    # Create message with price expiry warning
     message_text = PAYMENT_METHOD_MESSAGE.format(
         plan_name=selected_plan.get('name', 'N/A'),
         plan_price=plan_price_irr_formatted,
         plan_tether=plan_price_usdt_formatted
     )
-
+    message_text += "\n\n⚠️ قیمت‌ها تا ۳۰ دقیقه اعتبار دارند."
+    
     await query.message.edit_text(
         text=message_text,
         reply_markup=get_payment_methods_keyboard(),
         parse_mode=ParseMode.HTML
     )
-
-
+    
     return SELECT_PAYMENT_METHOD
 
 async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -336,6 +375,20 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info(f"[select_plan_handler] User {user_id} triggered with data: {query.data}")
     await query.answer()
 
+    # Check if user is registered before proceeding
+    from utils.helpers import is_user_registered
+    if not is_user_registered(user_id):
+        logger.warning(f"[select_plan_handler] Unregistered user {user_id} tried to select a plan")
+        await query.message.edit_text(
+            "⚠️ برای خرید محصول یا استفاده از پکیج‌های رایگان، ابتدا باید ثبت‌نام کنید.\n\n"
+            "لطفاً از منوی اصلی گزینه '📝 ثبت نام' را انتخاب کنید.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📝 ثبت نام", callback_data="start_registration_flow")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main_menu")]
+            ])
+        )
+        return ConversationHandler.END
+
     Database.update_user_activity(user_id)
 
     try:
@@ -375,12 +428,18 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info(f"Plan {plan_id} is one_time_content. Routing to handle_free_content_plan.")
         return await handle_free_content_plan(update, context)
 
-    # If the plan price in USDT is zero, treat it as a free subscription and skip payment flow
-    usdt_price = plan_dict.get('price_tether') or plan_dict.get('original_price_usdt') or 0
-    if usdt_price == 0:
+    # Determine if the plan is completely free using new base_price system
+    base_price = plan_dict.get('base_price')
+    if base_price is None:
+        # Fallback to legacy fields for backward compatibility
+        is_free_plan = (plan_dict.get('price') in (None, 0)) and (plan_dict.get('price_tether') in (None, 0))
+    else:
+        is_free_plan = base_price in (None, 0)
+    if is_free_plan:
         # Prevent users from subscribing to free plan multiple times
         if Database.has_user_used_free_plan(user_id=user_id, plan_id=plan_id):
-            await query.message.edit_text(
+            await safe_edit_message_text(
+                query.message,
                 text="شما قبلاً از این طرح رایگان استفاده کرده‌اید و امکان فعال‌سازی مجدد آن وجود ندارد.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
             )
@@ -417,7 +476,8 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         if success:
             # Success message and links will be sent by send_channel_links_and_confirmation inside
             # activate_or_extend_subscription. No need to send another message here to avoid duplication.
-            logger.debug("Free plan subscription activated; confirmation will be handled separately.")
+            # Post-subscription flow (survey and video delivery) is already handled in activate_or_extend_subscription
+            logger.debug("Free plan subscription activated; post-subscription flow handled in activate_or_extend_subscription.")
         else:
             await query.message.edit_text(
                 text=f"❌ {err_msg}",
@@ -462,19 +522,30 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.edit_text("خطا: اطلاعات طرح یافت نشد. لطفاً از ابتدا شروع کنید.", reply_markup=get_subscription_plans_keyboard(telegram_id))
         return SELECT_PLAN
 
-    # Retrieve the final price (potentially discounted) from user_data; if absent or not numeric, compute dynamically
+    # Check if price has expired (30 minutes)
+    from datetime import datetime
+    price_expiry = context.user_data.get('price_expiry')
+    if price_expiry:
+        expiry_time = datetime.fromisoformat(price_expiry)
+        if datetime.utcnow() > expiry_time:
+            await query.edit_message_text(
+                "⚠️ قیمت محاسبه شده منقضی شده است. لطفاً دوباره پلن را انتخاب کنید.",
+                reply_markup=get_subscription_plans_keyboard(telegram_id)
+            )
+            return SELECT_PLAN
+    
+    # Retrieve the final price (potentially discounted) from user_data
     price_irr = context.user_data.get('final_price')
-    if price_irr is None or (isinstance(price_irr, (str, bytes)) and not str(price_irr).strip().isdigit()):
-        # Try dynamic IRR price stored earlier
-        price_irr = context.user_data.get('dynamic_irr_price')
-
     if price_irr is None:
-        # Fallback: compute from USDT price * live rate
-        usdt_price = selected_plan.get('price_tether') or selected_plan.get('original_price_usdt')
-        if usdt_price:
-            usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
-            price_irr = convert_usdt_to_irr(usdt_price, usdt_rate) if usdt_rate else None
-            context.user_data['dynamic_irr_price'] = price_irr
+        # Use the live calculated IRR price
+        price_irr = context.user_data.get('live_irr_price')
+    
+    if price_irr is None:
+        await query.edit_message_text(
+            "خطا در محاسبه قیمت. لطفاً دوباره پلن را انتخاب کنید.",
+            reply_markup=get_subscription_plans_keyboard(telegram_id)
+        )
+        return SELECT_PLAN
     
     # Ensure price_irr is numeric
     try:
@@ -755,7 +826,8 @@ async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TY
 
     user_db_id = context.user_data.get('user_db_id')
     selected_plan_details = context.user_data.get('selected_plan_details')
-    logger.info(f"User {telegram_id} (DB ID: {user_db_id}): Entered select_payment_method with callback_data: {query.data}. Plan selected: {selected_plan_details is not None}")
+    payment_id = context.user_data.get('payment_id')
+    logger.info(f"User {telegram_id} (DB ID: {user_db_id}): Entered verify_payment_status with callback_data: {query.data}. Plan selected: {selected_plan_details is not None}")
     payment_method = context.user_data.get('payment_method')
 
     UserAction.log_user_action(
@@ -1206,24 +1278,31 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
 
     await query.answer()
 
-    # Use dynamic IRR price stored in context (set in show_payment_methods). If not present, compute now.
-    dynamic_irr_price = context.user_data.get('dynamic_irr_price')
-    usdt_price = context.user_data.get('live_usdt_price')
-
-    if dynamic_irr_price is None:
-        usdt_price = selected_plan.get('price_tether') or selected_plan.get('original_price_usdt')
-        usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
-        dynamic_irr_price = convert_usdt_to_irr(usdt_price, usdt_rate) if (usdt_price and usdt_rate) else None
-        context.user_data['dynamic_irr_price'] = dynamic_irr_price
-        # Store rate-converted USDT price as well for later crypto payments
-        context.user_data['live_usdt_price'] = usdt_price
-
-    plan_price_irr_formatted = f"{int(dynamic_irr_price):,}" if dynamic_irr_price is not None else "N/A"
-
-    # Ensure we have live_usdt_price (might be computed above or stored earlier)
+    # Check if price has expired (30 minutes)
+    from datetime import datetime
+    price_expiry = context.user_data.get('price_expiry')
+    if price_expiry:
+        expiry_time = datetime.fromisoformat(price_expiry)
+        if datetime.utcnow() > expiry_time:
+            await query.edit_message_text(
+                "⚠️ قیمت محاسبه شده منقضی شده است. لطفاً دوباره پلن را انتخاب کنید.",
+                reply_markup=get_subscription_plans_keyboard(user_id)
+            )
+            return SELECT_PLAN
+    
+    # Use the stored live prices
+    live_irr_price = context.user_data.get('live_irr_price')
     live_usdt_price = context.user_data.get('live_usdt_price')
-
-    plan_price_usdt_formatted = f"{live_usdt_price:.5f}" if live_usdt_price is not None else "N/A"
+    
+    if live_irr_price is None or live_usdt_price is None:
+        await query.edit_message_text(
+            "خطا در محاسبه قیمت. لطفاً دوباره پلن را انتخاب کنید.",
+            reply_markup=get_subscription_plans_keyboard(user_id)
+        )
+        return SELECT_PLAN
+    
+    plan_price_irr_formatted = f"{int(live_irr_price):,}"
+    plan_price_usdt_formatted = f"{live_usdt_price:.5f}"
     message_text = PAYMENT_METHOD_MESSAGE.format(
         plan_name=selected_plan.get('name', 'N/A'),
         plan_price=plan_price_irr_formatted,
@@ -1277,10 +1356,27 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
 
     discount = Database.get_discount_by_code(discount_code)
     selected_plan = context.user_data.get('selected_plan_details')
-    # Recalculate dynamic IRR price using current rate for discount validation
-    usdt_price = selected_plan.get('price_tether') or selected_plan.get('original_price_usdt')
-    usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
-    final_price = convert_usdt_to_irr(usdt_price, usdt_rate) if (usdt_price and usdt_rate) else None
+    
+    # Check if price has expired (30 minutes)
+    from datetime import datetime
+    price_expiry = context.user_data.get('price_expiry')
+    if price_expiry:
+        expiry_time = datetime.fromisoformat(price_expiry)
+        if datetime.utcnow() > expiry_time:
+            await update.message.reply_text(
+                "⚠️ قیمت محاسبه شده منقضی شده است. لطفاً دوباره پلن را انتخاب کنید.",
+                reply_markup=get_subscription_plans_keyboard(user_id)
+            )
+            return ConversationHandler.END
+    
+    # Get the current calculated IRR price
+    final_price = context.user_data.get('live_irr_price')
+    if final_price is None:
+        await update.message.reply_text(
+            "خطا در محاسبه قیمت. لطفاً دوباره پلن را انتخاب کنید.",
+            reply_markup=get_subscription_plans_keyboard(user_id)
+        )
+        return ConversationHandler.END
 
     error_message = None
     if not discount:
@@ -1374,17 +1470,24 @@ async def ask_for_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
     telegram_id = update.effective_user.id
 
     help_text = (
-        "✅ پرداخت را در کیف‌پول خود انجام دهید، سپس کد «TxID / Transaction Hash»"
-        " تراکنش USDT (شبکه TRON) را ارسال کنید.\n\n"
-        "• معمولاً به‌صورت رشته‌ای ۶۴ نویسه‌ای شامل حروف و ارقام است.\n"
+        "✅ پرداخت را در کیف‌پول خود انجام دهید، سپس کد «TxID / Transaction Hash» "
+        "تراکنش USDT (شبکه TRON) را ارسال کنید.\n\n"
+        "• معمولاً به‌صورت رشته‌ای ۶۴ کاراکتری شامل حروف و ارقام است.\n"
         "• فقط خود کد را بدون توضیح اضافی بفرستید.\n"
-        "• مثال:\n<code>ab12cd34ef56...</code>\n\n"
-        "در صورتی که مبلغ پرداختی کمتر از قیمت پلن باشد، تراکنش مردود می‌شود؛"
-        " مبلغ مساوی یا بیشتر قابل قبول است."
+        "• مثال: <code>ab12cd34ef56...</code>\n\n"
+        "در صورتی که مبلغ پرداختی کمتر از قیمت پلن باشد، تراکنش مردود می‌شود؛ مبلغ مساوی یا بیشتر قابل قبول است."
     )
-    await query.message.edit_text(help_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([
-        [get_back_to_payment_methods_button()]
-    ]))
+
+    # علامت‌گذاری حالت انتظار برای دریافت TxHash تا UnknownHandler دخالت نکند
+    context.user_data['awaiting_tx_hash'] = True
+
+    await query.message.edit_text(
+        help_text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([
+            [get_back_to_payment_methods_button()]
+        ])
+    )
     return WAIT_FOR_TX_HASH
 
 async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1415,7 +1518,11 @@ async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
         )
         return ConversationHandler.END
     else:
-        await update.message.reply_text("تراکنش نامعتبر بود یا مبلغ کافی نیست. دوباره بررسی و کد صحیح را ارسال کنید.")
+        from utils.keyboards import get_back_to_payment_methods_button
+        await update.message.reply_text(
+            "❌ تراکنش نامعتبر بود یا مبلغ کافی نیست. دوباره بررسی و کد صحیح را ارسال کنید.",
+            reply_markup=InlineKeyboardMarkup([[get_back_to_payment_methods_button()]])
+        )
         return WAIT_FOR_TX_HASH
 async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Verifies USDT (TRC20) payment via TronGrid when user presses the corresponding button."""
@@ -1456,7 +1563,7 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
 payment_conversation = ConversationHandler(
     entry_points=[
         CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'),
-        MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان)$"), start_subscription_flow),
+        MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 محصولات)$"), start_subscription_flow),
     ],
     states={
         SELECT_PLAN: [
@@ -1474,14 +1581,14 @@ payment_conversation = ConversationHandler(
         SELECT_PAYMENT_METHOD: [
             CallbackQueryHandler(select_payment_method, pattern='^payment_(rial|crypto)$'),
             CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
-            MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان)$"), start_subscription_flow),
+            MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 محصولات)$"), start_subscription_flow),
         ],
         VERIFY_PAYMENT: [
             CallbackQueryHandler(verify_payment_status, pattern='^payment_verify$'),
             CallbackQueryHandler(ask_for_tx_hash_handler, pattern='^payment_send_tx$'),
             CallbackQueryHandler(payment_verify_zarinpal_handler, pattern=f'^{VERIFY_ZARINPAL_PAYMENT_CALLBACK}$'),
             CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$'),
-            MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان)$"), start_subscription_flow),
+            MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 محصولات)$"), start_subscription_flow),
         ],
         WAIT_FOR_TX_HASH: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_tx_hash_handler),

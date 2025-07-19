@@ -100,6 +100,16 @@ CREATE TABLE IF NOT EXISTS ticket_messages (
 )
 '''
 
+FREE_PACKAGE_USERS_TABLE = '''
+CREATE TABLE IF NOT EXISTS free_package_users (
+    user_id INTEGER PRIMARY KEY,
+    email TEXT,
+    uid TEXT,
+    last_checked TEXT,
+    FOREIGN KEY (user_id) REFERENCES users (user_id)
+)
+'''
+
 INVITE_LINKS_TABLE = '''
 CREATE TABLE IF NOT EXISTS invite_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,6 +194,18 @@ CREATE TABLE IF NOT EXISTS support_users (
 );
 '''
 
+# Wait-list for Free Package
+FREE_PACKAGE_WAITLIST_TABLE = '''
+CREATE TABLE IF NOT EXISTS free_package_waitlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER UNIQUE,
+    position INTEGER,
+    created_at TEXT,
+    status TEXT DEFAULT 'waiting',
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+'''
+
 DISCOUNTS_TABLE = '''
 CREATE TABLE IF NOT EXISTS discounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -208,6 +230,119 @@ CREATE TABLE IF NOT EXISTS plan_discounts (
 );
 '''
 
+# New tables for video content and surveys
+VIDEOS_TABLE = '''
+CREATE TABLE IF NOT EXISTS videos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    file_size INTEGER,
+    duration INTEGER, -- Duration in seconds
+    telegram_file_id TEXT, -- Cached Telegram file ID for faster sending
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    is_active INTEGER DEFAULT 1
+)
+'''
+
+PLAN_VIDEOS_TABLE = '''
+CREATE TABLE IF NOT EXISTS plan_videos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id INTEGER NOT NULL,
+    video_id INTEGER NOT NULL,
+    display_order INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (plan_id) REFERENCES plans (id) ON DELETE CASCADE,
+    FOREIGN KEY (video_id) REFERENCES videos (id) ON DELETE CASCADE,
+    UNIQUE(plan_id, video_id)
+)
+'''
+
+SURVEYS_TABLE = '''
+CREATE TABLE IF NOT EXISTS surveys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (plan_id) REFERENCES plans (id) ON DELETE CASCADE
+)
+'''
+
+SURVEY_QUESTIONS_TABLE = '''
+CREATE TABLE IF NOT EXISTS survey_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    survey_id INTEGER NOT NULL,
+    question_text TEXT NOT NULL,
+    question_type TEXT DEFAULT 'text', -- 'text', 'multiple_choice', 'rating'
+    options TEXT, -- JSON array for multiple choice options
+    is_required INTEGER DEFAULT 1,
+    display_order INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (survey_id) REFERENCES surveys (id) ON DELETE CASCADE
+)
+'''
+
+SURVEY_RESPONSES_TABLE = '''
+CREATE TABLE IF NOT EXISTS survey_responses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    survey_id INTEGER NOT NULL,
+    question_id INTEGER NOT NULL,
+    response_text TEXT,
+    submitted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+    FOREIGN KEY (survey_id) REFERENCES surveys (id) ON DELETE CASCADE,
+    FOREIGN KEY (question_id) REFERENCES survey_questions (id) ON DELETE CASCADE,
+    UNIQUE(user_id, survey_id, question_id)
+)
+'''
+
+USER_SURVEY_COMPLETIONS_TABLE = '''
+CREATE TABLE IF NOT EXISTS user_survey_completions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    survey_id INTEGER NOT NULL,
+    plan_id INTEGER NOT NULL,
+    completed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+    FOREIGN KEY (survey_id) REFERENCES surveys (id) ON DELETE CASCADE,
+    FOREIGN KEY (plan_id) REFERENCES plans (id) ON DELETE CASCADE,
+    UNIQUE(user_id, survey_id)
+)
+'''
+
+VIDEOS_TABLE = '''
+CREATE TABLE IF NOT EXISTS videos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    file_size INTEGER,
+    duration INTEGER,
+    telegram_file_id TEXT,
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+'''
+
+PLAN_VIDEOS_TABLE = '''
+CREATE TABLE IF NOT EXISTS plan_videos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id INTEGER NOT NULL,
+    video_id INTEGER NOT NULL,
+    display_order INTEGER DEFAULT 0,
+    custom_caption TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (plan_id) REFERENCES plans (id) ON DELETE CASCADE,
+    FOREIGN KEY (video_id) REFERENCES videos (id) ON DELETE CASCADE,
+    UNIQUE(plan_id, video_id)
+)
+'''
+
 # List of all tables to create
 ALL_TABLES = [
     USERS_TABLE,
@@ -216,15 +351,23 @@ ALL_TABLES = [
     PAYMENTS_TABLE,
     TICKETS_TABLE,
     TICKET_MESSAGES_TABLE,
-    INVITE_LINKS_TABLE,
-    NOTIFICATIONS_TABLE,
     CRYPTO_PAYMENTS_TABLE,
-    USER_ACTIVITY_LOGS_TABLE,
     DISCOUNTS_TABLE,
     PLAN_DISCOUNTS_TABLE,
+    USER_ACTIVITY_LOGS_TABLE,
+    NOTIFICATIONS_TABLE,
+    FREE_PACKAGE_WAITLIST_TABLE,
+    FREE_PACKAGE_USERS_TABLE,  # new table
+    VIDEOS_TABLE,
+    PLAN_VIDEOS_TABLE,
+    SURVEYS_TABLE,
+    SURVEY_QUESTIONS_TABLE,
+    SURVEY_RESPONSES_TABLE,
+    USER_SURVEY_COMPLETIONS_TABLE,
     PAYMENT_STATUS_HISTORY_TABLE,
     SUPPORT_USERS_TABLE
 ]
+
 
 if __name__ == '__main__':
     import sys
