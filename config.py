@@ -109,14 +109,7 @@ ZARINPAL_CALLBACK_URL = os.getenv("ZARINPAL_CALLBACK_URL")
 if not ZARINPAL_CALLBACK_URL:
     logger.error("CRITICAL: ZARINPAL_CALLBACK_URL not set in .env. Zarinpal payment verification will fail.")
 
-# Price adjustment (markup) applied to AbanTether USDT rate to match website purchase price.
-# This compensates for approximate 4-5% OTC→buy spread and possible gateway fees.
-USDT_RATE_MARKUP_PERCENT_STR = os.getenv("USDT_RATE_MARKUP_PERCENT", "4.5")
-try:
-    USDT_RATE_MARKUP_PERCENT: float = float(USDT_RATE_MARKUP_PERCENT_STR)
-except ValueError:
-    USDT_RATE_MARKUP_PERCENT = 0.0
-    logger.warning("Invalid USDT_RATE_MARKUP_PERCENT in .env ('%s'). Falling back to 0%%.", USDT_RATE_MARKUP_PERCENT_STR)
+
 
 # Nobitex API (for USDT price)
 NOBITEX_API_BASE_URL = os.getenv("NOBITEX_API_BASE_URL", "https://api.nobitex.ir")
@@ -124,11 +117,10 @@ NOBITEX_API_KEY = os.getenv("NOBITEX_API_KEY", "") # API key for Nobitex
 if not NOBITEX_API_KEY:
     logger.info("NOBITEX_API_KEY not set or empty in .env. Price fetching from Nobitex might fail if API key is required.")
 
-# Aban Tether API (for USDT price)
-ABANTETHER_API_BASE_URL = os.getenv("ABANTETHER_API_BASE_URL", "https://abantether.com/api/v1")
-ABANTETHER_API_KEY = os.getenv("ABANTETHER_API_KEY", "")  # API key for Aban Tether
-if not ABANTETHER_API_KEY:
-    logger.info("ABANTETHER_API_KEY not set or empty in .env. Price fetching from AbanTether might fail if API key is required.")
+# Tetherland API (for USDT price)
+TETHERLAND_API_KEY = os.getenv("TETHERLAND_API_KEY", "")
+if not TETHERLAND_API_KEY:
+    logger.info("TETHERLAND_API_KEY not set or empty in .env. Price fetching from Tetherland might fail if API key is required.")
 
 # Crypto payment settings
 TETHER_WALLET_ADDRESS = os.getenv("TETHER_WALLET_ADDRESS")
@@ -151,7 +143,7 @@ if not COINGECKO_API_KEY:
     logger.info("COINGECKO_API_KEY not set or empty in .env. Real-time exchange rates via CoinGecko will not be used if it is required by the implementation.")
 
 # Cache TTL for USDT rate (seconds). Default 30; override via .env if needed.
-USDT_RATE_CACHE_SECONDS = int(os.getenv("USDT_RATE_CACHE_SECONDS", "30"))
+USDT_RATE_CACHE_SECONDS = int(os.getenv("USDT_RATE_CACHE_SECONDS", "1800"))
 if USDT_RATE_CACHE_SECONDS < 5:
     logger.warning("USDT_RATE_CACHE_SECONDS too low (%s). Setting to minimum 5s to respect API limits.", USDT_RATE_CACHE_SECONDS)
     USDT_RATE_CACHE_SECONDS = 5
@@ -317,3 +309,18 @@ if ADMIN_CHAT_ID is None and not MAIN_BOT_ERROR_CONTACT_IDS:
 
 
 # --- End of Consolidated Admin Configuration Processing ---
+
+# ------------------------------------------------------------
+# Toobit *Free Package* promotional campaign settings
+# ------------------------------------------------------------
+# These values must be configured in your .env file for the free–package
+# feature (پکیج رایگان) to work.
+TOOBIT_API_BASE_URL = os.getenv("TOOBIT_API_BASE_URL", "https://api.toobit.com")
+TOOBIT_API_KEY = os.getenv("TOOBIT_API_KEY", "")
+TOOBIT_REF_CODE = os.getenv("TOOBIT_REF_CODE", "")
+FREE_PACKAGE_CAPACITY = int(os.getenv("FREE_PACKAGE_CAPACITY", "100"))  # Hard cap active members
+
+if not TOOBIT_API_KEY:
+    logger.warning("TOOBIT_API_KEY is not set; free package verification will be disabled.")
+if not TOOBIT_REF_CODE:
+    logger.warning("TOOBIT_REF_CODE is not set; referral validation will fail.")

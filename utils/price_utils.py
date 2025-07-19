@@ -3,18 +3,18 @@ import math
 import time
 from typing import Optional
 
-from config import logger, ABANTETHER_API_KEY, ABANTETHER_API_BASE_URL
+from config import logger, TETHERLAND_API_KEY
 
 # Cache variables for USDT→Toman (IRT) buy rate to avoid hitting the API more than once per minute
 _cached_rate_toman: Optional[float] = None
 _cache_timestamp: float = 0.0
 
-ABANTETHER_USDT_IRR_PRICE_URL = f"{ABANTETHER_API_BASE_URL.rstrip('/')}/otc/coin-price/"
+TETHERLAND_PRICE_URL = "https://api.tetherland.com/currencies"
 
 async def get_usdt_to_irr_rate(force_refresh: bool = False) -> float | None:
     """Return USDT→IRR rate.
 
-    The value is fetched from AbanTether and cached for up to 60 seconds to respect
+    The value is fetched from Tetherland and cached for up to 60 seconds to respect
     API limits. If *force_refresh* is True, the cache is bypassed.
     """
 
@@ -26,63 +26,45 @@ async def get_usdt_to_irr_rate(force_refresh: bool = False) -> float | None:
         return _cached_rate_toman
 
     try:
-        headers = {}
-        if ABANTETHER_API_KEY:
-            headers["Authorization"] = f"Token {ABANTETHER_API_KEY}"
+        headers = {"Accept": "application/json"}  # Tetherland endpoint is public; no API key required
 
-        response = requests.get(ABANTETHER_USDT_IRR_PRICE_URL, timeout=10, headers=headers)
+        response = requests.get(TETHERLAND_PRICE_URL, timeout=10, headers=headers)
         response.raise_for_status()
         data = response.json()
 
-        # Expected structure: {"USDT": {"usdtPrice": "1", "irtPriceBuy": "27200.0", ...}}
-        if isinstance(data, dict) and "USDT" in data and isinstance(data["USDT"], dict):
-            usdt_info = data["USDT"]
-            # AbanTether provides both buy and sell prices.
-            # For customer **purchases** we must use the **buy** price (irtPriceBuy),
+        # Expected structure: {"status":0, "data":{"currencies":{"USDT":{"price": <IRT per USDT>, ...}}}}
+        if (
+            isinstance(data, dict)
+            and isinstance(data.get("data"), dict)
+            and isinstance(data["data"].get("currencies"), dict)
+            and isinstance(data["data"]["currencies"].get("USDT"), dict)
+        ):
+            usdt_info = data["data"]["currencies"]["USDT"]
+            # Tetherland provides a single indicative price field.
+
             # because that is the amount users must pay per USDT. If the buy price
-            # is missing or invalid, we gracefully fall back to the sell price.
-            buy_str = usdt_info.get("irtPriceBuy")
-            sell_str = usdt_info.get("irtPriceSell")
 
+            price_str = usdt_info.get("price")
             try:
-                buy_price = float(buy_str.replace(',', '')) if buy_str else 0.0
-            except ValueError:
-                buy_price = 0.0
-            try:
-                sell_price = float(sell_str.replace(',', '')) if sell_str else 0.0
-            except ValueError:
-                sell_price = 0.0
+                rate_irr = float(str(price_str).replace(',', '')) if price_str is not None else 0.0
+            except (ValueError, TypeError):
+                rate_irr = 0.0
 
-            # Debug log raw values for troubleshooting discrepancies
-            logger.debug("AbanTether raw prices — buy: %s, sell: %s", buy_price, sell_price)
-
-            # AbanTether API seems to label fields opposite of website UI; in practice
-            # the *higher* of the two numbers matches what the user must pay. To avoid
-            # under-charging we therefore use **max(buy, sell)**.
-            rate_irr = max(buy_price, sell_price)
-            # Optional configurable markup to account for AbanTether OTC → site conversion fees (≈4-5%)
-            try:
-                from config import USDT_RATE_MARKUP_PERCENT  # type: ignore
-                markup_percent = float(USDT_RATE_MARKUP_PERCENT)
-            except (ImportError, AttributeError, ValueError):
-                markup_percent = 0.0  # Fallback if constant not present or invalid
-            if markup_percent != 0:
-                rate_irr = rate_irr * (1 + markup_percent / 100)
-                logger.debug("Applied markup of %.2f%% to rate. Final rate: %.0f Toman", markup_percent, rate_irr)
+            logger.debug("Tetherland USDT price: %s", rate_irr)
 
             if rate_irr > 0:
                 _cached_rate_toman = rate_irr
                 _cache_timestamp = now
-                logger.info("Fetched USDT BUY price from AbanTether (with markup): %.0f Toman.", rate_irr)
+                logger.info("Fetched USDT price from Tetherland: %.0f Toman.", rate_irr)
                 return rate_irr
-            logger.error("AbanTether response missing valid price fields. Response: %s", data)
+            logger.error("Tetherland response missing valid price field. Response: %s", data)
             return None
-        logger.error("Unexpected AbanTether response structure: %s", data)
+        logger.error("Unexpected Tetherland response structure: %s", data)
         return None
     except requests.exceptions.RequestException as e:
-        logger.error("Error fetching USDT price from AbanTether: %s", e)
+        logger.error("Error fetching USDT price from Tetherland: %s", e)
     except (ValueError, TypeError) as e:
-        logger.error("Error parsing AbanTether API response: %s", e)
+        logger.error("Error parsing Tetherland API response: %s", e)
     except Exception as e:
         logger.error("Unexpected error fetching USDT price: %s", e)
 

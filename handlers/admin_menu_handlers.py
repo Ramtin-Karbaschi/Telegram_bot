@@ -4,6 +4,7 @@ so administrators can quickly access management features
 (tickets, users, payments, broadcasts, settings)."""
 
 import logging
+from typing import Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, MessageHandler, filters, ConversationHandler
 
@@ -28,7 +29,7 @@ AWAIT_USER_ID_FOR_BAN, AWAIT_BAN_CHOICE = range(2)
 class AdminMenuHandler:
     """Show an interactive admin panel and dispatch to feature modules."""
 
-    def __init__(self, db_queries: DatabaseQueries, invite_link_manager=None, admin_config=None):
+    def __init__(self, db_queries: DatabaseQueries, invite_link_manager=None, admin_config=None, main_bot_app=None):
         # Store shared DatabaseQueries instance
         self.db_queries = db_queries
 
@@ -37,6 +38,9 @@ class AdminMenuHandler:
 
         # Save admin configuration for permission checks used by @admin_only decorator
         self.admin_config = admin_config
+        
+        # Store main bot application for sending broadcast messages
+        self.main_bot_app = main_bot_app
 
         # Re-use ticket handler to show lists inside this menu (no DB object required here)
         from .admin_ticket_handlers import AdminTicketHandler
@@ -147,6 +151,10 @@ class AdminMenuHandler:
     BROADCAST_MENU = "admin_broadcast_menu"
     BROADCAST_ACTIVE = "broadcast_active"
     BROADCAST_ALL = "broadcast_all"
+    BROADCAST_WITH_LINK = "broadcast_with_link"
+    BROADCAST_WL_ACTIVE = "broadcast_wl_active"
+    BROADCAST_WL_ALL = "broadcast_wl_all"
+    BROADCAST_CANCEL = "broadcast_cancel"
     SETTINGS_MENU = "admin_settings_menu"
     PRODUCTS_MENU = "admin_products_menu"
     BACKUP_CALLBACK = "settings_backup_json"
@@ -223,6 +231,16 @@ class AdminMenuHandler:
             await self._payments_submenu(query)
         elif data == self.BROADCAST_MENU:
             await self._broadcast_submenu(query)
+        elif data == self.BROADCAST_WITH_LINK:
+            await self._broadcast_wl_choose_audience(query)
+        elif data == self.BROADCAST_WL_ACTIVE:
+            await self._broadcast_wl_ask_content(query, context, target="active")
+        elif data == self.BROADCAST_WL_ALL:
+            await self._broadcast_wl_ask_content(query, context, target="all")
+        elif data.startswith("chpick_"):
+            await self._broadcast_wl_picker_callback(query, context)
+        elif data == self.BROADCAST_CANCEL:
+            await self._broadcast_wl_cancel(query, context)
         elif data == "users_list_active":
             await self._show_active_users(query)
         elif data == self.SETTINGS_MENU:
@@ -243,11 +261,16 @@ class AdminMenuHandler:
         elif data.startswith("toggle_plan_public_"):
             plan_id = int(data.rsplit("_", 1)[1])
             await self.product_handler.toggle_plan_visibility(query, plan_id)
+        elif data.startswith("delete_plan_confirm_"):
+            # confirmation button already includes 'confirm'
+            plan_id = int(data.rsplit("_", 1)[1])
+            await self.product_handler.delete_plan_confirmation(query, plan_id)
         elif data.startswith("delete_plan_"):
-            plan_id = int(data.split("_")[2])
+            # initial delete request from single-plan view
+            plan_id = int(data.rsplit("_", 1)[1])
             await self.product_handler.delete_plan_confirmation(query, plan_id)
         elif data.startswith("confirm_delete_plan_"):
-            plan_id = int(data.split("_")[3])
+            plan_id = int(data.rsplit("_", 1)[1])
             await self.product_handler.delete_plan(query, plan_id)
         elif data == self.BACK_MAIN:
             await self.show_admin_menu(update, context)
@@ -640,6 +663,7 @@ class AdminMenuHandler:
         keyboard = [
             [InlineKeyboardButton("🟢 کاربران فعال", callback_data=self.BROADCAST_ACTIVE)],
             [InlineKeyboardButton("👥 تمامی اعضا", callback_data=self.BROADCAST_ALL)],
+            [InlineKeyboardButton("🔗 پیام با دکمهٔ لینک کانال", callback_data="broadcast_with_link")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text(
@@ -648,7 +672,242 @@ class AdminMenuHandler:
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
-    # ---------- Broadcast content handler ----------
+    # ---------- Broadcast with link flow helpers ----------
+    async def _broadcast_wl_choose_audience(self, query):
+        """Ask admin to choose target audience for broadcast with link."""
+        keyboard = [
+            [InlineKeyboardButton("🟢 کاربران فعال", callback_data=self.BROADCAST_WL_ACTIVE)],
+            [InlineKeyboardButton("👥 تمامی اعضا", callback_data=self.BROADCAST_WL_ALL)],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BROADCAST_MENU)],
+        ]
+        await query.edit_message_text("📢 *پیام با دکمه کانال*\nلطفاً مخاطبین را انتخاب کنید:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def _broadcast_wl_ask_content(self, query, context, target: str):
+        """Prompt admin to send message content."""
+        context.user_data["bw_target"] = target  # 'active' or 'all'
+        context.user_data["bw_awaiting_content"] = True
+        await query.edit_message_text("✏️ محتوای پیام (متن یا عکس) را ارسال کنید.")
+
+    async def _broadcast_wl_show_channel_picker(self, message, context):
+        """After receiving content, ask admin to pick channels."""
+        from utils.broadcast_helpers import build_channel_select_keyboard
+        from config import TELEGRAM_CHANNELS_INFO
+
+        context.user_data["bw_selected_ids"] = set()
+        keyboard = build_channel_select_keyboard(TELEGRAM_CHANNELS_INFO, set())
+        await message.reply_text("🔗 لینک‌های کانال/گروه موردنظر را انتخاب کنید، سپس تأیید را بزنید:", reply_markup=keyboard)
+        
+        # For media messages, we need to download and re-upload via main bot since file_ids are bot-specific
+        if message.text and not message.effective_attachment:
+            # Plain text message - store content directly
+            context.user_data["bw_draft"] = {
+                "type": "text",
+                "data": {
+                    "text": message.text_html or message.text,
+                    **({"parse_mode": "HTML"} if message.text_html else {}),
+                }
+            }
+            logger.info("Stored text message for broadcast")
+        elif message.photo or message.video or message.document:
+            # For media, we'll download and re-upload via main bot during broadcast
+            # Store the original message reference and let main bot handle the file transfer
+            if self.main_bot_app:
+                try:
+                    # Send the media to main bot first so it gets its own file_id
+                    from io import BytesIO
+                    from telegram import InputFile
+
+                    if message.photo:
+                        # Download photo bytes
+                        photo_file = await message.photo[-1].get_file()
+                        bio = BytesIO()
+                        await photo_file.download_to_memory(out=bio)
+                        bio.seek(0)
+                        input_file = InputFile(bio, filename="photo.jpg")
+                        sent = await self.main_bot_app.bot.send_photo(
+                            chat_id=message.from_user.id,
+                            photo=input_file,
+                            caption="[BROADCAST_DRAFT] ",
+                            disable_notification=True,
+                            parse_mode="HTML"
+                        )
+                        # remove temp message
+                        try:
+                            await self.main_bot_app.bot.delete_message(chat_id=sent.chat_id, message_id=sent.message_id)
+                        except Exception:
+                            pass
+                        context.user_data["bw_draft"] = {
+                            "type": "photo",
+                            "data": {
+                                "photo": sent.photo[-1].file_id,
+                                "caption": message.caption_html or message.caption or "",
+                                **({"parse_mode": "HTML"} if message.caption_html else {}),
+                            }
+                        }
+                    elif message.video:
+                        # Download video bytes
+                        video_file = await message.video.get_file()
+                        bio = BytesIO()
+                        await video_file.download_to_memory(out=bio)
+                        bio.seek(0)
+                        input_file = InputFile(bio, filename=message.video.file_name or "video.mp4")
+                        sent = await self.main_bot_app.bot.send_video(
+                            chat_id=message.from_user.id,
+                            video=input_file,
+                            caption="[BROADCAST_DRAFT] ",
+                            disable_notification=True,
+                            parse_mode="HTML"
+                        )
+                        try:
+                            await self.main_bot_app.bot.delete_message(chat_id=sent.chat_id, message_id=sent.message_id)
+                        except Exception:
+                            pass
+                        context.user_data["bw_draft"] = {
+                            "type": "video",
+                            "data": {
+                                "video": sent.video.file_id,
+                                "caption": message.caption_html or message.caption or "",
+                                **({"parse_mode": "HTML"} if message.caption_html else {}),
+                            }
+                        }
+                    elif message.document:
+                        # Download document bytes
+                        doc_file = await message.document.get_file()
+                        bio = BytesIO()
+                        await doc_file.download_to_memory(out=bio)
+                        bio.seek(0)
+                        input_file = InputFile(bio, filename=message.document.file_name or "document")
+                        sent = await self.main_bot_app.bot.send_document(
+                            chat_id=message.from_user.id,
+                            document=input_file,
+                            caption="[BROADCAST_DRAFT] ",
+                            disable_notification=True,
+                            parse_mode="HTML"
+                        )
+                        try:
+                            await self.main_bot_app.bot.delete_message(chat_id=sent.chat_id, message_id=sent.message_id)
+                        except Exception:
+                            pass
+                        context.user_data["bw_draft"] = {
+                            "type": "document",
+                            "data": {
+                                "document": sent.document.file_id,
+                                "caption": message.caption_html or message.caption or "",
+                                **({"parse_mode": "HTML"} if message.caption_html else {}),
+                            }
+                        }
+                    logger.info(f"Successfully transferred media to main bot for broadcast")
+                except Exception as e:
+                    logger.error(f"Failed to transfer media to main bot: {e}")
+                    await message.reply_text("❌ خطا در آماده‌سازی فایل برای ارسال")
+                    return
+            else:
+                await message.reply_text("❌ ربات اصلی در دسترس نیست")
+                return
+        else:
+            await message.reply_text("❌ نوع پیام پشتیبانی نمی‌شود")
+            return
+
+    async def _broadcast_wl_picker_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle toggle/select-all/confirm for channel picker keyboard."""
+        query = update.callback_query
+        if not query:
+            return  # Should never happen, but guard just in case
+        # Acknowledge callback to remove loading spinner
+        try:
+            await query.answer()
+        except Exception:
+            pass
+        # Handle selection toggles and final confirmation for channel picker
+        data = query.data
+        from utils.broadcast_helpers import build_channel_select_keyboard
+        from config import TELEGRAM_CHANNELS_INFO
+
+        selected_ids: set[int] = context.user_data.get("bw_selected_ids", set())
+        if data == "chpick_all":
+            if len(selected_ids) < len(TELEGRAM_CHANNELS_INFO):
+                selected_ids = {c['id'] for c in TELEGRAM_CHANNELS_INFO}
+            else:
+                selected_ids = set()
+        elif data.startswith("chpick_done"):
+            # Proceed to send broadcast
+            await self._broadcast_wl_send(query, context, selected_ids)
+            # clear bw_* keys afterwards
+            for k in ["bw_selected_ids", "bw_target", "bw_draft"]:
+                context.user_data.pop(k, None)
+            return
+        elif data.startswith("chpick_"):
+            cid = int(data.split("_")[1])
+            if cid in selected_ids:
+                selected_ids.remove(cid)
+            else:
+                selected_ids.add(cid)
+        logger.info("Picker update after click: %s", selected_ids)
+        # Save back
+        context.user_data["bw_selected_ids"] = selected_ids
+        keyboard = build_channel_select_keyboard(TELEGRAM_CHANNELS_INFO, selected_ids)
+        await query.message.edit_reply_markup(reply_markup=keyboard)
+
+    async def _broadcast_wl_cancel(self, query, context):
+        """Cancel the broadcast-with-link flow and clean flags."""
+        for k in ["bw_selected_ids", "bw_target", "bw_draft", "bw_awaiting_content"]:
+            context.user_data.pop(k, None)
+        await self._broadcast_submenu(query)
+
+    async def _broadcast_wl_send(self, query, context, selected_ids: set[int]):
+        """Copy message to users and attach link buttons."""
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+        from config import TELEGRAM_CHANNELS_INFO
+        draft = context.user_data.get("bw_draft")
+        if not draft:
+            await query.answer("پیش‌نویس یافت نشد", show_alert=True)
+            return
+        target = context.user_data.get("bw_target", "active")
+        # Build buttons
+        buttons = None
+        if selected_ids:
+            rows = []
+            for cid in selected_ids:
+                ch = next((c for c in TELEGRAM_CHANNELS_INFO if c['id']==cid), None)
+                if ch:
+                    rows.append([InlineKeyboardButton(ch['title'], url=ch['link'])])
+            buttons = InlineKeyboardMarkup(rows)
+        # Determine audience list
+        if target == "active":
+            users_rows = DatabaseQueries.get_all_active_subscribers()
+        else:
+            users_rows = DatabaseQueries.get_all_registered_users()
+        user_ids = [row['user_id'] if isinstance(row, dict) else row[0] for row in users_rows]
+        success = 0
+        total = len(user_ids)
+        
+        # Use main bot for sending broadcast messages to users
+        bot_to_use = self.main_bot_app.bot if self.main_bot_app else context.bot
+        
+        draft_type = draft.get("type")
+        draft_data = draft.get("data", {})
+        for uid in user_ids:
+            try:
+                if draft_type == "text":
+                    sent = await bot_to_use.send_message(chat_id=uid, **draft_data)
+                elif draft_type == "photo":
+                    sent = await bot_to_use.send_photo(chat_id=uid, **draft_data)
+                elif draft_type == "video":
+                    sent = await bot_to_use.send_video(chat_id=uid, **draft_data)
+                elif draft_type == "document":
+                    sent = await bot_to_use.send_document(chat_id=uid, **draft_data)
+                elif draft_type == "copy":
+                    sent = await bot_to_use.copy_message(chat_id=uid, from_chat_id=draft_data['chat_id'], message_id=draft_data['message_id'])
+                else:
+                    logger.warning("Unknown draft_type %s", draft_type)
+                    continue
+                if buttons:
+                    await bot_to_use.edit_message_reply_markup(chat_id=uid, message_id=sent.message_id, reply_markup=buttons)
+                success += 1
+            except Exception as e:
+                logger.warning("Broadcast send to %s failed: %s", uid, e)
+        await query.edit_message_text(f"✅ ارسال به پایان رسید. موفق: {success}/{total}")
+
     @admin_only
     async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle dynamic admin inputs based on flow flags (broadcast, user search)."""
@@ -662,8 +921,15 @@ class AdminMenuHandler:
             await ticket_handler.receive_edited_answer(update, context)
             return
 
-        logger.info("Admin message_handler triggered with text: %s | broadcast_flag=%s | search_flag=%s", update.effective_message.text if update.effective_message else "<no message>", context.user_data.get("awaiting_broadcast_content"), context.user_data.get("awaiting_user_search_query"))
+        logger.info("Admin message_handler triggered with text: %s | bw_content=%s | search_flag=%s", update.effective_message.text if update.effective_message else "<no message>", context.user_data.get("bw_awaiting_content"), context.user_data.get("awaiting_user_search_query"))
         message = update.effective_message
+        # -------- Broadcast-with-link content flow --------
+        if context.user_data.get("bw_awaiting_content"):
+            # Accept a single message (text/photo/document) as content.
+            context.user_data.pop("bw_awaiting_content", None)
+            await self._broadcast_wl_show_channel_picker(message, context)
+            return
+
         # -------- Ticket history flow --------
         if context.user_data.get("awaiting_ticket_history_user"):
             text = message.text.strip()
@@ -1493,6 +1759,9 @@ class AdminMenuHandler:
             # The parent handler will catch the back-to-menu callbacks.
         )
         handlers.append(ban_unban_handler)
+
+        # Channel multi-select picker for broadcast with link
+        handlers.append(CallbackQueryHandler(self._broadcast_wl_picker_callback, pattern=r"^(chpick_.*|chpick_all|chpick_done)$"))
 
         # ---- Support user management handlers ----
         handlers.extend(self.support_manager.get_handlers())

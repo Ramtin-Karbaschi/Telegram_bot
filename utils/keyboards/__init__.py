@@ -17,6 +17,17 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
     if is_registered:
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION))
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_STATUS))
+    if is_registered:
+        # Free Package
+        row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE))
+        # Queue position conditional
+        if user_id is not None:
+            try:
+                from handlers.free_package.free_package_handlers import _queue_position
+                if _queue_position(user_id) > 0:
+                    row1.append(KeyboardButton("📊 جایگاه صف رایگان"))
+            except Exception:
+                pass
     else:
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION))
     keyboard_buttons.append(row1)
@@ -62,6 +73,17 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
     if is_registered:
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION))
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_STATUS))
+    if is_registered:
+        # Free Package
+        row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE))
+        # Queue position conditional
+        if user_id is not None:
+            try:
+                from handlers.free_package.free_package_handlers import _queue_position
+                if _queue_position(user_id) > 0:
+                    row1.append(KeyboardButton("📊 جایگاه صف رایگان"))
+            except Exception:
+                pass
     else:
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION))
     keyboard_buttons.append(row1)
@@ -92,7 +114,8 @@ def get_main_menu_keyboard(user_id=None, is_admin=False, is_registered=False):
     if is_registered:
         keyboard_buttons.append([
             InlineKeyboardButton("👤 پروفایل کاربری", callback_data="show_status"),
-            InlineKeyboardButton("🎫 عضویت رایگان", callback_data="start_subscription_flow")
+            InlineKeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION, callback_data="start_subscription_flow"),
+            InlineKeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow"), InlineKeyboardButton("📊 جایگاه صف رایگان", callback_data="freepkg_queue_pos")
         ])
     else:
         keyboard_buttons.append([InlineKeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION, callback_data="start_registration_flow")])
@@ -153,24 +176,47 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def get_subscription_plans_keyboard(telegram_id=None): # Added telegram_id as optional param, might be needed later
-    """Get keyboard with subscription plan options, showing discounted prices."""
-    keyboard = []
+def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False, paid_only: bool = True):
+    """Build an inline keyboard of subscription plans.
+
+    Parameters
+    ----------
+    telegram_id : int, optional
+        User Telegram ID (reserved for future personalised logic).
+    free_only : bool, default False
+        If True, only include plans whose USDT price is 0.
+    paid_only : bool, default True
+        If True, only include plans whose USDT price is > 0.
+        NOTE: If both flags are False, all plans are returned.
+    """
+    keyboard: list[list[InlineKeyboardButton]] = []
     # Lazy import to avoid circular dependency
     from database.queries import DatabaseQueries as _DB
-    all_active_plans = _DB.get_active_plans()
-    logger.debug(f"Fetched {len(all_active_plans)} plans from get_active_plans: {[dict(row) for row in all_active_plans] if all_active_plans else '[]'}")
+    all_plans = [dict(r) for r in _DB.get_active_plans()]  # Convert Row→dict
+
+    # Filter according to price category
+    filtered_plans: list = []
+    for plan in all_plans:
+        price_usdt = plan.get('price_tether') or plan.get('original_price_usdt') or 0
+        if free_only and price_usdt > 0:
+            continue
+        if paid_only and price_usdt == 0:
+            continue
+        filtered_plans.append(plan)
+    logger.debug(f"Fetched {len(all_plans)} plans from get_active_plans: {[dict(row) for row in all_plans] if all_plans else '[]'}")
     # Fallback in case multiple conflicting definitions returned nothing
-    if not all_active_plans:
+    if not filtered_plans:
         logger.warning("get_active_plans() returned no rows; falling back to broader query.")
         try:
-            all_active_plans = _DB.get_all_plans(public_only=False)
+            all_plans = [dict(r) for r in _DB.get_all_plans()]
+            # Re-apply price filtering on fallback list
+            filtered_plans = [p for p in all_plans if ((not free_only or (p.get('price_tether') or p.get('original_price_usdt') or 0) == 0) and (not paid_only or (p.get('price_tether') or p.get('original_price_usdt') or 0) > 0))]
         except Exception as exc:
             logger.error("Error in get_all_plans fallback: %s", exc)
             all_active_plans = []
     active_plans = []
     plan_buttons_row: list[InlineKeyboardButton] = []
-    for plan in all_active_plans:
+    for plan in filtered_plans:
         # sqlite3.Row objects are accessed by index or key, not with .get()
         # Skip plans that are marked as private (is_public = 0)
 
@@ -386,7 +432,8 @@ def get_back_to_ask_discount_keyboard():
     if is_registered:
         keyboard_buttons.append([
             InlineKeyboardButton("👤 پروفایل کاربری", callback_data="show_status"),
-            InlineKeyboardButton("🎫 عضویت رایگان", callback_data="start_subscription_flow")
+            InlineKeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION, callback_data="start_subscription_flow"),
+            InlineKeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow"), InlineKeyboardButton("📊 جایگاه صف رایگان", callback_data="freepkg_queue_pos")
         ])
     else:
         keyboard_buttons.append([InlineKeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION, callback_data="start_registration_flow")])

@@ -67,7 +67,7 @@ class InviteLinkManager:
     # Public API
     # ---------------------------------------------------------------------
     @staticmethod
-    async def ensure_one_time_links(bot: Bot, user_id: int) -> Optional[List[str]]:
+    async def ensure_one_time_links(bot: Bot, user_id: int, channels_info: Optional[List[dict]] = None) -> Optional[List[str]]:
         """Return a list of one-time invite links (for all configured chats).
 
         If there are already *unused* links for *user_id* in DB, re-use them.
@@ -94,7 +94,8 @@ class InviteLinkManager:
 
         # Generate fresh links for every configured channel / group
         generation_tasks: List[asyncio.Task] = []
-        for chat_info in config.TELEGRAM_CHANNELS_INFO:
+        target_channels = channels_info if channels_info is not None else config.TELEGRAM_CHANNELS_INFO
+        for chat_info in target_channels:
             chat_id = chat_info["id"]
             link_title = f"one-time link for {username_part} – {chat_info['title']}"
             generation_tasks.append(
@@ -105,7 +106,7 @@ class InviteLinkManager:
 
         # Map chat title -> link
         title_to_link = {}
-        for chat_info, link in zip(config.TELEGRAM_CHANNELS_INFO, generated_links):
+        for chat_info, link in zip(target_channels, generated_links):
             if link:
                 title_to_link[chat_info["title"]] = link
 
@@ -131,7 +132,7 @@ class InviteLinkManager:
         # Produce ordered list of invite links to return
         ordered_links = [
             title_to_link[chat_info["title"]]
-            for chat_info in config.TELEGRAM_CHANNELS_INFO
+            for chat_info in target_channels
             if chat_info["title"] in title_to_link
         ]
         return ordered_links

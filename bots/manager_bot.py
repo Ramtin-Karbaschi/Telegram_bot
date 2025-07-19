@@ -17,7 +17,8 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, Forbidden
 import html
-from datetime import datetime, time
+from datetime import datetime, timedelta, timezone, time
+import asyncio
 from zoneinfo import ZoneInfo
 from utils.expiration_reminder import (
     get_expiring_subscriptions,
@@ -28,11 +29,15 @@ from database.queries import DatabaseQueries
 from utils.helpers import is_user_in_admin_list, get_alias_from_admin_list, admin_only_decorator as admin_only, staff_only_decorator as staff_only
 import config # For other config vars like CHANNEL_ID
 from database.models import Database as DBConnection # For DB connection
-from handlers.admin_ticket_handlers import AdminTicketHandler  # Fixed import
+from handlers.admin.discount_handlers import get_create_discount_conv_handler
+from handlers.admin.free_package_admin_handlers import get_freepkg_admin_handlers  # Fixed import
 from handlers.admin_menu_handlers import AdminMenuHandler  # Import admin menu handler
-from handlers.admin_product_handlers import AdminProductHandler  # Import admin product handler
+from handlers.admin_product_handlers import AdminProductHandler
+from handlers.video_upload_handlers import get_conv_handler as get_video_upload_conv
+from handlers.survey_builder import get_conv_handler as get_survey_builder_conv
 from utils.invite_link_manager import InviteLinkManager  # Import InviteLinkManager
 from database.invite_link_queries import get_active_invite_link, mark_invite_link_used  # Invite link DB helpers
+from handlers.admin_ticket_handlers import AdminTicketHandler  # Fixed import
 
 # States for ConversationHandler
 
@@ -107,8 +112,16 @@ class ManagerBot:
         """Initialize the bot"""
         self.logger = logging.getLogger(__name__)
         self.admin_config = admin_users_config  # Store admin configuration from parameters
-        builder = Application.builder().token(manager_bot_token) # Use token from parameters
+        builder = Application.builder().token(manager_bot_token)  # Use token from parameters
         self.application = builder.build()
+        # Register Video Upload conversation handler for admins (high priority)
+        self.application.add_handler(get_video_upload_conv(), group=-1)
+        # Register Survey Builder conversation handler
+        self.application.add_handler(get_survey_builder_conv(), group=-1)
+
+        # Register Free Package admin command handlers
+        for _h in get_freepkg_admin_handlers():
+            self.application.add_handler(_h)
         # Explicitly set allowed_updates to ensure chat_member and other necessary updates are received
         self.application.allowed_updates = [
             "chat_member",
@@ -127,12 +140,42 @@ class ManagerBot:
         # Initialize handlers
         self.ticket_handler = AdminTicketHandler()
         self.product_handler = AdminProductHandler(self.db_queries, admin_config=self.admin_config)
-        self.menu_handler = AdminMenuHandler(self.db_queries, InviteLinkManager, admin_config=self.admin_config)
+        self.menu_handler = AdminMenuHandler(self.db_queries, InviteLinkManager, admin_config=self.admin_config, main_bot_app=self.main_bot_app)
+        
+        # Add poll handler for survey creation
+        from telegram.ext import MessageHandler, filters, CallbackQueryHandler
+        self.application.add_handler(MessageHandler(
+            filters.POLL, self.product_handler._handle_poll_message
+        ), group=-1)
+        
+        # Add poll-based survey callback handlers
+        self.application.add_handler(CallbackQueryHandler(
+            self.product_handler._handle_create_new_poll, pattern="^create_new_poll$"
+        ))
+        self.application.add_handler(CallbackQueryHandler(
+            self.product_handler._handle_remove_last_poll, pattern="^remove_last_poll$"
+        ))
+        self.application.add_handler(CallbackQueryHandler(
+            self.product_handler._handle_confirm_poll_survey, pattern="^confirm_poll_survey$"
+        ))
+        self.application.add_handler(CallbackQueryHandler(
+            self.product_handler._handle_cancel_poll_creation, pattern="^cancel_poll_creation$"
+        ))
+        self.application.add_handler(CallbackQueryHandler(
+            self.product_handler._handle_survey_type_selection, pattern="^survey_type_"
+        ))
 
 
 
         # Setup task handlers
         self.setup_tasks()
+        # Schedule daily Free Package validation at 18:00 Tehran
+        tz_tehran = ZoneInfo("Asia/Tehran")
+        self.application.job_queue.run_daily(
+            self.validate_free_package_subscribers,
+            time=time(18,0,tzinfo=tz_tehran),
+            name="daily_free_pkg_validation",
+        )
         # Schedule expiration reminder task
         self.logger.info("Scheduling daily expiration reminder job at 10:00 Asia/Tehran")
         tz_tehran = ZoneInfo("Asia/Tehran")
@@ -337,6 +380,187 @@ class ManagerBot:
 
         return was_member, is_member
 
+    async def validate_free_package_subscribers(self, context: ContextTypes.DEFAULT_TYPE):
+        """Daily job at 18:00:
+        1. بررسی فعالیت/حجم کاربران فعال پکیج رایگان.
+        2. لغو اشتراک کاربران غیرمجاز در یک تراکنش اتمیک.
+        3. فشرده‌سازی صف و ارتقای قدیمی‌ترین افراد تا تکمیل ظرفیت.
+        4. ارسال اعلان به کاربران حذف یا ارتقاشده.
+        """
+        bot = context.bot
+        plan_row = self.db.db.execute("SELECT id FROM plans WHERE name = ?", ("پکیج رایگان",)).fetchone()
+        if not plan_row:
+            return
+        plan_id = plan_row[0] if isinstance(plan_row, tuple) else plan_row["id"]
+
+        kicked_users: list[int] = []
+        promoted_users: list[int] = []
+
+        svc = ToobitService()
+        cutoff = datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(days=7)
+        # Rate limit parameters
+        BATCH_SIZE = 10  # number of API users per burst
+        SLEEP_SECS = 1   # pause between bursts
+
+        try:
+            # ----------- شروع تراکنش -----------
+            self.db.db.execute("BEGIN")
+
+            # 1) بررسی کاربران فعال
+            sql_active = (
+                "SELECT s.user_id, f.uid FROM subscriptions s "
+                "JOIN free_package_users f ON f.user_id = s.user_id "
+                "WHERE s.plan_id = ? AND s.status = 'active'"
+            )
+            processed = 0
+            for user_id, uid in [(r[0], r[1]) for r in self.db.db.execute(sql_active, (plan_id,)).fetchall()]:
+                last_checked = self.db.db.execute("SELECT last_checked FROM free_package_users WHERE user_id=?", (user_id,)).fetchone()[0]
+                if last_checked:
+                    try:
+                        last_dt = datetime.fromisoformat(str(last_checked))
+                        if datetime.utcnow() - last_dt < timedelta(hours=24):
+                            # کمتر از ۲۰ ساعت از بررسی قبل گذشته => صرفنظر
+                            continue
+                    except ValueError:
+                        pass
+                volume = svc.get_user_total_volume(uid)
+                last_trade = svc.get_last_trade_time(uid) or datetime.min.replace(tzinfo=timezone.utc)
+                # به‌روز‌رسانی last_checked
+                self.db.db.execute("UPDATE free_package_users SET last_checked=? WHERE user_id=?", (datetime.utcnow().isoformat(sep=" ", timespec="seconds"), user_id))
+                if volume < 500 or last_trade < cutoff:
+                    now = datetime.utcnow().isoformat(sep=" ", timespec="seconds")
+                    self.db.db.execute(
+                        "UPDATE subscriptions SET status='cancelled', end_date=?, updated_at=? WHERE user_id=? AND plan_id=? AND status='active'",
+                        (now, now, user_id, plan_id),
+                    )
+                    kicked_users.append(user_id)
+
+            # 2) فشرده‌سازی صف (حذف جایگاه‌های خالی)
+            self._compact_waitlist()
+
+            # 3) ارتقای نفرات صف بر اساس ظرفیت
+            capacity = int(getattr(config, "FREE_PACKAGE_CAPACITY", 100))
+            active_count = self.db.db.execute("SELECT COUNT(*) FROM subscriptions WHERE plan_id=? AND status='active'", (plan_id,)).fetchone()[0]
+            slots = max(0, capacity - active_count)
+            if slots:
+                wait_rows = self.db.db.execute("SELECT user_id FROM free_package_waitlist ORDER BY position LIMIT ?", (slots,)).fetchall()
+                for (wait_user_id,) in wait_rows:
+                    now = datetime.utcnow().isoformat(sep=" ", timespec="seconds")
+                    self.db.db.execute(
+                        "INSERT OR REPLACE INTO subscriptions (user_id, plan_id, start_date, amount_paid, payment_method, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                        (wait_user_id, plan_id, now, 0, "auto_promote", "active", now, now),
+                    )
+                    self.db.db.execute("DELETE FROM free_package_waitlist WHERE user_id=?", (wait_user_id,))
+                    promoted_users.append(wait_user_id)
+
+            self._compact_waitlist()
+            self.db.db.execute("COMMIT")
+            # ----------- پایان تراکنش -----------
+        except Exception as exc:
+            self.db.db.execute("ROLLBACK")
+            self.logger.error("Error in validate_free_package_subscribers: %s", exc, exc_info=exc)
+            return
+
+        # 4) ارسال اعلان‌ها (خارج از تراکنش)
+        for uid in kicked_users:
+            try:
+                await bot.send_message(uid, "⚠️ دسترسی پکیج رایگان شما به‌دلیل عدم فعالیت کافی در توبیت لغو شد. در صورت ادامه معاملات می‌توانید دوباره درخواست دهید.")
+            except Forbidden:
+                pass
+            except Exception as e:
+                self.logger.warning("Failed to notify kicked user %s: %s", uid, e)
+        for uid in promoted_users:
+            try:
+                await bot.send_message(uid, "🎉 به شما تبریک می‌گوییم! پکیج رایگان شما فعال شد. لطفاً طبق شرایط در توبیت فعال بمانید.")
+            except Forbidden:
+                pass
+            except Exception as e:
+                self.logger.warning("Failed to notify promoted user %s: %s", uid, e)
+        # گزارش روزانه به ادمین‌ها
+        try:
+            if kicked_users or promoted_users:
+                report_lines = ["📊 گزارش روزانه پکیج رایگان:"]
+                if kicked_users:
+                    report_lines.append(f"• کاربران لغو شده ({len(kicked_users)}): " + ", ".join(map(str, kicked_users)))
+                if promoted_users:
+                    report_lines.append(f"• کاربران ارتقاءیافته ({len(promoted_users)}): " + ", ".join(map(str, promoted_users)))
+                report_text = "\n".join(report_lines)
+                admin_ids: list[int] = []
+                if isinstance(self.admin_config, list):
+                    for adm in self.admin_config:
+                        if isinstance(adm, dict):
+                            admin_ids.append(adm.get("chat_id") or adm.get("id"))
+                        else:
+                            admin_ids.append(adm)
+                elif isinstance(self.admin_config, dict):
+                    admin_ids = list(self.admin_config.keys())
+                for adm_id in admin_ids:
+                    if not adm_id:
+                        continue
+                    try:
+                        await bot.send_message(adm_id, report_text)
+                    except Forbidden:
+                        pass
+                    except Exception as e:
+                        self.logger.warning("Failed to send free package report to admin %s: %s", adm_id, e)
+        except Exception as e:
+            self.logger.error("Error sending admin report: %s", e)
+
+        # پایان منطق اصلی
+        return
+
+        
+
+        plan_id = plan_id[0] if isinstance(plan_id, tuple) else plan_id["id"]
+        # Fetch active subscribers with UID
+        sql = (
+            "SELECT s.user_id, f.uid FROM subscriptions s "
+            "JOIN free_package_users f ON f.user_id = s.user_id "
+            "WHERE s.plan_id = ? AND s.status = 'active'"
+        )
+        rows = self.db.db.execute(sql, (plan_id,)).fetchall()
+        kicked_users = []
+        svc = ToobitService()
+        cutoff = datetime.utcnow() - timedelta(days=7)
+        for row in rows:
+            user_id = row[0] if isinstance(row, tuple) else row["user_id"]
+            uid = row[1] if isinstance(row, tuple) else row["uid"]
+            volume = svc.get_user_total_volume(uid)
+            last_trade = svc.get_last_trade_time(uid) or datetime.min.replace(tzinfo=timezone.utc)
+            if volume < 500 or last_trade < cutoff:
+                # deactivate subscription
+                now = datetime.utcnow().isoformat(sep=" ", timespec="seconds")
+                self.db.db.execute(
+                    "UPDATE subscriptions SET status='cancelled', end_date=?, updated_at=? WHERE user_id=? AND plan_id=? AND status='active'",
+                    (now, now, user_id, plan_id),
+                )
+                kicked_users.append(user_id)
+        if kicked_users:
+            self.db.db.commit()
+        # Promote from waitlist
+        capacity = int(getattr(config, "FREE_PACKAGE_CAPACITY", 100))
+        active_count = self.db.db.execute("SELECT COUNT(*) FROM subscriptions WHERE plan_id=? AND status='active'", (plan_id,)).fetchone()[0]
+        slots = max(0, capacity - active_count)
+        if slots:
+            wait_rows = self.db.db.execute("SELECT user_id FROM free_package_waitlist ORDER BY position LIMIT ?", (slots,)).fetchall()
+            for w in wait_rows:
+                uid_user = w[0] if isinstance(w, tuple) else w["user_id"]
+                now = datetime.utcnow().isoformat(sep=" ", timespec="seconds")
+                self.db.db.execute(
+                    "INSERT OR REPLACE INTO subscriptions (user_id, plan_id, start_date, amount_paid, payment_method, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                    (uid_user, plan_id, now, 0, "auto_promote", "active", now, now),
+                )
+                # remove from waitlist
+                self.db.db.execute("DELETE FROM free_package_waitlist WHERE user_id=?", (uid_user,))
+            self.db.db.commit()
+
+    def _compact_waitlist(self):
+        """Re-order positions in waitlist to be contiguous starting from 1."""
+        rows = self.db.db.execute("SELECT id FROM free_package_waitlist ORDER BY position").fetchall()
+        for idx, row in enumerate(rows, 1):
+            self.db.db.execute("UPDATE free_package_waitlist SET position=? WHERE id=?", (idx, row[0]))
+        self.db.db.commit()
+
     async def send_expiration_reminders(self, context: ContextTypes.DEFAULT_TYPE | None = None):
         """Send daily reminders for subscriptions expiring within 5 days."""
         bot = context.bot if context else self.application.bot
@@ -357,8 +581,18 @@ class ManagerBot:
             message = (
                 "اشتراک شما امروز به پایان می‌رسد! 🎯" if days_left == 0 else f"تنها {days_left} روز تا پایان اشتراک شما باقی‌ست ⏰"
             )
+            message += "\n\n💡 برای تمدید اشتراک یکی از گزینه‌های زیر را انتخاب کنید:"
+            
+            # Create inline keyboard with free and product options
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            keyboard = [
+                [InlineKeyboardButton("🎁 رایگان", callback_data="free_package_menu")],
+                [InlineKeyboardButton("🛒 محصولات", callback_data="products_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
             try:
-                await bot.send_message(chat_id=user_id, text=message)
+                await bot.send_message(chat_id=user_id, text=message, reply_markup=reply_markup)
                 log_reminder_sent(user_id, days_left)
                 self.logger.info(
                     f"Sent expiration reminder to user {user_id} (days left: {days_left})"
@@ -778,8 +1012,14 @@ class ManagerBot:
         # It should not handle commands or the main menu buttons.
         # This is a general message handler for admins, which can be used for features like search.
         # It should not handle commands or the main menu buttons.
+        # Handler for text messages
         application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE & ~admin_button_filter,
+            self.menu_handler.message_handler
+        ), group=1)
+        # Handler for non-text (photo, document, etc.) messages so that broadcast content can be any type
+        application.add_handler(MessageHandler(
+            ~filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE & ~admin_button_filter,
             self.menu_handler.message_handler
         ), group=1)
 

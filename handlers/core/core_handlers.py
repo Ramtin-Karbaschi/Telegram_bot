@@ -132,11 +132,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             WELCOME_MESSAGE,
             reply_markup=get_main_reply_keyboard(user_id=user_id, is_registered=is_registered) # This will set the persistent reply keyboard
         )
-        # To also show an inline keyboard under the welcome message (optional, if desired)
-        # await update.message.reply_text(
-        #     "گزینه های اصلی:", # Or some other relevant text
-        #     reply_markup=get_main_menu_keyboard(user_id=user_id, is_registered=is_registered)
-        # )
+
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /help command or main_menu_help callback query"""
@@ -257,8 +253,25 @@ async def unknown_message_handler(update: Update, context: ContextTypes.DEFAULT_
     DatabaseQueries.update_user_activity(user_id)
     user_db_data = DatabaseQueries.get_user_details(user_id)
     is_registered = bool(user_db_data and user_db_data['full_name'] and user_db_data['phone'])
-    
+
+    # اگر کاربر در واقع قصد خرید محصولات را داشته ولی پیام توسط Unknown handler پردازش شده، او را به فلو صحیح هدایت کنیم
+    text = (update.message.text or '').strip()
+    from utils import constants
+    if text in (constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION, '🛒 محصولات', '🛒 خرید محصولات'):
+        # این پیام توسط Handler دیگری مدیریت می‌شود؛ نیازی به پاسخ اینجا نیست.
+        return
+
+    # اگر در حالت انتظار TxHash هستیم، پیام را نادیده بگیریم تا هندلر پرداخت آن را پردازش کند
+    if context.user_data.get('awaiting_tx_hash'):
+        return
+
+    # در سایر موارد پیام راهنمای کوتاه با تنها یک کلید «مشاهده پروفایل» نشان داده شود
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    profile_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("👤 مشاهده پروفایل", callback_data="show_status")]
+    ])
+
     await update.message.reply_text(
         "متوجه نشدم! لطفاً از دکمه‌های منو استفاده کنید یا دستور /help را برای راهنمایی وارد کنید.",
-        reply_markup=get_main_menu_keyboard(user_id=user_id, is_registered=is_registered)
+        reply_markup=profile_keyboard
     )

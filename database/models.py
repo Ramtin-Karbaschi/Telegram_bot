@@ -118,6 +118,13 @@ class Database:
     def fetchall(self):
         """Fetch all rows from the result set"""
         return self.cursor.fetchall()
+
+    # ---- Backward-compat property ----
+    @property
+    def db(self):
+        """Return raw sqlite3 connection for legacy code expecting self.db.db.execute()."""
+        return self.conn
+
         
     def create_tables(self, tables):
         """Create database tables if they don't exist"""

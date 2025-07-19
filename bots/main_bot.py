@@ -94,6 +94,9 @@ from handlers.core import (
 from services.zarinpal_service import ZarinpalPaymentService
 from database.queries import DatabaseQueries
 from handlers.subscription.subscription_handlers import activate_or_extend_subscription
+from handlers.free_package.free_package_handlers import free_packages_menu, start_free_package_flow, start_free_package_flow_text, show_queue_position, show_queue_position_message
+from handlers.video_access_handlers import video_access_handler
+from handlers.user_survey_handlers import user_survey_handler
 from utils.constants.all_constants import (
     CALLBACK_BACK_TO_MAIN_MENU,
     TEXT_MAIN_MENU_STATUS,
@@ -244,9 +247,13 @@ from handlers.support import (
     new_ticket_handler, ticket_conversation, view_ticket_handler, ticket_history_handler,
 )
 from handlers.admin.discount_handlers import get_create_discount_conv_handler
+from handlers.admin_product_handlers import AdminProductHandler
+from handlers.user_survey_handlers import user_survey_handler
+from handlers.video_access_handlers import video_access_handler
 from utils.keyboards import (
     get_main_menu_keyboard, get_back_button
 )
+from handlers.free_package.free_package_handlers import get_free_package_conv_handler
 from utils.helpers import (
     get_current_time, calculate_days_left,
     send_expired_notification
@@ -329,8 +336,16 @@ class MainBot:
         self.db_queries = DatabaseQueries(self.db)
         self.db_queries.init_database()
         
+        # Initialize video service and sync videos
+        from services.video_service import video_service
+        video_service.scan_and_sync_videos()
+        self.logger.info("Video service initialized and videos synced")
+        
         # Setup handlers
         self.setup_handlers()
+        # Schedule background jobs (e.g., Free Package validation)
+        from tasks.free_package_tasks import schedule_tasks
+        schedule_tasks(self.application)
         # Add error handler
         self.application.add_error_handler(error_handler)
 
@@ -348,9 +363,27 @@ class MainBot:
 
         # Registration conversation handler
         self.application.add_handler(registration_conversation)
+
+        # ---------------- Free Package Handlers FIRST (higher priority) ----------------
+        # Free Package conversation handler
+        self.application.add_handler(get_free_package_conv_handler(), group=0)
+        # Queue position (inline and text)
+        self.application.add_handler(CallbackQueryHandler(show_queue_position, pattern=r"^freepkg_queue_pos$"), group=0)
+        self.application.add_handler(MessageHandler(filters.Regex(r"^📊 جایگاه صف رایگان$"), show_queue_position_message), group=0)
+        # Free packages submenu (text button)
+        self.application.add_handler(MessageHandler(filters.Regex(r"^🎁 رایگان$"), free_packages_menu), group=0)
+        # Callback for Toobit package selection from submenu
+        self.application.add_handler(CallbackQueryHandler(start_free_package_flow, pattern=r"^freepkg_toobit$"), group=0)
+        # Callback handlers for expiration reminder buttons
+        self.application.add_handler(CallbackQueryHandler(free_packages_menu, pattern=r"^free_package_menu$"), group=0)
+        self.application.add_handler(CallbackQueryHandler(start_subscription_flow, pattern=r"^products_menu$"), group=0)
         
-        # Payment conversation handler
-        self.application.add_handler(payment_conversation)
+        # Handler for free plan selection (outside conversation)
+        from handlers.payment.payment_handlers import select_plan_handler
+        self.application.add_handler(CallbackQueryHandler(select_plan_handler, pattern=r"^plan_\d+$"), group=0)
+
+        # ---------------- Payment conversation AFTER free package ----------------
+        self.application.add_handler(payment_conversation, group=1)
 
         # Handler for back button from payment method selection to plan selection
         self.application.add_handler(CommandHandler('subscribe', start_subscription_flow))
@@ -366,6 +399,8 @@ class MainBot:
         self.application.add_handler(CallbackQueryHandler(handle_back_to_main, pattern=r"^back_to_main$"))
         self.application.add_handler(CallbackQueryHandler(handle_back_to_main, pattern=r"^main_menu_back$")) # Handler for back from help/rules
         
+
+
         # Profile edit conversation handler
         self.application.add_handler(get_profile_edit_conv_handler())
         
@@ -376,14 +411,45 @@ class MainBot:
         create_discount_conv_handler = get_create_discount_conv_handler()
         self.application.add_handler(create_discount_conv_handler)
         
-        # Registration conversation handler (handles /register command, related messages, and inline callbacks)
-        self.application.add_handler(registration_conversation)
-
+        # Admin product handlers (integrated into admin panel)
+        admin_product_handler = AdminProductHandler(db_queries=self.db_queries)
+        
+        # Poll message handler for survey creation
+        self.application.add_handler(MessageHandler(
+            filters.POLL, admin_product_handler._handle_poll_message
+        ), group=-1)
+        
+        # Poll-based survey callback handlers
+        self.application.add_handler(CallbackQueryHandler(
+            admin_product_handler._handle_create_new_poll, pattern="^create_new_poll$"
+        ))
+        self.application.add_handler(CallbackQueryHandler(
+            admin_product_handler._handle_remove_last_poll, pattern="^remove_last_poll$"
+        ))
+        self.application.add_handler(CallbackQueryHandler(
+            admin_product_handler._handle_confirm_poll_survey, pattern="^confirm_poll_survey$"
+        ))
+        self.application.add_handler(CallbackQueryHandler(
+            admin_product_handler._handle_cancel_poll_creation, pattern="^cancel_poll_creation$"
+        ))
+        self.application.add_handler(CallbackQueryHandler(
+            admin_product_handler._handle_survey_type_selection, pattern="^survey_type_"
+        ))
+        
+        # Video access handlers
+        video_handlers = video_access_handler.get_callback_handlers()
+        for handler in video_handlers:
+            self.application.add_handler(handler)
+        
+        # Survey conversation handler
+        survey_conv_handler = user_survey_handler.get_survey_conversation_handler()
+        self.application.add_handler(survey_conv_handler)
+        
         # Command handlers
         self.application.add_handler(CommandHandler("start", start_handler))
         self.application.add_handler(CommandHandler("help", help_handler))
         self.application.add_handler(CommandHandler("rules", rules_handler))
-
+        # Admin command is handled by existing admin handlers
         self.application.add_handler(CommandHandler("support", support_message_handler))
         
         # Text message handlers for menu items
@@ -398,9 +464,6 @@ class MainBot:
         ))
         self.application.add_handler(MessageHandler(
             filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_HELP}$"), help_handler # Handler for Help button
-        ))
-        self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_BUY_SUBSCRIPTION}$"), start_subscription_flow # Handler for Buy Subscription button
         ))
         self.application.add_handler(MessageHandler(
             filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_STATUS}$"), subscription_status_handler
@@ -499,6 +562,7 @@ class MainBot:
             BotCommand("help", "💡 راهنما"),
             BotCommand("support", "🤝🏻 پشتیبانی"),
             BotCommand("rules", "⚠ قوانین"),
+            BotCommand("admin", "🔧 پنل مدیریت (فقط ادمین)"),
         ]
         await self.application.bot.set_my_commands(commands)
         self.logger.info("Bot commands have been set.")
