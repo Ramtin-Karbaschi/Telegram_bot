@@ -569,7 +569,7 @@ class AdminProductHandler:
         await query.answer()
         
         field_key = query.data.replace("set_field_", "")
-        self.logger.info(f"User selected field: {field_key}")
+        logger.info(f"User selected field: {field_key}")
         context.user_data['current_field'] = field_key
         
         # Special handling for channels field
@@ -1959,7 +1959,7 @@ class AdminProductHandler:
         """Callback from confirmation step to open extra-fields menu before saving."""
         query = update.callback_query
         await query.answer()
-        self.logger.info("Opening extra fields menu in add mode")
+        logger.info("Opening extra fields menu in add mode")
         await self._show_fields_menu(query, context, mode="add")
         return FIELD_VALUE  # We stay in conversation until done
 
