@@ -111,8 +111,10 @@ async def prompt_caption_input(update: Update, context: ContextTypes.DEFAULT_TYP
 async def handle_caption_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     vid = context.user_data.get("upload_video_id")
     if not vid:
-        await update.message.reply_text("❌ خطا: شناسه ویدئو یافت نشد.")
-        return WAIT_CAPTION
+        await update.message.reply_text("❌ خطا: شناسه ویدئو یافت نشد. آپلود لغو شد.")
+        # Clear user data and end conversation to prevent infinite loop
+        context.user_data.clear()
+        return ConversationHandler.END
 
     text = update.message.text.strip()
     if text.lower() == "/skip":

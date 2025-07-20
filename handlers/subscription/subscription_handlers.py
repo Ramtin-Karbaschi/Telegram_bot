@@ -71,6 +71,17 @@ async def handle_post_subscription_flow(telegram_id: int, context: ContextTypes.
 async def send_plan_videos(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_id: int, plan_name: str):
     """Send all videos for a plan to the user with caching."""
     try:
+        # Check if plan has videos first
+        plan_videos = DatabaseQueries.get_plan_videos(plan_id)
+        if not plan_videos:
+            await context.bot.send_message(
+                chat_id=telegram_id,
+                text=f"📋 پلن «{plan_name}» در حال حاضر ویدئویی ندارد.\n\n"
+                     f"✅ اشتراک شما فعال است و به محض اضافه شدن محتوا، دسترسی خواهید داشت.\n\n"
+                     f"💡 برای اطلاعات بیشتر با پشتیبانی تماس بگیرید."
+            )
+            return
+        
         success = await video_service.send_plan_videos(context.bot, telegram_id, plan_id)
         if not success:
             await context.bot.send_message(
