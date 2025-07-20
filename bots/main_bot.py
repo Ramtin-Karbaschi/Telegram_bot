@@ -618,8 +618,7 @@ class MainBot:
             
             # Create inline keyboard with free and product options
             keyboard = [
-                [InlineKeyboardButton("🎁 رایگان", callback_data="free_package_menu")],
-                [InlineKeyboardButton("🛒 محصولات", callback_data="products_menu")]
+                [InlineKeyboardButton("🎁 رایگان", callback_data="free_package_menu"), InlineKeyboardButton("🛒 محصولات", callback_data="products_menu")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
