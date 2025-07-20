@@ -15,6 +15,8 @@ import logging
 import html
 import json
 import traceback
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from utils.constants import all_constants as constants
 
 # Basic logging configuration
@@ -76,6 +78,7 @@ async def error_handler(update: object, context: "telegram.ext.CallbackContext")
             logger.error(f"Failed to send error message to user: {e}")
 
 from telegram import Update, BotCommand, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import Forbidden
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ConversationHandler, filters, ContextTypes, TypeHandler, # Added TypeHandler
@@ -258,6 +261,11 @@ from utils.helpers import (
     get_current_time, calculate_days_left,
     send_expired_notification
 )
+from utils.expiration_reminder import (
+    get_expiring_subscriptions,
+    was_reminder_sent_today,
+    log_reminder_sent,
+)
 from utils.constants import (
     CALLBACK_VIEW_SUBSCRIPTION_STATUS_FROM_REG,
     WELCOME_MESSAGE, HELP_MESSAGE, RULES_MESSAGE,
@@ -346,6 +354,17 @@ class MainBot:
         # Schedule background jobs (e.g., Free Package validation)
         from tasks.free_package_tasks import schedule_tasks
         schedule_tasks(self.application)
+        
+        # Schedule expiration reminder task
+        self.logger.info("Scheduling daily expiration reminder job at 10:00 Asia/Tehran")
+        self.application.job_queue.run_daily(
+            self.send_expiration_reminders,
+            time=datetime.strptime("10:00", "%H:%M").time(),
+            name="daily_expiration_reminders",
+        )
+        # Also run once on startup after 30 seconds
+        self.application.job_queue.run_once(self.send_expiration_reminders, when=30)
+        
         # Add error handler
         self.application.add_error_handler(error_handler)
 
@@ -562,7 +581,7 @@ class MainBot:
             BotCommand("help", "💡 راهنما"),
             BotCommand("support", "🤝🏻 پشتیبانی"),
             BotCommand("rules", "⚠ قوانین"),
-            BotCommand("admin", "🔧 پنل مدیریت (فقط ادمین)"),
+            # BotCommand("admin", "🔧 پنل مدیریت (فقط ادمین)"),
         ]
         await self.application.bot.set_my_commands(commands)
         self.logger.info("Bot commands have been set.")
@@ -575,6 +594,46 @@ class MainBot:
             self.logger.warning("Updater is not initialized for the main bot; no polling will occur.")
         self.logger.info("Main bot started")
     
+    async def send_expiration_reminders(self, context: ContextTypes.DEFAULT_TYPE | None = None):
+        """Send daily reminders for subscriptions expiring within 5 days."""
+        bot = context.bot if context else self.application.bot
+        tz_tehran = ZoneInfo("Asia/Tehran")
+        today = datetime.now(tz_tehran).date()
+        subs = get_expiring_subscriptions(days=5)
+        for sub in subs:
+            end_date = datetime.fromisoformat(sub["end_date"]).date()
+            days_left = (end_date - today).days
+            if days_left < 0 or days_left > 5:
+                continue
+            user_id = sub["user_id"]
+            if was_reminder_sent_today(user_id, days_left):
+                self.logger.info(
+                    f"Skipping reminder for user {user_id}, already sent today for {days_left} days left."
+                )
+                continue
+            message = (
+                "اشتراک شما امروز به پایان می‌رسد! 🎯" if days_left == 0 else f"تنها {days_left} روز تا پایان اشتراک شما باقی‌ست ⏰"
+            )
+            message += "\n\n💡 برای تمدید اشتراک یکی از گزینه‌های زیر را انتخاب کنید:"
+            
+            # Create inline keyboard with free and product options
+            keyboard = [
+                [InlineKeyboardButton("🎁 رایگان", callback_data="free_package_menu")],
+                [InlineKeyboardButton("🛒 محصولات", callback_data="products_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            try:
+                await bot.send_message(chat_id=user_id, text=message, reply_markup=reply_markup)
+                log_reminder_sent(user_id, days_left)
+                self.logger.info(
+                    f"Sent expiration reminder to user {user_id} (days left: {days_left})"
+                )
+            except Forbidden:
+                self.logger.warning(f"Cannot send reminder to user {user_id} (bot blocked or user privacy).")
+            except Exception as exc:
+                self.logger.error(f"Error sending reminder to {user_id}: {exc}")
+
     async def stop(self):
         """Stop the bot"""
         self.logger.info("Stopping main bot")
