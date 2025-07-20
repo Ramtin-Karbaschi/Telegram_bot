@@ -27,9 +27,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Final
 
-from telegram import (InlineKeyboardButton, InlineKeyboardMarkup, Update)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (CallbackQueryHandler, ConversationHandler,
                           ContextTypes, MessageHandler, filters)
+from telegram.error import BadRequest
 
 import config
 from database.queries import DatabaseQueries as Db
@@ -177,10 +178,17 @@ async def free_packages_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     logger.debug("free_packages_menu: final keyboard rows=%s", len(keyboard))
 
-    await send_func(
-        text="🎁 پکیج‌های رایگان موجود:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    try:
+        await send_func(
+            text="🎁 پکیج‌های رایگان موجود:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            # Message content is the same, no need to edit
+            pass
+        else:
+            raise
 
 # ---------------------------------------------------------------------------
 # Conversation entry-point

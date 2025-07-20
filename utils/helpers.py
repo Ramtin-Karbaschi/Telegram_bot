@@ -177,6 +177,7 @@ def is_user_registered(user_id: int) -> bool:
 
 import io
 import qrcode
+from telegram.error import BadRequest
 
 def generate_qr_code(data: str) -> io.BytesIO:
     """Generate a QR code image from the given data and return it as BytesIO object."""
@@ -196,3 +197,14 @@ def generate_qr_code(data: str) -> io.BytesIO:
     img.save(img_byte_arr, format='PNG')
     img_byte_arr.seek(0)  # Rewind the buffer to the beginning
     return img_byte_arr
+
+async def safe_edit_message_text(query, text, reply_markup=None, parse_mode=None):
+    """Safely edit message text, handling 'Message is not modified' errors."""
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            # Message content is the same, no need to edit
+            pass
+        else:
+            raise

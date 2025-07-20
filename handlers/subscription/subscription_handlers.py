@@ -65,8 +65,12 @@ async def handle_post_subscription_flow(telegram_id: int, context: ContextTypes.
             )
             return
     
-    # If no survey or survey completed, send videos immediately
-    await send_plan_videos(telegram_id, context, plan_id, plan_name)
+    # If no survey or survey completed, check if plan has videos before attempting to send
+    from database.queries import DatabaseQueries
+    plan_videos = DatabaseQueries.get_plan_videos(plan_id)
+    if plan_videos:
+        # Only send videos if plan actually has videos
+        await send_plan_videos(telegram_id, context, plan_id, plan_name)
 
 async def send_plan_videos(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_id: int, plan_name: str):
     """Send all videos for a plan to the user with caching."""

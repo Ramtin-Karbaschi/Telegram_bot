@@ -1,7 +1,8 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 from utils.price_utils import get_usdt_to_irr_rate
-from utils.helpers import admin_only_decorator as admin_only
+from utils.helpers import admin_only_decorator as admin_only, safe_edit_message_text
 from database.queries import DatabaseQueries
 from services.video_service import video_service
 from services.survey_service import survey_service
@@ -435,6 +436,7 @@ class AdminProductHandler:
     async def _show_fields_menu(self, query, context: ContextTypes.DEFAULT_TYPE, mode: str):
         """Show the menu for selecting which additional field to set (add/edit)."""
         context.user_data['extra_mode'] = mode  # 'add' or 'edit'
+        logger.info(f"Showing fields menu in {mode} mode")
         required_labels = [self._PLAN_FIELD_LABELS[k] for k in self._REQUIRED_FIELDS]
         required_line = "🛑 فیلدهای ضروری: " + ", ".join(required_labels)
         text = (
@@ -443,12 +445,8 @@ class AdminProductHandler:
             + "\n\nستون مورد نظر را برای مقداردهی انتخاب کنید:"
         )
         reply_markup = self._build_fields_keyboard(context, mode)
-        try:
-            await query.edit_message_text(text, reply_markup=reply_markup)
-        except telegram.error.BadRequest as e:
-            # Ignore harmless error when content is identical to current message
-            if "Message is not modified" not in str(e):
-                raise
+        logger.info(f"Built keyboard with {len(reply_markup.inline_keyboard)} rows")
+        await safe_edit_message_text(query, text, reply_markup=reply_markup)
 
     def _generate_summary_text(self, context: ContextTypes.DEFAULT_TYPE, mode: str) -> str:
         """Build a Persian summary of all currently filled fields for the admin."""
@@ -571,6 +569,7 @@ class AdminProductHandler:
         await query.answer()
         
         field_key = query.data.replace("set_field_", "")
+        self.logger.info(f"User selected field: {field_key}")
         context.user_data['current_field'] = field_key
         
         # Special handling for channels field
@@ -1960,6 +1959,7 @@ class AdminProductHandler:
         """Callback from confirmation step to open extra-fields menu before saving."""
         query = update.callback_query
         await query.answer()
+        self.logger.info("Opening extra fields menu in add mode")
         await self._show_fields_menu(query, context, mode="add")
         return FIELD_VALUE  # We stay in conversation until done
 
@@ -1968,7 +1968,7 @@ class AdminProductHandler:
         query = update.callback_query
         await query.answer()
         field_key = query.data.replace("set_field_", "")
-        context.user_data['current_field_key'] = field_key
+        context.user_data['current_field'] = field_key
         # If admin chose videos, open video selection UI
         if field_key == "survey_type":
             # Show survey type options (Poll-based or none)
@@ -2020,7 +2020,7 @@ class AdminProductHandler:
                 [InlineKeyboardButton("﷼ ریال (IRR)", callback_data="base_currency_IRR")],
                 [InlineKeyboardButton("❌ لغو و بازگشت", callback_data="cancel_field_input")]
             ]
-            await query.edit_message_text("ارز پایه را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+            await safe_edit_message_text(query, "ارز پایه را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
             return  # wait for callback
 
         # Standard text input prompt with cancel button
@@ -2043,7 +2043,7 @@ class AdminProductHandler:
             [InlineKeyboardButton("❌ لغو و بازگشت", callback_data="cancel_field_input")]
         ]
 
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     async def _handle_base_currency_selection(self, update, context):
         """Save selected base currency and return to fields menu."""
