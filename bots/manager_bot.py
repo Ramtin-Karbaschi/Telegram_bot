@@ -176,16 +176,16 @@ class ManagerBot:
             time=time(18,0,tzinfo=tz_tehran),
             name="daily_free_pkg_validation",
         )
-        # Schedule expiration reminder task
-        self.logger.info("Scheduling daily expiration reminder job at 10:00 Asia/Tehran")
-        tz_tehran = ZoneInfo("Asia/Tehran")
-        self.application.job_queue.run_daily(
-            self.send_expiration_reminders,
-            time=time(10, 0, tzinfo=tz_tehran),
-            name="daily_expiration_reminders",
-        )
+        # --- Disabled: Expiration reminders should only be sent from MainBot ---
+        # self.logger.info("Scheduling daily expiration reminder job at 10:00 Asia/Tehran")
+        # tz_tehran = ZoneInfo("Asia/Tehran")
+        # self.application.job_queue.run_daily(
+        #     self.send_expiration_reminders,
+        #     time=time(10, 0, tzinfo=tz_tehran),
+        #     name="daily_expiration_reminders",
+        # )
         # Also run once 30s after startup to cover downtime
-        self.application.job_queue.run_once(self.send_expiration_reminders, when=30)
+        # self.application.job_queue.run_once(self.send_expiration_reminders, when=30)  # Disabled – responsibility moved to MainBot
         # Setup command and message handlers
         self.setup_handlers()
 
