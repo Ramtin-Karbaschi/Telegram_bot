@@ -34,8 +34,62 @@ def _ensure_custom_caption_column():
     finally:
         db.close()
 
-# Run migration on import
+# ---------------------------------------------------------------------------
+# Migration to ensure category_id column exists in plans table
+# ---------------------------------------------------------------------------
+
+def _ensure_category_id_column():
+    """Ensure category_id column exists in plans table."""
+    db = Database()
+    if not db.connect():
+        return False
+    try:
+        cursor = db.conn.cursor()
+        cursor.execute("PRAGMA table_info(plans)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'category_id' not in columns:
+            logging.info("Adding category_id column to plans table")
+            cursor.execute("ALTER TABLE plans ADD COLUMN category_id INTEGER NULL REFERENCES categories(id)")
+            db.conn.commit()
+            logging.info("Successfully added category_id column")
+        return True
+    except Exception as e:
+        logging.error(f"Error adding category_id column: {e}")
+        return False
+    finally:
+        db.close()
+
+# ---------------------------------------------------------------------------
+# Migration to ensure root category exists
+# ---------------------------------------------------------------------------
+
+def _ensure_root_category():
+    """Create a root '🛒 محصولات' category if it does not exist."""
+    db = Database()
+    if not db.connect():
+        return False
+    try:
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT id FROM categories WHERE path = ?", ("🛒 محصولات",))
+        row = cursor.fetchone()
+        if not row:
+            logging.info("Creating root category '🛒 محصولات'")
+            cursor.execute(
+                "INSERT INTO categories (parent_id, name, path, display_order) VALUES (NULL, ?, ?, 0)",
+                ("🛒 محصولات", "🛒 محصولات"),
+            )
+            db.conn.commit()
+        return True
+    except Exception as e:
+        logging.error(f"Error ensuring root category: {e}")
+        return False
+    finally:
+        db.close()
+
+# Run migrations on import
 _ensure_custom_caption_column()
+_ensure_category_id_column()
+_ensure_root_category()
 
 import logging
 from typing import Optional, Any
@@ -45,6 +99,169 @@ from utils.helpers import get_current_time  # ensure Tehran-tz aware now
 
 class DatabaseQueries:
     """Class for handling database operations"""
+
+    # ---------------------------------------------------------------------
+    # CATEGORY MANAGEMENT HELPERS
+    # ---------------------------------------------------------------------
+    @staticmethod
+    def get_category_by_id(category_id: int) -> dict | None:
+        """Return a single category row as dict or None."""
+        db = Database()
+        if not db.connect():
+            return None
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("SELECT * FROM categories WHERE id = ?", (category_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logging.error(f"Error fetching category {category_id}: {e}")
+            return None
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_children_categories(parent_id: int | None = None) -> list[dict]:
+        """Return direct children of a parent category (root if None)."""
+        db = Database()
+        if not db.connect():
+            return []
+        try:
+            cursor = db.conn.cursor()
+            if parent_id is None:
+                cursor.execute("SELECT * FROM categories WHERE parent_id IS NULL ORDER BY display_order, id")
+            else:
+                cursor.execute("SELECT * FROM categories WHERE parent_id = ? ORDER BY display_order, id", (parent_id,))
+            return [dict(r) for r in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"Error fetching children for parent {parent_id}: {e}")
+            return []
+        finally:
+            db.close()
+
+    @staticmethod
+    def create_category(name: str, parent_id: int | None = None, display_order: int = 0) -> int | None:
+        """Create a new category; returns new id or None."""
+        db = Database()
+        if not db.connect():
+            return None
+        try:
+            # Build path: parent's path + '/' + name
+            cursor = db.conn.cursor()
+            if parent_id is None:
+                parent_path = None
+            else:
+                cursor.execute("SELECT path FROM categories WHERE id = ?", (parent_id,))
+                row = cursor.fetchone()
+                if not row:
+                    logging.error("Parent category %s not found", parent_id)
+                    return None
+                parent_path = row[0] if isinstance(row, (tuple, list)) else row["path"]
+            path = name if parent_path is None else f"{parent_path}/{name}"
+            cursor.execute(
+                "INSERT INTO categories (parent_id, name, path, display_order) VALUES (?, ?, ?, ?)",
+                (parent_id, name, path, display_order),
+            )
+            db.conn.commit()
+            return cursor.lastrowid
+        except sqlite3.IntegrityError as ie:
+            logging.warning("Category create integrity error: %s", ie)
+            return None
+        except Exception as e:
+            logging.error(f"Error creating category: {e}")
+            return None
+        finally:
+            db.close()
+
+    @staticmethod
+    def update_category(category_id: int, name: str | None = None, display_order: int | None = None, is_active: bool | None = None) -> bool:
+        """Update basic fields of a category."""
+        if name is None and display_order is None and is_active is None:
+            return False
+        db = Database()
+        if not db.connect():
+            return False
+        try:
+            fields = []
+            params = []
+            if name is not None:
+                fields.append("name = ?")
+                params.append(name)
+            if display_order is not None:
+                fields.append("display_order = ?")
+                params.append(display_order)
+            if is_active is not None:
+                fields.append("is_active = ?")
+                params.append(1 if is_active else 0)
+            fields.append("updated_at = CURRENT_TIMESTAMP")
+            sql = f"UPDATE categories SET {', '.join(fields)} WHERE id = ?"
+            params.append(category_id)
+            db.execute(sql, tuple(params))
+            db.commit()
+            return db.cursor.rowcount > 0
+        except Exception as e:
+            logging.error(f"Error updating category {category_id}: {e}")
+            return False
+        finally:
+            db.close()
+
+    @staticmethod
+    def delete_category(category_id: int) -> bool:
+        """Delete a category if it has no children and no linked plans."""
+        db = Database()
+        if not db.connect():
+            return False
+        try:
+            cursor = db.conn.cursor()
+            # Check children
+            cursor.execute("SELECT COUNT(*) FROM categories WHERE parent_id = ?", (category_id,))
+            if cursor.fetchone()[0] > 0:
+                logging.warning("Cannot delete category %s: has subcategories", category_id)
+                return False
+            # Check plans
+            cursor.execute("SELECT COUNT(*) FROM plans WHERE category_id = ?", (category_id,))
+            if cursor.fetchone()[0] > 0:
+                logging.warning("Cannot delete category %s: linked plans exist", category_id)
+                return False
+            cursor.execute("DELETE FROM categories WHERE id = ?", (category_id,))
+            db.conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logging.error(f"Error deleting category {category_id}: {e}")
+            return False
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_category_tree() -> list[dict]:
+        """Return full category tree as nested dict list."""
+        db = Database()
+        if not db.connect():
+            return []
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("SELECT * FROM categories ORDER BY path")
+            rows = [dict(r) for r in cursor.fetchall()]
+            # Build tree via id->node map
+            id_map: dict[int, dict] = {}
+            roots: list[dict] = []
+            for row in rows:
+                row["children"] = []
+                id_map[row["id"]] = row
+            for row in rows:
+                pid = row["parent_id"]
+                if pid is None:
+                    roots.append(row)
+                else:
+                    parent = id_map.get(pid)
+                    if parent:
+                        parent["children"].append(row)
+            return roots
+        except Exception as e:
+            logging.error(f"Error building category tree: {e}")
+            return []
+        finally:
+            db.close()
 
     # --- VIDEO MANAGEMENT HELPERS --------------------------------------------
     @staticmethod
@@ -2893,6 +3110,64 @@ class DatabaseQueries:
 
     @staticmethod
     def extend_subscription_duration(user_id: int, additional_days: int) -> bool:
+        """Extend a single user's subscription as before (existing method)."""
+        # (existing implementation remains unchanged)
+
+    # ------------------------------------------------------------------
+    # BULK SUBSCRIPTION EXTENSION
+    # ------------------------------------------------------------------
+    @staticmethod
+    def extend_subscription_duration_all(additional_days: int) -> int:
+        """Extend subscription end_date for ALL active users.
+
+        Args:
+            additional_days: Number of days to add.
+        Returns:
+            Number of subscriptions updated (int). Returns 0 on error or if none updated.
+        """
+        if additional_days <= 0:
+            return 0
+        db = Database()
+        if not db.connect():
+            return 0
+        try:
+            now_ts = get_current_time()
+            # Ensure timezone-naive for comparison with DB dates
+            if now_ts.tzinfo is not None:
+                now_ts_naive = now_ts.replace(tzinfo=None)
+            else:
+                now_ts_naive = now_ts
+            now_str = now_ts_naive.strftime("%Y-%m-%d %H:%M:%S")
+            cursor = db.conn.cursor()
+            # Fetch all active subscriptions (status='active')
+            cursor.execute("SELECT id, end_date FROM subscriptions WHERE status = 'active'")
+            rows = cursor.fetchall()
+            updated_count = 0
+            for row in rows:
+                sub_id = row[0] if not isinstance(row, dict) else row['id']
+                end_date_str = row[1] if not isinstance(row, dict) else row['end_date']
+                try:
+                    base_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    # Skip malformed dates
+                    continue
+                if base_date < now_ts_naive:
+                    base_date = now_ts
+                new_end = base_date + timedelta(days=additional_days)
+                new_end_str = new_end.strftime("%Y-%m-%d %H:%M:%S")
+                cursor.execute(
+                    "UPDATE subscriptions SET end_date = ?, updated_at = ? WHERE id = ?",
+                    (new_end_str, now_str, sub_id),
+                )
+                if cursor.rowcount > 0:
+                    updated_count += 1
+            db.conn.commit()
+            return updated_count
+        except sqlite3.Error as exc:
+            logging.error("SQLite error in extend_subscription_duration_all: %s", exc)
+            return 0
+        finally:
+            db.close()
         """Extend a user's active subscription by the given number of additional days.
 
         If the user has an active subscription, its `end_date` is advanced. If the

@@ -167,6 +167,7 @@ class AdminMenuHandler:
     MAIN_MENU_CALLBACK = BACK_MAIN
     BAN_UNBAN_USER = "users_ban_unban"
     EXTEND_SUB_CALLBACK = "users_extend_subscription"
+    EXTEND_SUB_ALL_CALLBACK = "users_extend_all_subscription"
     CHECK_SUB_STATUS = "users_check_subscription"
 
     # Conversation states
@@ -176,6 +177,7 @@ class AdminMenuHandler:
     (AWAIT_USER_ID_FOR_BAN, AWAIT_BAN_CHOICE) = range(104, 106)
     (AWAIT_EXTEND_USER_ID, AWAIT_EXTEND_DAYS) = range(106, 108)
     (AWAIT_CHECK_USER_ID,) = range(108, 109)
+    (AWAIT_EXTEND_ALL_DAYS,) = range(109, 110)
 
     @staff_only
     async def show_admin_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -435,6 +437,7 @@ class AdminMenuHandler:
     async def _users_submenu(self, query):
         keyboard = [
             [InlineKeyboardButton("🔗 لینک دعوت", callback_data=self.CREATE_INVITE_LINK), InlineKeyboardButton("➕ افزایش اشتراک", callback_data=self.EXTEND_SUB_CALLBACK)],
+            [InlineKeyboardButton("➕ افزایش همگانی", callback_data=self.EXTEND_SUB_ALL_CALLBACK)],
             [InlineKeyboardButton("📆 مشاهده اعتبار", callback_data=self.CHECK_SUB_STATUS), InlineKeyboardButton("📋 کاربران فعال", callback_data="users_list_active")],
             [InlineKeyboardButton("🔎 جستجوی کاربر", callback_data="users_search"), InlineKeyboardButton("🛑 مسدود/آزاد کردن", callback_data=self.BAN_UNBAN_USER)],
             [InlineKeyboardButton("🎁 فعال‌سازی ۲۰ روزه رایگان", callback_data=self.FREE20_CALLBACK)],
@@ -460,6 +463,8 @@ class AdminMenuHandler:
     async def _products_submenu(self, query):
         keyboard = [
             [InlineKeyboardButton("➕ محصول جدید", callback_data="products_add"), InlineKeyboardButton("📜 محصولات", callback_data="products_list")],
+            [InlineKeyboardButton("📂 مدیریت دسته‌بندی‌ها", callback_data="manage_categories")],
+            [InlineKeyboardButton("آلت‌سیزن", callback_data="altseason_admin")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text("📦 *مدیریت محصولات*:\nچه کاری می‌خواهید انجام دهید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1504,7 +1509,7 @@ class AdminMenuHandler:
         keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data=self.SUPPORT_MENU)])
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # ---- Extend Subscription Duration Flow ----
+    # ---- Extend Subscription Duration (Single User) Flow ----
     @staff_only
     async def start_extend_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Entry point: ask admin for target user identifier (username or Telegram ID)."""
@@ -1565,6 +1570,25 @@ class AdminMenuHandler:
         success = DatabaseQueries.extend_subscription_duration(user_id, days)
         if success:
             await update.message.reply_text(f"✅ اشتراک کاربر {user_id} به‌مدت {days} روز تمدید شد.")
+            # Notify the user in the main bot (if we have access to bot instance)
+            if self.main_bot_app:
+                try:
+                    # Check if main_bot_app has 'application' attribute (for Application object)
+                    if hasattr(self.main_bot_app, "application") and hasattr(self.main_bot_app.application, "bot"):
+                        await self.main_bot_app.application.bot.send_message(
+                            chat_id=user_id,
+                            text=f"اشتراک شما به‌مدت {days} روز تمدید شد. از همراهی شما سپاسگزاریم!"
+                        )
+                    # Check if main_bot_app has direct 'bot' attribute
+                    elif hasattr(self.main_bot_app, "bot"):
+                        await self.main_bot_app.bot.send_message(
+                            chat_id=user_id,
+                            text=f"اشتراک شما به‌مدت {days} روز تمدید شد. از همراهی شما سپاسگزاریم!"
+                        )
+                    else:
+                        logger.warning("main_bot_app does not have expected bot attribute structure")
+                except Exception as e:
+                    logger.warning("Failed to notify user %s about extension: %s", user_id, e)
         else:
             await update.message.reply_text("❌ تمدید اشتراک ناموفق بود. کاربر ممکن است اشتراک فعالی نداشته باشد.")
         # After completion, show users submenu again
@@ -1577,6 +1601,83 @@ class AdminMenuHandler:
         return ConversationHandler.END
 
     async def cancel_extend_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text("عملیات لغو شد.")
+        await self._users_submenu(update)
+        return ConversationHandler.END
+
+    # ---- Extend Subscription Duration for All Users (Bulk) ----
+    @staff_only
+    async def start_extend_subscription_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text(
+            "🔔 لطفاً تعداد روزهایی که می‌خواهید به تمام کاربران فعال اضافه شود را وارد کنید:\n\nبرای لغو /cancel را بزنید.",
+            parse_mode="Markdown",
+        )
+        return self.AWAIT_EXTEND_ALL_DAYS
+
+    async def receive_extend_all_days(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        days_str = (update.message.text or "").strip()
+        try:
+            days = int(days_str)
+        except ValueError:
+            await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
+            return self.AWAIT_EXTEND_ALL_DAYS
+        if days <= 0:
+            await update.message.reply_text("❌ تعداد روز باید بیشتر از ۰ باشد.")
+            return self.AWAIT_EXTEND_ALL_DAYS
+
+        updated = DatabaseQueries.extend_subscription_duration_all(days)
+        await update.message.reply_text(f"✅ اشتراک {updated} کاربر به‌مدت {days} روز تمدید شد.")
+
+        # Notify each active subscriber
+        if self.main_bot_app:
+            try:
+                users = DatabaseQueries.get_all_active_subscribers()
+                bot_instance = None
+                
+                # Determine the correct bot instance
+                if hasattr(self.main_bot_app, "application") and hasattr(self.main_bot_app.application, "bot"):
+                    bot_instance = self.main_bot_app.application.bot
+                elif hasattr(self.main_bot_app, "bot"):
+                    bot_instance = self.main_bot_app.bot
+                
+                if bot_instance:
+                    for row in users:
+                        # Handle sqlite3.Row objects properly
+                        if hasattr(row, 'keys'):  # sqlite3.Row
+                            uid = row[0] if len(row) > 0 else None
+                        elif isinstance(row, (list, tuple)):
+                            uid = row[0]
+                        elif isinstance(row, dict):
+                            uid = row.get("user_id")
+                        else:
+                            uid = None
+                        
+                        if not uid:
+                            continue
+                        try:
+                            await bot_instance.send_message(
+                                chat_id=uid,
+                                text=f"اشتراک شما به‌مدت {days} روز تمدید شد. از همراهی شما سپاسگزاریم!"
+                            )
+                        except Exception:
+                            pass  # Ignore failures for individual users
+                else:
+                    logger.warning("Could not find bot instance in main_bot_app")
+            except Exception as e:
+                logger.warning("Failed to broadcast extension notification: %s", e)
+
+        class _DummyQuery:
+            def __init__(self, message):
+                self.message = message
+            async def edit_message_text(self, *args, **kwargs):
+                await self.message.reply_text(*args, **kwargs)
+
+        await self._users_submenu(_DummyQuery(update.message))
+        return ConversationHandler.END
+
+    async def cancel_extend_subscription_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("عملیات لغو شد.")
         await self._users_submenu(update)
         return ConversationHandler.END
@@ -1762,6 +1863,16 @@ class AdminMenuHandler:
 
         # Channel multi-select picker for broadcast with link
         handlers.append(CallbackQueryHandler(self._broadcast_wl_picker_callback, pattern=r"^(chpick_.*|chpick_all|chpick_done)$"))
+
+        # Conversation handler for extend all subscriptions
+        extend_all_conv_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.start_extend_subscription_all, pattern=f'^{self.EXTEND_SUB_ALL_CALLBACK}$')],
+            states={
+                self.AWAIT_EXTEND_ALL_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_extend_all_days)],
+            },
+            fallbacks=[CommandHandler('cancel', self.cancel_extend_subscription_all)],
+        )
+        handlers.append(extend_all_conv_handler)
 
         # ---- Support user management handlers ----
         handlers.extend(self.support_manager.get_handlers())
