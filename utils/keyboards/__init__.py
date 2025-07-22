@@ -192,7 +192,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False, paid_only: bool = True):
+def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False, paid_only: bool = True, category_id: int | None = None):
     """Build an inline keyboard of subscription plans.
 
     Parameters
@@ -212,11 +212,26 @@ def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False
 
     # Filter according to price category
     filtered_plans: list = []
+    logger.debug(f"Category filter active: {category_id}")
     for plan in all_plans:
+        logger.debug(f"Evaluating plan {plan['id']} with category {plan.get('category_id')}")
+        # Category filtering rules:
+        # - If a specific category_id is provided, show only plans in that category.
+        # - If no category_id is provided (main products menu), show only uncategorized plans (category_id is NULL).
+        # Category rules: if no category selected, display only uncategorized plans
+        if category_id is None:
+            if plan.get('category_id') is not None:
+                continue
+        else:
+            if plan.get('category_id') != category_id:
+                continue
         price_usdt = plan.get('price_tether') or plan.get('original_price_usdt') or 0
-        if free_only and price_usdt > 0:
+        price_irr = plan.get('price') or plan.get('original_price_irr') or 0
+        is_free = (price_usdt == 0 and price_irr == 0)
+        # Apply free/paid filters more accurately across currencies
+        if free_only and not is_free:
             continue
-        if paid_only and price_usdt == 0:
+        if paid_only and is_free:
             continue
         filtered_plans.append(plan)
     logger.debug(f"Fetched {len(all_plans)} plans from get_active_plans: {[dict(row) for row in all_plans] if all_plans else '[]'}")
@@ -226,7 +241,28 @@ def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False
         try:
             all_plans = [dict(r) for r in _DB.get_all_plans()]
             # Re-apply price filtering on fallback list
-            filtered_plans = [p for p in all_plans if ((not free_only or (p.get('price_tether') or p.get('original_price_usdt') or 0) == 0) and (not paid_only or (p.get('price_tether') or p.get('original_price_usdt') or 0) > 0))]
+            filtered_plans = []
+            for p in all_plans:
+                # Reapply category filtering identical to the main loop
+                if category_id is None:
+                    if p.get('category_id') is not None:
+                        continue
+                else:
+                    if p.get('category_id') != category_id:
+                        continue
+                price = p.get('price_tether') or p.get('original_price_usdt') or 0
+                if free_only and price > 0:
+                    continue
+                if paid_only and price == 0:
+                    continue
+                capacity = p['capacity'] if 'capacity' in p.keys() else None
+                if capacity is not None:
+                    # Capacity column stores the REMAINING slots (decremented on each purchase).
+                    # Plan is full if remaining capacity is 0 or less.
+                    if capacity is not None and capacity <= 0:
+                        # Skip full plans
+                        continue
+                filtered_plans.append(p)
         except Exception as exc:
             logger.error("Error in get_all_plans fallback: %s", exc)
             all_active_plans = []
@@ -269,14 +305,9 @@ def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False
         if plan_buttons_row:  # Add the last row if it's not empty and has buttons
             keyboard.append(plan_buttons_row)
     
-    # Ensure TEXT_GENERAL_BACK is defined and imported correctly
-    try:
-        back_button_text = TEXT_GENERAL_BACK
-    except AttributeError:
-        logger.warning("'TEXT_GENERAL_BACK' not found, using default '↩ بازگشت'. Check 'utils.constants.all_constants'.")
-        back_button_text = "↩ بازگشت"
-        
-    keyboard.append([InlineKeyboardButton(back_button_text, callback_data="back_to_main_menu_from_plans")])
+    # Add single back button to return to categories
+    keyboard.append([InlineKeyboardButton("↩ بازگشت", callback_data="products_menu")])
+
     return InlineKeyboardMarkup(keyboard)
 
 

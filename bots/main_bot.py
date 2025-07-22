@@ -12,6 +12,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import logging
+from telegram.ext import MessageHandler, filters
 import html
 import json
 import traceback
@@ -403,19 +404,23 @@ class MainBot:
         self.application.add_handler(CallbackQueryHandler(start_free_package_flow, pattern=r"^freepkg_toobit$"), group=0)
         # Callback handlers for expiration reminder buttons
         self.application.add_handler(CallbackQueryHandler(free_packages_menu, pattern=r"^free_package_menu$"), group=0)
-        self.application.add_handler(CallbackQueryHandler(start_subscription_flow, pattern=r"^products_menu$"), group=0)
-        
+        self.application.add_handler(CallbackQueryHandler(start_subscription_flow, pattern=r"^products_menu(?:_\d+)?$"), group=0)
+        from handlers.payment.payment_handlers import back_to_main_menu_from_categories
+        self.application.add_handler(CallbackQueryHandler(back_to_main_menu_from_categories, pattern=r"^back_to_main_menu_from_categories$"), group=0)
         # Callback entry for AltSeason is handled by conversation handler
         # Handler for free plan selection (outside conversation)
-        from handlers.payment.payment_handlers import select_plan_handler
-        self.application.add_handler(CallbackQueryHandler(select_plan_handler, pattern=r"^plan_\d+$"), group=0)
+        # from handlers.payment.payment_handlers import select_plan_handler
+        # Duplicate standalone plan handler removed - handled inside payment conversation to avoid double execution
+        # self.application.add_handler(CallbackQueryHandler(select_plan_handler, pattern=r"^plan_\\d+$"), group=0)
 
         # ---------------- Payment conversation AFTER free package ----------------
+        # Add the 'products' text button as an entry point to the conversation
+        payment_conversation.entry_points.append(MessageHandler(filters.TEXT & filters.Regex(r"^🛒 محصولات$"), start_subscription_flow))
         self.application.add_handler(payment_conversation, group=1)
 
         # Handler for back button from payment method selection to plan selection
         self.application.add_handler(CommandHandler('subscribe', start_subscription_flow))
-        self.application.add_handler(CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'))
+
 
         # Handler for back button from subscription plan selection
         self.application.add_handler(CallbackQueryHandler(handle_back_to_main, pattern=r"^back_to_main_menu_from_plans$"))

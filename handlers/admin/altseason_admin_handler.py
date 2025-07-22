@@ -12,7 +12,7 @@ from database.models import Database
 
 logger = logging.getLogger(__name__)
 
-MENU, TOGGLE, EXPORT, Q_LIST, ADD_Q, EDIT_Q, V_LIST, ADD_V, EDIT_V, POLL_INPUT, TEXT_INPUT, ORDER_MANAGE = range(12)
+MENU, TOGGLE, EXPORT, Q_LIST, ADD_Q, EDIT_Q, V_LIST, ADD_V, EDIT_V, POLL_INPUT, TEXT_INPUT, ORDER_MANAGE, KEYBOARD_SETTINGS = range(13)
 
 aqs = AltSeasonQueries()
 
@@ -53,6 +53,7 @@ class AdminAltSeasonHandler:
             [InlineKeyboardButton("📝 مدیریت سؤال‌ها", callback_data="alt_q_list")],
             [InlineKeyboardButton("🎥 مدیریت ویدیوها", callback_data="alt_v_list")],
             [InlineKeyboardButton("🔄 ترتیب نمایش کلی", callback_data="alt_order_manage")],
+            [InlineKeyboardButton("⌨️ تنظیمات کیبورد پایان", callback_data="alt_keyboard_settings")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back_main")],
         ]
         flag = "✅ فعال" if self.db.is_enabled() else "❌ غیرفعال"
@@ -64,6 +65,39 @@ class AdminAltSeasonHandler:
         new_flag = not self.db.is_enabled()
         self.db.set_enabled(new_flag)
         await update.callback_query.answer("وضعیت ذخیره شد")
+        return await self.entry(update, context)
+
+    async def export(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Export answers to Excel file."""
+        try:
+            df = self.db.export_answers_dataframe()
+            if df is None or df.empty:
+                await update.callback_query.answer("هیچ داده‌ای برای صادرات یافت نشد")
+                return await self.entry(update, context)
+            
+            # Create Excel file in memory
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name='AltSeason Answers', index=False)
+            
+            output.seek(0)
+            
+            # Send file to admin
+            from datetime import datetime
+            filename = f"altseason_answers_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            
+            await update.callback_query.message.reply_document(
+                document=output,
+                filename=filename,
+                caption=f"📄 گزارش پاسخ‌های آلت‌سیزن\nتعداد کاربران: {len(df)}"
+            )
+            
+            await update.callback_query.answer("گزارش ارسال شد")
+            
+        except Exception as e:
+            logger.error(f"Error exporting Excel: {e}")
+            await update.callback_query.answer("خطا در صادرات گزارش")
+        
         return await self.entry(update, context)
 
     async def q_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -517,7 +551,105 @@ class AdminAltSeasonHandler:
         )
         return ORDER_MANAGE
     
-    async def order_move(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def keyboard_settings(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show keyboard settings for completion message."""
+        settings = self.db.get_all_keyboard_settings()
+        
+        # Create toggle buttons for each setting
+        keyboard = []
+        
+        # Free package setting
+        free_status = "✅" if settings.get('show_free_package') == '1' else "❌"
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{free_status} 🎁 رایگان", 
+                callback_data="alt_kb_toggle_free"
+            )
+        ])
+        
+        # Products menu setting
+        products_status = "✅" if settings.get('show_products_menu') == '1' else "❌"
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{products_status} 🛒 محصولات", 
+                callback_data="alt_kb_toggle_products"
+            )
+        ])
+        
+        # Dynamically list active product sub-categories
+        from database.models import Database as _DBModel
+        db_tmp = _DBModel()
+        subcategories = []
+        if db_tmp.connect():
+            try:
+                cur = db_tmp.conn.cursor()
+                cur.execute("""
+                    SELECT id, name FROM categories
+                    WHERE path LIKE '🛒 محصولات/%'
+                    AND is_active = 1
+                    ORDER BY display_order, name
+                """)
+                subcategories = cur.fetchall()
+            finally:
+                db_tmp.close()
+        for cat_id, cat_name in subcategories:
+            cat_key = f"show_category_{cat_id}"
+            cat_status = "✅" if settings.get(cat_key, '1') == '1' else "❌"
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"{cat_status} {cat_name}",
+                    callback_data=f"alt_kb_toggle_cat_{cat_id}"
+                )
+            ])
+        
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back_main")])
+        
+        text = (
+            "⌨️ *تنظیمات کیبورد پایان*\n\n"
+            "برای فعال/غیرفعال کردن هر گزینه روی آن کلیک کنید:\n\n"
+            "✅ = فعال\n"
+            "❌ = غیرفعال"
+        )
+        
+        await update.callback_query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return KEYBOARD_SETTINGS
+    
+    async def toggle_keyboard_setting(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Toggle a keyboard setting."""
+        callback_data = update.callback_query.data
+        
+        if callback_data == "alt_kb_toggle_free":
+            setting_key = "show_free_package"
+        elif callback_data == "alt_kb_toggle_products":
+            setting_key = "show_products_menu"
+        elif callback_data.startswith("alt_kb_toggle_cat_"):
+            cat_id = callback_data.split("_")[-1]
+            setting_key = f"show_category_{cat_id}"
+        else:
+            await update.callback_query.answer("خطا در تنظیمات")
+            return KEYBOARD_SETTINGS
+        
+        # Get current value and toggle it
+        current_value = self.db.get_keyboard_setting(setting_key)
+        new_value = '0' if current_value == '1' else '1'
+        
+        # Update setting
+        success = self.db.update_keyboard_setting(setting_key, new_value)
+        
+        if success:
+            status_text = "فعال" if new_value == '1' else "غیرفعال"
+            await update.callback_query.answer(f"تنظیمات به‌روزرسانی شد: {status_text}")
+        else:
+            await update.callback_query.answer("خطا در ذخیره‌سازی")
+        
+        # Refresh the settings menu
+        return await self.keyboard_settings(update, context)
+    
+    async def handle_order_move(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle moving items up or down in global order"""
         data_parts = update.callback_query.data.split('_')
         direction = data_parts[2]  # 'up' or 'down'
@@ -560,11 +692,15 @@ class AdminAltSeasonHandler:
             states={
                 MENU: [
                     CallbackQueryHandler(self.toggle, pattern='^alt_toggle$'),
-                    CallbackQueryHandler(self.export_excel, pattern='^alt_export$'),
+                    CallbackQueryHandler(self.export, pattern='^alt_export$'),
                     CallbackQueryHandler(self.q_list, pattern='^alt_q_list$'),
                     CallbackQueryHandler(self.v_list, pattern='^alt_v_list$'),
                     CallbackQueryHandler(self.order_manage, pattern='^alt_order_manage$'),
-                    # products submenu back is handled via _go_back when admin_back_main is clicked
+                    CallbackQueryHandler(self.keyboard_settings, pattern='^alt_keyboard_settings$'),
+                    CallbackQueryHandler(self._go_back, pattern='^admin_back_main$'),
+                ],
+                KEYBOARD_SETTINGS: [
+                    CallbackQueryHandler(self.toggle_keyboard_setting, pattern='^alt_kb_toggle_'),
                     CallbackQueryHandler(self._go_back, pattern='^admin_back_main$'),
                 ],
                 Q_LIST: [
@@ -605,7 +741,11 @@ class AdminAltSeasonHandler:
                     CallbackQueryHandler(self.v_list, pattern='^alt_v_list$'),
                 ],
                 ORDER_MANAGE: [
-                    CallbackQueryHandler(self.order_move, pattern='^alt_order_up_|^alt_order_down_'),
+                    CallbackQueryHandler(self.handle_order_move, pattern='^alt_order_up_|^alt_order_down_'),
+                    CallbackQueryHandler(self._go_back, pattern='^admin_back_main$'),
+                ],
+                KEYBOARD_SETTINGS: [
+                    CallbackQueryHandler(self.toggle_keyboard_setting, pattern='^alt_kb_toggle_'),
                     CallbackQueryHandler(self._go_back, pattern='^admin_back_main$'),
                 ],
             },

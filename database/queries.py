@@ -938,7 +938,7 @@ class DatabaseQueries:
     # -----------------------------------
     # Product Management
     # -----------------------------------
-    def add_plan(self, name: str, price: float | None, duration_days: int, description: str | None = None, *, capacity: int | None = None, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None, channels_json: str | None = None, auto_delete_links: bool = True, is_active: bool = True, is_public: bool = True, base_currency: str = 'IRR', base_price: float | None = None):
+    def add_plan(self, name: str, price: float | None, duration_days: int, description: str | None = None, *, capacity: int | None = None, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None, channels_json: str | None = None, auto_delete_links: bool = True, is_active: bool = True, is_public: bool = True, base_currency: str = 'IRR', base_price: float | None = None, category_id: int | None = None):
         """Add a new plan to the database with active and public status."""
         try:
             # Determine if legacy 'days' column exists
@@ -1000,6 +1000,11 @@ class DatabaseQueries:
                 column_names.append("base_price")
                 values.append(base_price)
 
+            # Category ID if supported
+            if 'category_id' in columns and category_id is not None:
+                column_names.append("category_id")
+                values.append(category_id)
+
             # Activation & visibility flags
             column_names.extend(["is_active", "is_public"])
             values.extend([is_active, is_public])
@@ -1038,7 +1043,7 @@ class DatabaseQueries:
             logging.error(f"SQLite error in get_plan_by_id: {e}")
             return None
 
-    def update_plan(self, plan_id: int, *, name: str | None = None, price: float | None = None, duration_days: int | None = None, capacity: int | None = None, description: str | None = None, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None, channels_json: str | None = None, auto_delete_links: bool | None = None, base_currency: str | None = None, base_price: float | None = None):
+    def update_plan(self, plan_id: int, *, name: str | None = None, price: float | None = None, duration_days: int | None = None, capacity: int | None = None, description: str | None = None, price_tether: float | None = None, original_price_irr: float | None = None, original_price_usdt: float | None = None, channels_json: str | None = None, auto_delete_links: bool | None = None, base_currency: str | None = None, base_price: float | None = None, category_id: int | None = None):
         """Update an existing plan's details."""
         try:
             # Ensure both duration_days and legacy days are updated if applicable
@@ -1078,6 +1083,8 @@ class DatabaseQueries:
                 add_field("base_currency", base_currency)
             if 'base_price' in cols:
                 add_field("base_price", base_price)
+            if 'category_id' in cols:
+                add_field("category_id", category_id)
 
             if not set_clauses:
                 return False  # Nothing to update
@@ -1618,7 +1625,7 @@ class DatabaseQueries:
         db = Database()
         if db.connect():
             db.execute(
-                "SELECT id, name, description, price, original_price_irr, price_tether, original_price_usdt, days, features, display_order FROM plans WHERE is_active = 1 ORDER BY display_order ASC, id ASC"
+                "SELECT id, name, description, price, original_price_irr, price_tether, original_price_usdt, days, features, display_order, capacity, category_id FROM plans WHERE is_active = 1 ORDER BY display_order ASC, id ASC"
             )
             result = db.fetchall()
             db.close()
@@ -2124,11 +2131,23 @@ class DatabaseQueries:
                 db.close()
         return False
 
+    # ---- User Subscription Summary Helpers ----
     @staticmethod
     def get_plan(plan_id: int):
-        return DatabaseQueries.add_video(plan_id, video_id(plan_id))
+        """Return a single plan row (dict) by its ID or None."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT * FROM plans WHERE id = ?", (plan_id,))
+                row = db.fetchone()
+                db.close()
+                return row
+            except Exception as exc:
+                logging.error("SQLite error in get_plan: %s", exc)
+            finally:
+                db.close()
+        return None
 
-    # ---- User Subscription Summary Helpers ----
     @staticmethod
     def _ensure_user_summary_columns():
         """Ensures that `users` table has the summary columns. If not, add them with ALTER TABLE."""
@@ -3057,7 +3076,7 @@ class DatabaseQueries:
         db = Database()
         if db.connect():
             try:
-                query = "SELECT id, name, price, is_active, is_public FROM plans ORDER BY display_order"
+                query = "SELECT id, name, description, price, original_price_irr, price_tether, original_price_usdt, days, features, display_order, capacity, category_id, is_active, is_public FROM plans ORDER BY display_order"
                 if db.execute(query):
                     return db.fetchall()
             except sqlite3.Error as e:

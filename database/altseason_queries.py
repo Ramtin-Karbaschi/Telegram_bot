@@ -76,14 +76,41 @@ class AltSeasonQueries:
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS altseason_users (
-                    user_id INTEGER PRIMARY KEY,
-                    first_name TEXT,
-                    last_name TEXT,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    full_name TEXT,
+                    username TEXT,
                     phone TEXT,
-                    started_at TEXT
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id)
                 )
                 """
             )
+            
+            # keyboard settings table
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS altseason_keyboard_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setting_key TEXT UNIQUE NOT NULL,
+                setting_value TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            
+            # Initialize default keyboard settings if not exist
+            cur.execute("SELECT COUNT(*) FROM altseason_keyboard_settings")
+            if cur.fetchone()[0] == 0:
+                default_settings = [
+                    ('show_free_package', '1'),
+                    ('show_products_menu', '1')
+                ]
+                cur.executemany(
+                    "INSERT INTO altseason_keyboard_settings (setting_key, setting_value) VALUES (?, ?)",
+                    default_settings
+                )
             # answers table
             cur.execute(
                 """
@@ -361,58 +388,146 @@ class AltSeasonQueries:
     # Export helpers
     # ------------------------------------------------------------------
     def export_answers_dataframe(self):
-        """Return a pandas.DataFrame with user info and answers ready for Excel export."""
-        import pandas as pd
+        """Export answers with user info as a DataFrame for Excel."""
         db = Database()
         if not db.connect():
-            return pd.DataFrame()
+            return None
         try:
-            # Join with main users table to get phone and full user info
-            query = (
-                "SELECT "
-                "    COALESCE(mu.user_id, au.user_id) as user_id, "
-                "    COALESCE(mu.full_name, au.first_name || ' ' || COALESCE(au.last_name, '')) as full_name, "
-                "    COALESCE(mu.username, '') as username, "
-                "    COALESCE(mu.phone, au.phone, '') as phone, "
-                "    q.title as question_title, "
-                "    a.option_id, "
-                "    a.answered_at "
-                "FROM altseason_users au "
-                "LEFT JOIN users mu ON au.user_id = mu.user_id "
-                "LEFT JOIN altseason_answers a ON au.user_id = a.user_id "
-                "LEFT JOIN altseason_questions q ON a.question_id = q.id "
-                "ORDER BY au.user_id, a.question_id"
+            # Join altseason_users with main users table to get phone numbers
+            # and pivot answers so each question is a separate column
+            query = """
+            WITH user_answers AS (
+                SELECT 
+                    au.user_id,
+                    COALESCE(u.full_name, TRIM(au.first_name || ' ' || IFNULL(au.last_name, ''))) AS full_name,
+                    u.username AS username,
+                    COALESCE(u.phone, au.phone) AS phone,
+                    aa.question_id,
+                    aq.title as question_title,
+                    aa.selected_option,
+                    aa.answered_at
+                FROM altseason_users au
+                LEFT JOIN users u ON au.user_id = u.user_id
+                LEFT JOIN altseason_answers aa ON au.user_id = aa.user_id
+                LEFT JOIN altseason_questions aq ON aa.question_id = aq.id
+                WHERE aa.question_id IS NOT NULL
+            ),
+            latest_answers AS (
+                SELECT 
+                    user_id,
+                    full_name,
+                    username,
+                    phone,
+                    MAX(answered_at) as latest_answer_time
+                FROM user_answers
+                GROUP BY user_id, full_name, username, phone
             )
+            SELECT 
+                ua.user_id,
+                ua.full_name,
+                ua.username,
+                ua.phone,
+                ua.question_title,
+                ua.selected_option,
+                la.latest_answer_time
+            FROM user_answers ua
+            JOIN latest_answers la ON ua.user_id = la.user_id
+            ORDER BY ua.user_id, ua.question_id
+            """
+            
+            import pandas as pd
             df = pd.read_sql_query(query, db.conn)
             
             if df.empty:
-                return df
+                return pd.DataFrame()
             
-            # Pivot the data to show each question as a separate column
-            # First, get unique users
-            user_cols = ['user_id', 'full_name', 'username', 'phone']
-            users_df = df[user_cols].drop_duplicates().reset_index(drop=True)
+            # Pivot so each question becomes a column
+            pivot_df = df.pivot_table(
+                index=['user_id', 'full_name', 'username', 'phone', 'latest_answer_time'],
+                columns='question_title',
+                values='selected_option',
+                aggfunc='first'
+            ).reset_index()
             
-            # Create pivot table for answers
-            if 'question_title' in df.columns and not df['question_title'].isna().all():
-                answers_pivot = df.pivot_table(
-                    index='user_id',
-                    columns='question_title',
-                    values='option_id',
-                    aggfunc='first'  # Take first answer if multiple
-                ).reset_index()
-                
-                # Merge user info with pivoted answers
-                result_df = users_df.merge(answers_pivot, on='user_id', how='left')
-                
-                # Add answered_at timestamp for each user (latest answer)
-                if 'answered_at' in df.columns:
-                    latest_answer = df.groupby('user_id')['answered_at'].max().reset_index()
-                    result_df = result_df.merge(latest_answer, on='user_id', how='left')
-                    result_df.rename(columns={'answered_at': 'latest_answer_time'}, inplace=True)
-                
-                return result_df
-            else:
-                return users_df
+            # Flatten column names
+            pivot_df.columns.name = None
+            
+            return pivot_df
+            
+        except Exception as e:
+            logger.error(f"Error exporting answers dataframe: {e}")
+            return None
+        finally:
+            db.close()
+    
+    # ------------------------------------------------------------------
+    # Keyboard Settings Management
+    # ------------------------------------------------------------------
+    def get_keyboard_setting(self, key):
+        """Get a keyboard setting value by key."""
+        db = Database()
+        if not db.connect():
+            return None
+        try:
+            cur = db.conn.cursor()
+            cur.execute("SELECT setting_value FROM altseason_keyboard_settings WHERE setting_key = ?", (key,))
+            row = cur.fetchone()
+            return row[0] if row else None
+        except Exception as e:
+            logger.error(f"Error getting keyboard setting {key}: {e}")
+            return None
+        finally:
+            db.close()
+    
+    def update_keyboard_setting(self, key, value):
+        """Update a keyboard setting."""
+        db = Database()
+        if not db.connect():
+            return False
+        try:
+            cur = db.conn.cursor()
+            cur.execute(
+                """INSERT OR REPLACE INTO altseason_keyboard_settings 
+                   (setting_key, setting_value, updated_at) 
+                   VALUES (?, ?, CURRENT_TIMESTAMP)""",
+                (key, value)
+            )
+            db.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating keyboard setting {key}: {e}")
+            return False
+        finally:
+            db.close()
+    
+    def get_keyboard_setting(self, key: str):
+        """Get single keyboard setting value; returns '1' by default if missing."""
+        db = Database()
+        if not db.connect():
+            return '1'
+        try:
+            cur = db.conn.cursor()
+            cur.execute("SELECT setting_value FROM altseason_keyboard_settings WHERE setting_key = ?", (key,))
+            row = cur.fetchone()
+            return row[0] if row else '1'
+        except Exception as e:
+            logger.error(f"Error getting keyboard setting {key}: {e}")
+            return '1'
+        finally:
+            db.close()
+
+    def get_all_keyboard_settings(self):
+        """Get all keyboard settings as a dictionary."""
+        db = Database()
+        if not db.connect():
+            return {}
+        try:
+            cur = db.conn.cursor()
+            cur.execute("SELECT setting_key, setting_value FROM altseason_keyboard_settings")
+            rows = cur.fetchall()
+            return {row[0]: row[1] for row in rows}
+        except Exception as e:
+            logger.error(f"Error getting all keyboard settings: {e}")
+            return {}
         finally:
             db.close()

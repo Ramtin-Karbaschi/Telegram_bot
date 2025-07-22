@@ -467,7 +467,7 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
         keyboard_buttons = []
         if is_active_subscription:
             keyboard_buttons.append([
-                InlineKeyboardButton("تمدید اشتراک", callback_data="start_subscription_flow")
+                InlineKeyboardButton(TEXT_MAIN_MENU_BUY_SUBSCRIPTION, callback_data="start_subscription_flow"), InlineKeyboardButton(TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow")
             ])
             keyboard_buttons.append([
                 InlineKeyboardButton("دریافت لینک کانال", callback_data="get_channel_link")
@@ -539,7 +539,7 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
         keyboard_buttons = []
         if is_active_subscription:
             keyboard_buttons.append(
-                [InlineKeyboardButton("تمدید اشتراک", callback_data="start_subscription_flow")] # Changed callback to unify flow
+                [InlineKeyboardButton(TEXT_MAIN_MENU_BUY_SUBSCRIPTION, callback_data="start_subscription_flow"), InlineKeyboardButton(TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow")] # Changed callback to unify flow
             )
             # Add 'Get Channel Link' button if subscription is active
             keyboard_buttons.append(

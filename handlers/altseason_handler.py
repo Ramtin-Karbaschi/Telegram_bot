@@ -78,7 +78,7 @@ class AltSeasonHandler:
         
         if idx >= len(all_items):
             # flow finished
-            await context.bot.send_message(chat_id=chat_id_val, text="با تشکر از شما! 🎉")
+            await self._send_completion_message(context, chat_id_val)
             context.user_data.pop('altseason_active', None)
             return ConversationHandler.END
         
@@ -94,7 +94,7 @@ class AltSeasonHandler:
                 # Check if there are more items after this video
                 if context.user_data['altseason_current_idx'] >= len(all_items):
                     # This was the last item, finish the flow
-                    await context.bot.send_message(chat_id=chat_id_val, text="با تشکر از شما! 🎉")
+                    await self._send_completion_message(context, chat_id_val)
                     context.user_data.pop('altseason_active', None)
                     return ConversationHandler.END
                 # Continue to next item automatically
@@ -239,7 +239,87 @@ class AltSeasonHandler:
         result = await self._send_current_item(update, context)
         return result if result is not None else ALTSEASON_Q
 
+    async def _send_completion_message(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+        """Send completion message with configurable keyboard."""
+        keyboard = await self._create_completion_keyboard()
+        
+        message = "با تشکر از شما! 🎉"
+        if keyboard:
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await context.bot.send_message(
+                chat_id=chat_id, 
+                text=message, 
+                reply_markup=reply_markup
+            )
+        else:
+            await context.bot.send_message(chat_id=chat_id, text=message)
+    
+    async def _create_completion_keyboard(self):
+        """Create completion keyboard based on admin settings."""
+        from telegram import InlineKeyboardButton
+        
+        # Get keyboard settings
+        settings = self.db.get_all_keyboard_settings()
+        
+        keyboard = []
+        
+        # Add free package button if enabled
+        if settings.get('show_free_package') == '1':
+            keyboard.append([
+                InlineKeyboardButton("🎁 رایگان", callback_data="free_package_menu")
+            ])
+        
+        # Get product subcategories and check which ones are enabled
+        from database.models import Database
+        db = Database()
+        if db.connect():
+            try:
+                cur = db.conn.cursor()
+                # Fetch all active sub-categories under "🛒 محصولات"
+                cur.execute(
+                    """
+                    SELECT id, name FROM categories
+                    WHERE path LIKE '🛒 محصولات/%'
+                    AND is_active = 1
+                    ORDER BY display_order, name
+                    """
+                )
+                subcategories = [(row[0], row[1]) for row in cur.fetchall()]
 
+                # Filter enabled subcategories
+                enabled_subcats = [
+                    (cid, cname) for cid, cname in subcategories
+                    if settings.get(f"show_category_{cid}", '1') == '1'
+                ]
+                
+                # Add main products button if enabled OR if there are enabled subcategories
+                show_main_products = settings.get('show_products_menu') == '1'
+                if show_main_products or enabled_subcats:
+                    if show_main_products:
+                        keyboard.append([
+                            InlineKeyboardButton("🛒 محصولات", callback_data="products_menu")
+                        ])
+                    
+                    # Add enabled subcategory buttons (max 2 per row)
+                    for i in range(0, len(enabled_subcats), 2):
+                        row = []
+                        for cid, cname in enabled_subcats[i:i + 2]:
+                            row.append(
+                                InlineKeyboardButton(cname, callback_data=f"products_menu_{cid}")
+                            )
+                        keyboard.append(row)
+                        
+            except Exception as e:
+                logger.error(f"Error getting product categories: {e}")
+                # Fallback: show main products button if enabled
+                if settings.get('show_products_menu') == '1':
+                    keyboard.append([
+                        InlineKeyboardButton("🛒 محصولات", callback_data="products_menu")
+                    ])
+            finally:
+                db.close()
+        
+        return keyboard
 
     # ---------------- conversation helpers ----------------
     def get_handlers(self):

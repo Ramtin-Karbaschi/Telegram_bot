@@ -50,6 +50,19 @@ from utils.keyboards import (
     get_back_to_plans_button, get_back_to_payment_methods_button,
     get_main_menu_keyboard, get_ask_discount_keyboard, get_back_to_ask_discount_keyboard
 )
+from utils.keyboards.categories_keyboard import get_categories_keyboard
+
+from telegram.constants import ParseMode
+
+async def back_to_main_menu_from_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle back to main menu from categories - show user profile instead."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    if query:
+        await query.answer()
+        # Import and call view_active_subscription to show user profile/status
+        from handlers.subscription.subscription_handlers import view_active_subscription
+        await view_active_subscription(update, context)
 
 # ---------------- Count-down timer helpers -----------------
 from telegram.ext import Job
@@ -149,18 +162,58 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
     # If called via CallbackQuery
     if query:
         await query.answer()
-        await safe_edit_message_text(
-            query.message,
-            text=SUBSCRIPTION_PLANS_MESSAGE,
-            reply_markup=get_subscription_plans_keyboard(user_id),
-            parse_mode=ParseMode.HTML
-        )
+
+        # Detect optional category id from callback data (products_menu_<id>)
+        category_id = None
+        # If callback is for returning to top-level categories
+        if query.data in ("start_subscription_flow", "products_menu", "back_to_plans"):
+            await safe_edit_message_text(
+                query.message,
+                text="📋 دسته‌بندی محصولات\n\nلطفاً یک دسته‌بندی را انتخاب کنید:",
+                reply_markup=get_categories_keyboard(),
+                parse_mode=ParseMode.HTML,
+            )
+            return SELECT_PLAN
+
+        # products_menu_<id>  -- extract numeric id safely
+        if query.data.startswith("products_menu_"):
+            possible_id = query.data.split("_")[-1]
+            if possible_id.isdigit():
+                category_id = int(possible_id)
+        logger.info("Extracted category_id: %s from callback_data: '%s'", category_id, query.data)
+        if category_id is None:
+            # No valid category id found; ignore and exit handler gracefully
+            return
+
+        from database.queries import DatabaseQueries as _DB
+        parent_cat = _DB.get_category_by_id(category_id)
+        children = _DB.get_children_categories(category_id)
+        if children:
+            # Show sub-categories instead of plans
+            category_name = parent_cat.get('name', 'دسته‌بندی') if parent_cat else 'دسته‌بندی'
+            await safe_edit_message_text(
+                query.message,
+                text=f"📋 {category_name}\n\nلطفاً یک زیردسته را انتخاب کنید:",
+                reply_markup=get_categories_keyboard(parent_id=category_id),
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            # Leaf: show plans
+            keyboard = get_subscription_plans_keyboard(user_id, category_id=category_id)
+            category_name = parent_cat.get('name', 'محصولات') if parent_cat else 'محصولات'
+            await safe_edit_message_text(
+                query.message,
+                text=f"🛍️ {category_name}\n\nلطفاً محصول مورد نظر خود را انتخاب کنید:",
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+            )
+            return SELECT_PLAN
     # If called via Message (e.g. reply keyboard)
     elif update.message:
         await update.message.reply_text(
-            text=SUBSCRIPTION_PLANS_MESSAGE,
-            reply_markup=get_subscription_plans_keyboard(user_id),
-            parse_mode=ParseMode.HTML
+            text="📋 دسته‌بندی محصولات\n\nلطفاً یک دسته‌بندی را انتخاب کنید:",
+            reply_markup=get_categories_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
     else:
         logger.error("start_subscription_flow called but neither callback_query nor message is present in update.")
@@ -250,7 +303,9 @@ async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     selected_plan = context.user_data.get('selected_plan_details')
     message_text = f"شما پلن «{selected_plan['name']}» را انتخاب کرده‌اید. آیا کد تخفیف دارید؟"
 
-    await query.message.edit_text(
+    # Use safe_edit_message_text to prevent 'Message is not modified' errors if user triggers the same callback repeatedly
+    await safe_edit_message_text(
+        query.message,
         text=message_text,
         reply_markup=get_ask_discount_keyboard()
     )
@@ -537,8 +592,17 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
     # Retrieve the final price (potentially discounted) from user_data
     price_irr = context.user_data.get('final_price')
     if price_irr is None:
-        # Use the live calculated IRR price
+        # Try cached live IRR
         price_irr = context.user_data.get('live_irr_price')
+    # If still None, but تتر پایه موجود است، محاسبه از روی نرخ لحظه‌ای
+    if price_irr is None:
+        usdt_base_price = selected_plan.get('price_tether') or selected_plan.get('original_price_usdt')
+        if usdt_base_price:
+            rate = get_usdt_to_irr_rate()
+            if rate:
+                price_irr = int(usdt_base_price * rate)
+                context.user_data['dynamic_irr_price'] = price_irr
+                context.user_data['live_irr_price'] = price_irr
     
     if price_irr is None:
         await query.edit_message_text(
@@ -688,20 +752,34 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             return SELECT_PAYMENT_METHOD
 
     elif payment_method == 'crypto':
-        rial_amount = context.user_data.get('dynamic_irr_price')
-        # Use the original (or discounted) USDT price directly; no reverse conversion needed
-        live_calculated_usdt_price = context.user_data.get('live_usdt_price') or (selected_plan.get('price_tether') or selected_plan.get('original_price_usdt'))
-        # Cache the price in user_data for later use (e.g., verification callbacks)
+        # Determine live USDT price (base price possibly discounted)
+        live_calculated_usdt_price = context.user_data.get('live_usdt_price') or (
+            selected_plan.get('price_tether') or selected_plan.get('original_price_usdt')
+        )
+        # Cache for later verification steps
         context.user_data['live_usdt_price'] = live_calculated_usdt_price
 
         if live_calculated_usdt_price is None or live_calculated_usdt_price <= 0:
-            logger.warning(f"Plan {plan_id} has invalid live_calculated_usdt_price {live_calculated_usdt_price} for crypto payment. telegram_id: {telegram_id}")
-            await query.message.edit_text("خطا: قیمت محاسبه شده تتر برای طرح نامعتبر است یا یافت نشد. لطفاً مجدداً تلاش کنید.", reply_markup=get_payment_methods_keyboard())
+            logger.warning(
+                f"Plan {plan_id} has invalid live_calculated_usdt_price {live_calculated_usdt_price} for crypto payment. telegram_id: {telegram_id}"
+            )
+            await query.message.edit_text(
+                "خطا: قیمت محاسبه شده تتر برای طرح نامعتبر است یا یافت نشد. لطفاً مجدداً تلاش کنید.",
+                reply_markup=get_payment_methods_keyboard(),
+            )
             return SELECT_PAYMENT_METHOD
+
+        # Ensure we also have an up-to-date IRR equivalent (for DB گزارش‌ها و سقف تراکنش‌ها)
+        rial_amount = context.user_data.get('dynamic_irr_price')
         if rial_amount is None or rial_amount <= 0:
-            logger.warning(f"Plan {plan_id} has invalid rial_amount {rial_amount} for crypto payment. telegram_id: {telegram_id}")
-            await query.message.edit_text("خطا: قیمت ریالی طرح برای محاسبه معادل تتر مشخص نشده است.", reply_markup=get_payment_methods_keyboard())
-            return SELECT_PAYMENT_METHOD
+            # Compute on-the-fly from current market rate
+            usdt_rate_toman = await get_usdt_to_irr_rate()  # returns IRR per 1 USDT
+            if usdt_rate_toman:
+                rial_amount = int(live_calculated_usdt_price * usdt_rate_toman)
+                context.user_data['dynamic_irr_price'] = rial_amount
+            else:
+                # If rate fetch failed, still proceed without Rial amount
+                rial_amount = 0
 
         expires_at = datetime.now() + timedelta(minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES)
 
@@ -1563,6 +1641,7 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
 payment_conversation = ConversationHandler(
     entry_points=[
         CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'),
+        CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
         MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 محصولات)$"), start_subscription_flow),
     ],
     states={
@@ -1588,11 +1667,13 @@ payment_conversation = ConversationHandler(
             CallbackQueryHandler(ask_for_tx_hash_handler, pattern='^payment_send_tx$'),
             CallbackQueryHandler(payment_verify_zarinpal_handler, pattern=f'^{VERIFY_ZARINPAL_PAYMENT_CALLBACK}$'),
             CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$'),
+            CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
             MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 محصولات)$"), start_subscription_flow),
         ],
         WAIT_FOR_TX_HASH: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_tx_hash_handler),
             CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$'),
+            CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
         ],
     },
     fallbacks=[

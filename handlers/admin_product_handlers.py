@@ -238,7 +238,7 @@ class AdminProductHandler:
         return FIELD_VALUE
 
     async def _show_all_plans(self, query):
-        """Displays a list of all plans with their status to admins."""
+        """Displays a list of all plans grouped by categories."""
         try:
             # Fetch all plans, including inactive/private ones, for admin view
             all_plans = self.db_queries.get_all_plans()
@@ -246,22 +246,60 @@ class AdminProductHandler:
                 await query.edit_message_text("هیچ پلنی یافت نشد.")
                 return
 
-            keyboard = []
+            # Group plans by category
+            categorized_plans = {}
+            uncategorized_plans = []
+            
             for plan in all_plans:
                 plan = dict(plan)
-                plan_id = plan['id']
-                plan_name = plan['name']
-                status_emoji = "✅" if plan.get('is_active', False) else "❌"
-                visibility_emoji = "🌍" if plan.get('is_public', False) else "🔒"
-                
-                button_text = f"{plan_name} [{status_emoji} فعال, {visibility_emoji} عمومی]"
-                keyboard.append([InlineKeyboardButton(button_text, callback_data=f"view_plan_{plan_id}")])
+                category_id = plan.get('category_id')
+                if category_id:
+                    if category_id not in categorized_plans:
+                        categorized_plans[category_id] = []
+                    categorized_plans[category_id].append(plan)
+                else:
+                    uncategorized_plans.append(plan)
+            
+            keyboard = []
+            text = "📜 *مدیریت پلن‌ها*:\n\n"
+            
+            # Show categorized plans
+            for category_id, plans in categorized_plans.items():
+                try:
+                    category = self.db_queries.get_category_by_id(category_id)
+                    category_name = category.get('name', f'ID: {category_id}') if category else f'ID: {category_id}'
+                    text += f"📁 **{category_name}** ({len(plans)} محصول)\n"
+                    
+                    for plan in plans:
+                        plan_id = plan['id']
+                        plan_name = plan['name']
+                        status_emoji = "✅" if plan.get('is_active', False) else "❌"
+                        visibility_emoji = "🌍" if plan.get('is_public', False) else "🔒"
+                        
+                        button_text = f"{status_emoji}{visibility_emoji} {plan_name}"
+                        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"view_plan_{plan_id}")])
+                    
+                    text += "\n"
+                except Exception as e:
+                    logger.error(f"Error getting category {category_id}: {e}")
+            
+            # Show uncategorized plans
+            if uncategorized_plans:
+                text += f"📄 **بدون دسته‌بندی** ({len(uncategorized_plans)} محصول)\n"
+                for plan in uncategorized_plans:
+                    plan_id = plan['id']
+                    plan_name = plan['name']
+                    status_emoji = "✅" if plan.get('is_active', False) else "❌"
+                    visibility_emoji = "🌍" if plan.get('is_public', False) else "🔒"
+                    
+                    button_text = f"{status_emoji}{visibility_emoji} {plan_name}"
+                    keyboard.append([InlineKeyboardButton(button_text, callback_data=f"view_plan_{plan_id}")])
 
             keyboard.append([InlineKeyboardButton("➕ افزودن پلن جدید", callback_data="products_add")])
             keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back_main")])
 
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text("📜 *مدیریت پلن‌ها*:", parse_mode="Markdown", reply_markup=reply_markup)
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
         except Exception as e:
             logger.error(f"Error showing all plans: {e}")
