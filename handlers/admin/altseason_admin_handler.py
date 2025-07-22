@@ -58,7 +58,11 @@ class AdminAltSeasonHandler:
         ]
         flag = "✅ فعال" if self.db.is_enabled() else "❌ غیرفعال"
         text = f"مدیریت آلت‌سیزن\n\nوضعیت فعلی دکمه: {flag}"
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        except BadRequest:
+            # If nothing changed, avoid error
+            pass
         return MENU
 
     async def toggle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

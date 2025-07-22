@@ -404,7 +404,7 @@ class AltSeasonQueries:
                     COALESCE(u.phone, au.phone) AS phone,
                     aa.question_id,
                     aq.title as question_title,
-                    aa.selected_option,
+                    aa.option_id as selected_option,
                     aa.answered_at
                 FROM altseason_users au
                 LEFT JOIN users u ON au.user_id = u.user_id
@@ -427,6 +427,7 @@ class AltSeasonQueries:
                 ua.full_name,
                 ua.username,
                 ua.phone,
+                ua.question_id,
                 ua.question_title,
                 ua.selected_option,
                 la.latest_answer_time
@@ -441,18 +442,71 @@ class AltSeasonQueries:
             if df.empty:
                 return pd.DataFrame()
             
-            # Pivot so each question becomes a column
-            pivot_df = df.pivot_table(
-                index=['user_id', 'full_name', 'username', 'phone', 'latest_answer_time'],
-                columns='question_title',
-                values='selected_option',
-                aggfunc='first'
-            ).reset_index()
+            # ------------------------------------------------------------------
+            # Group answers by user and session (based on answered_at timestamps)
+            # Each complete set of answers represents one attempt/session
+            # ------------------------------------------------------------------
             
-            # Flatten column names
-            pivot_df.columns.name = None
+            # Get total number of questions
+            cur = db.conn.cursor()
+            cur.execute('SELECT COUNT(*) FROM altseason_questions')
+            total_questions = cur.fetchone()[0] or 1
             
-            return pivot_df
+            # Get all questions in order
+            cur.execute('SELECT id, title FROM altseason_questions ORDER BY question_order, id')
+            all_questions = cur.fetchall()
+            
+            # Group by user and create sessions based on complete answer sets
+            result_rows = []
+            
+            for user_id in df['user_id'].unique():
+                user_df = df[df['user_id'] == user_id].copy()
+                user_df = user_df.sort_values('latest_answer_time')
+                
+                # Get user info (take first row)
+                user_info = user_df.iloc[0]
+                full_name = user_info['full_name']
+                username = user_info['username']
+                phone = user_info['phone']
+                
+                # Group answers into sessions (every total_questions answers = 1 session)
+                answers_list = user_df.to_dict('records')
+                
+                session_num = 1
+                for i in range(0, len(answers_list), total_questions):
+                    session_answers = answers_list[i:i + total_questions]
+                    
+                    # Create row for this session
+                    row = {
+                        'user_id': user_id,
+                        'full_name': full_name,
+                        'username': username,
+                        'phone': phone,
+                        'attempt_number': session_num,
+                        'session_date': session_answers[0]['latest_answer_time'] if session_answers else None
+                    }
+                    
+                    # Add question and answer columns
+                    for q_idx, (q_id, q_title) in enumerate(all_questions, 1):
+                        row[f'question_{q_idx}'] = q_title
+                        
+                        # Find answer for this question in this session
+                        answer = None
+                        for ans in session_answers:
+                            if ans['question_id'] == q_id:
+                                answer = ans['selected_option']
+                                break
+                        row[f'answer_{q_idx}'] = answer
+                    
+                    result_rows.append(row)
+                    session_num += 1
+            
+            # Convert to DataFrame
+            if not result_rows:
+                return pd.DataFrame()
+                
+            result_df = pd.DataFrame(result_rows)
+            return result_df
             
         except Exception as e:
             logger.error(f"Error exporting answers dataframe: {e}")
