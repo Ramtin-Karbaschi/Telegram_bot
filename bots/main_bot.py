@@ -99,6 +99,7 @@ from database.queries import DatabaseQueries
 from handlers.subscription.subscription_handlers import activate_or_extend_subscription
 from handlers.free_package.free_package_handlers import free_packages_menu, start_free_package_flow, start_free_package_flow_text, show_queue_position, show_queue_position_message
 from handlers.video_access_handlers import video_access_handler
+from handlers.altseason_handler import AltSeasonHandler
 from handlers.user_survey_handlers import user_survey_handler
 from utils.constants.all_constants import (
     CALLBACK_BACK_TO_MAIN_MENU,
@@ -253,6 +254,7 @@ from handlers.admin.discount_handlers import get_create_discount_conv_handler
 from handlers.admin_product_handlers import AdminProductHandler
 from handlers.user_survey_handlers import user_survey_handler
 from handlers.video_access_handlers import video_access_handler
+from handlers.altseason_handler import AltSeasonHandler
 from utils.keyboards import (
     get_main_menu_keyboard, get_back_button
 )
@@ -334,7 +336,9 @@ class MainBot:
             "message",
             "callback_query",
             "chat_member",
-            "my_chat_member"
+            "my_chat_member",
+            "poll_answer",
+            "poll"
         ]
         
         # Initialize database connection and ensure tables exist
@@ -384,6 +388,10 @@ class MainBot:
         self.application.add_handler(registration_conversation)
 
         # ---------------- Free Package Handlers FIRST (higher priority) ----------------
+        # AltSeason handler setup
+        self.altseason_handler = AltSeasonHandler()
+        for h in self.altseason_handler.get_handlers():
+            self.application.add_handler(h, group=0)
         # Free Package conversation handler
         self.application.add_handler(get_free_package_conv_handler(), group=0)
         # Queue position (inline and text)
@@ -397,6 +405,7 @@ class MainBot:
         self.application.add_handler(CallbackQueryHandler(free_packages_menu, pattern=r"^free_package_menu$"), group=0)
         self.application.add_handler(CallbackQueryHandler(start_subscription_flow, pattern=r"^products_menu$"), group=0)
         
+        # Callback entry for AltSeason is handled by conversation handler
         # Handler for free plan selection (outside conversation)
         from handlers.payment.payment_handlers import select_plan_handler
         self.application.add_handler(CallbackQueryHandler(select_plan_handler, pattern=r"^plan_\d+$"), group=0)

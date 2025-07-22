@@ -1,6 +1,24 @@
 """Database schema definitions for the Daraei Academy Telegram bot."""
 
 # SQL statements for creating database tables
+
+# ---------------------------------------------------------------------------
+# Product category tree (for nested categories like "🛒 محصولات/کریپتو/…")
+# ---------------------------------------------------------------------------
+CATEGORIES_TABLE = '''
+CREATE TABLE IF NOT EXISTS categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_id INTEGER NULL,
+    name TEXT NOT NULL,
+    path TEXT UNIQUE NOT NULL, -- e.g. "🛒 محصولات/کریپتو/کانال VIP"
+    display_order INTEGER DEFAULT 0,
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (parent_id) REFERENCES categories (id) ON DELETE CASCADE,
+    UNIQUE(parent_id, name)
+)
+'''
 USERS_TABLE = '''
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
@@ -345,6 +363,7 @@ CREATE TABLE IF NOT EXISTS plan_videos (
 
 # List of all tables to create
 ALL_TABLES = [
+    CATEGORIES_TABLE,
     USERS_TABLE,
     PLANS_TABLE,
     SUBSCRIPTIONS_TABLE,

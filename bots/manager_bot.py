@@ -4,6 +4,12 @@ Manager Telegram bot for Daraei Academy
 
 import logging
 import asyncio
+import sys
+import os
+
+# Add the project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from database.queries import DatabaseQueries as Database # Added Database import
 import datetime
 from typing import Optional # Added for type hinting
@@ -31,8 +37,10 @@ import config # For other config vars like CHANNEL_ID
 from database.models import Database as DBConnection # For DB connection
 from handlers.admin.discount_handlers import get_create_discount_conv_handler
 from handlers.admin.free_package_admin_handlers import get_freepkg_admin_handlers  # Fixed import
+from handlers.admin.altseason_admin_handler import AdminAltSeasonHandler
 from handlers.admin_menu_handlers import AdminMenuHandler  # Import admin menu handler
 from handlers.admin_product_handlers import AdminProductHandler
+from handlers.admin_category_handlers import AdminCategoryHandler
 from handlers.video_upload_handlers import get_conv_handler as get_video_upload_conv
 from handlers.survey_builder import get_conv_handler as get_survey_builder_conv
 from utils.invite_link_manager import InviteLinkManager  # Import InviteLinkManager
@@ -117,6 +125,7 @@ class ManagerBot:
         # Register Video Upload conversation handler for admins (high priority)
         self.application.add_handler(get_video_upload_conv(), group=-1)
         # Register Survey Builder conversation handler
+        self.altseason_admin_handler = AdminAltSeasonHandler()  # AltSeason admin management
         self.application.add_handler(get_survey_builder_conv(), group=-1)
 
         # Register Free Package admin command handlers
@@ -139,6 +148,7 @@ class ManagerBot:
         
         # Initialize handlers
         self.ticket_handler = AdminTicketHandler()
+        self.category_handler = AdminCategoryHandler(admin_config=self.admin_config)
         self.product_handler = AdminProductHandler(self.db_queries, admin_config=self.admin_config)
         self.menu_handler = AdminMenuHandler(self.db_queries, InviteLinkManager, admin_config=self.admin_config, main_bot_app=self.main_bot_app)
         
@@ -640,6 +650,8 @@ class ManagerBot:
             'پنل مدیریت در اختیار شماست. لطفا گزینه مورد نظر را انتخاب کنید:',
             reply_markup=reply_markup
         )
+    
+        return
 
     @staff_only
     async def view_tickets_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -988,8 +1000,21 @@ class ManagerBot:
 
         # --- Conversation and Callback Handlers ---
         # Add conversation handlers from different modules
+        # Register AltSeason admin conversation handler
+        application.add_handler(self.altseason_admin_handler.get_conv_handler())
+
+        # Register product management conversation handlers
         for handler in self.product_handler.get_product_conv_handlers():
             application.add_handler(handler)
+
+        # Register static product management callback handlers (non-conversational)
+        for handler in self.product_handler.get_static_product_handlers():
+            application.add_handler(handler)
+
+        # Register category management conversation handler
+        application.add_handler(self.category_handler.get_conv_handler())
+
+        # Register ticket management conversation handler
         application.add_handler(self.ticket_handler.get_ticket_conversation_handler())
         # Capture admin replies (ForceReply) for edited/manual ticket answers
         application.add_handler(MessageHandler(
@@ -1158,6 +1183,8 @@ def setup_handlers(self):
 
     # --- Conversation and Callback Handlers ---
     # Add conversation handlers from different modules
+    # Category management conversation
+    application.add_handler(self.category_handler.get_conv_handler())
     for handler in self.product_handler.get_product_conv_handlers():
         application.add_handler(handler)
     for handler in self.product_handler.get_static_product_handlers():

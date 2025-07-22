@@ -40,6 +40,7 @@ class AdminProductHandler:
         self._PLAN_FIELD_LABELS = {
             # Required fields (marked with ⭐)
             'name': '⭐ نام پلن (ضروری)',
+            'category_id': '⭐ دسته‌بندی (ضروری)',
             'description': '⭐ توضیحات (ضروری)',
             'base_currency': '⭐ ارز پایه (ضروری)',
             'base_price': '⭐ قیمت پایه (ضروری)',
@@ -48,6 +49,7 @@ class AdminProductHandler:
             # Optional fields (marked with 🔹)
             'capacity': '🔹 ظرفیت (اختیاری)',
             'expiration_date': '🔹 تاریخ انقضا (اختیاری)',
+            'fixed_end_date': '🔹 تاریخ پایان ثابت (اختیاری)',
             'auto_delete_links': '🔹 حذف خودکار لینک‌ها (اختیاری)',
             'plan_type': '🔹 نوع پلن (اختیاری)',
             'videos': '🔹 ویدئوها (اختیاری)',
@@ -58,7 +60,7 @@ class AdminProductHandler:
         }
         
         # Required fields for validation
-        self._REQUIRED_FIELDS = {'name', 'description', 'base_currency', 'base_price', 'duration_days'}
+        self._REQUIRED_FIELDS = {'name', 'description', 'base_currency', 'base_price', 'duration_days', 'category_id'}
     
     async def _handle_fields_back(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle back button from the extra-fields menu.
@@ -69,6 +71,14 @@ class AdminProductHandler:
         """
         query = update.callback_query
         await query.answer()
+
+        # If returning from a nested picker (e.g., video selection), just show fields menu again
+        if 'video_selection_mode' in context.user_data:
+            # Exit video selection and show fields menu via helper to avoid duplication
+            context.user_data.pop('video_selection_mode', None)
+            context.user_data.pop('current_field_key', None)
+            return await self._handle_back_to_fields(update, context)
+
         mode = context.user_data.get('extra_mode', 'add')
 
         if mode == 'add':
@@ -118,6 +128,114 @@ class AdminProductHandler:
 
 
 
+
+    # -------------------- Category Selection Helpers --------------------
+    async def _handle_unlimited_duration(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle unlimited duration button press, setting duration_days to 0 and returning to fields menu."""
+        query = update.callback_query
+        await query.answer()
+
+        # Determine mode (add or edit)
+        mode = context.user_data.get('extra_mode', 'add')
+        prefix = 'new_plan_' if mode == 'add' else 'edit_plan_'
+
+        # Save unlimited duration as 0 days
+        context.user_data[f"{prefix}duration_days"] = 0
+
+        # Clear current field flags
+        context.user_data.pop('current_field_key', None)
+        context.user_data.pop('current_field', None)
+
+        # Refresh fields menu
+        text = self._generate_summary_text(context, mode) + "\n\nستون مورد نظر را برای مقداردهی انتخاب کنید:"
+        reply_markup = self._build_fields_keyboard(context, mode)
+        try:
+            await query.edit_message_text(text, reply_markup=reply_markup)
+        except telegram.error.BadRequest as e:
+            if "Message is not modified" not in str(e):
+                raise
+        return FIELD_VALUE
+
+    async def _show_category_children(self, query, context, parent_id: int | None):
+        """Display child categories for navigation and selection."""
+        children = self.db_queries.get_children_categories(parent_id)
+        keyboard = []
+        
+        if not children:
+            # No categories found
+            text = "❌ هیچ دسته‌بندی یافت نشد.\n\nلطفاً ابتدا از بخش مدیریت دسته‌بندی‌ها، دسته‌بندی ایجاد کنید."
+            keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="fields_back")])
+        else:
+            text = "📂 **انتخاب دسته‌بندی محصول:**\n\n"
+            if parent_id is None:
+                text += "دسته‌بندی اصلی را انتخاب کنید:"
+            else:
+                text += "زیردسته مورد نظر را انتخاب کنید:"
+            
+            for cat in children:
+                cat_id = cat.get('id')
+                name = cat.get('name', '')
+                # Determine if has children
+                has_children = len(self.db_queries.get_children_categories(cat_id)) > 0
+                if has_children:
+                    # Row with two buttons: navigate 📂 and select ✅
+                    keyboard.append([
+                        InlineKeyboardButton(f"📂 {name}", callback_data=f"category_nav_{cat_id}"),
+                        InlineKeyboardButton("✅", callback_data=f"category_select_{cat_id}")
+                    ])
+                else:
+                    # Leaf: single select button with name
+                    keyboard.append([InlineKeyboardButton(f"✅ {name}", callback_data=f"category_select_{cat_id}")])
+            
+            # Navigation buttons
+            if parent_id is not None:
+                # back button
+                stack = context.user_data.get('category_nav_stack', [])
+                parent_parent = stack[-1] if stack else None
+                back_data = f"category_back_{parent_parent}" if parent_parent is not None else "category_back_root"
+                keyboard.append([InlineKeyboardButton("🔙 بازگشت به بالا", callback_data=back_data)])
+            else:
+                keyboard.append([InlineKeyboardButton("🔙 بازگشت به فیلدها", callback_data="fields_back")])
+        
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    async def _handle_category_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Process category navigation and selection callbacks."""
+        query = update.callback_query
+        await query.answer()
+        data = query.data
+        if data.startswith('category_nav_'):
+            cat_id = int(data.split('_')[-1])
+            stack = context.user_data.get('category_nav_stack', [])
+            stack.append(parent_id := cat_id)
+            context.user_data['category_nav_stack'] = stack
+            await self._show_category_children(query, context, parent_id=cat_id)
+            return FIELD_VALUE
+        if data.startswith('category_back_'):
+            target = data.split('_')[-1]
+            if target == 'root':
+                context.user_data['category_nav_stack'] = []
+                await self._show_category_children(query, context, parent_id=None)
+            else:
+                parent_id = int(target)
+                stack = context.user_data.get('category_nav_stack', [])
+                if stack:
+                    stack.pop()
+                context.user_data['category_nav_stack'] = stack
+                await self._show_category_children(query, context, parent_id=parent_id)
+            return FIELD_VALUE
+        if data.startswith('category_select_'):
+            cat_id = int(data.split('_')[-1])
+            mode = context.user_data.get('extra_mode', 'add')
+            prefix = 'new_plan_' if mode == 'add' else 'edit_plan_'
+            context.user_data[f'{prefix}category_id'] = cat_id
+            context.user_data.pop('category_nav_stack', None)
+            context.user_data.pop('current_field', None)
+            text = self._generate_summary_text(context, mode) + "\n\nستون مورد نظر را برای مقداردهی انتخاب کنید:"
+            reply_markup = self._build_fields_keyboard(context, mode)
+            await query.edit_message_text(f"✅ دسته‌بندی انتخاب شد.\n\n" + text, reply_markup=reply_markup)
+            return FIELD_VALUE
+        return FIELD_VALUE
 
     async def _show_all_plans(self, query):
         """Displays a list of all plans with their status to admins."""
@@ -455,12 +573,33 @@ class AdminProductHandler:
         for field, label in self._PLAN_FIELD_LABELS.items():
             val = context.user_data.get(f"{prefix}{field}")
             emoji = "✅" if val is not None else "▫️"
-            show_val = val if val is not None else "—"
+            
+            # Special handling for category_id to show category name
+            if field == 'category_id' and val is not None:
+                try:
+                    category = self.db_queries.get_category_by_id(val)
+                    show_val = category.get('name', f'ID: {val}') if category else f'ID: {val}'
+                except:
+                    show_val = f'ID: {val}'
+            else:
+                show_val = val if val is not None else "—"
+            
             lines.append(f"{emoji} {label}: {show_val}")
         return "\n".join(lines)
 
     async def _prompt_for_field_value(self, query: Update.callback_query, field_key: str):
         label = self._PLAN_FIELD_LABELS.get(field_key, field_key)
+        
+        # Special handling for category_id field - should not reach here as it's handled in _handle_set_field
+        if field_key == 'category_id':
+            # This should not happen, but if it does, redirect to category selection
+            context = query._context if hasattr(query, '_context') else None
+            if context:
+                context.user_data['category_nav_stack'] = []
+                await self._show_category_children(query, context, parent_id=None)
+            else:
+                await query.edit_message_text("خطا در انتخاب دسته‌بندی. لطفاً دوباره تلاش کنید.")
+            return
         
         # Special handling for base_currency field
         if field_key == 'base_currency':
@@ -471,7 +610,17 @@ class AdminProductHandler:
             ])
             await query.edit_message_text(f"ارز پایه را انتخاب کنید:", reply_markup=keyboard)
         else:
-            await query.edit_message_text(f"مقدار جدید برای «{label}» را وارد کنید:")
+            # Add cancel button for text input fields
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ لغو", callback_data="cancel_field_input")]
+            ])
+            await query.edit_message_text(
+                f"✏️ وارد کردن {label}:\n\n"
+                f"مقدار جدید را وارد کنید:\n\n"
+                f"دستورات:\n"
+                f"• /skip - رد کردن این فیلد",
+                reply_markup=keyboard
+            )
 
     async def _handle_fields_done(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle completion of extra fields editing and return to confirmation screen."""
@@ -483,20 +632,21 @@ class AdminProductHandler:
         if mode == 'add':
             # Return to add confirmation screen
             plan_data = context.user_data
-            price_tether = plan_data.get('new_plan_price_tether') or plan_data.get('new_plan_price_usdt')
+            base_currency = plan_data.get('new_plan_base_currency', 'IRR')
+            base_price = plan_data.get('new_plan_base_price')
+            price_display = "رایگان"
             irr_price = None
-            
-            if price_tether is not None:
-                usdt_rate = await get_usdt_to_irr_rate()
-                if usdt_rate:
-                    irr_price = int(price_tether * usdt_rate * 10)
-            
-            if price_tether is None:
-                price_display = "رایگان"
-            else:
-                price_display = f"{price_tether} USDT"
-                if irr_price:
-                    price_display += f" ({irr_price:,} تومان)"
+
+            if base_price is not None:
+                if base_currency == 'USDT':
+                    usdt_rate = await get_usdt_to_irr_rate()
+                    if usdt_rate:
+                        irr_price = int(base_price * usdt_rate * 10)
+                    price_display = f"{base_price} USDT"
+                    if irr_price:
+                        price_display += f" ({irr_price:,} تومان)"
+                else:
+                    price_display = f"{int(base_price):,} تومان"
             
             text = (
                 f"✅ اطلاعات پلن:\n\n"
@@ -516,7 +666,7 @@ class AdminProductHandler:
                 [InlineKeyboardButton("❌ لغو", callback_data="cancel_add_plan")]
             ]
             
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
             return ADD_CONFIRMATION
             
         elif mode == 'edit':
@@ -526,23 +676,26 @@ class AdminProductHandler:
             
             updated_data = {
                 'name': context.user_data.get('edit_plan_name', original_plan.get('name')),
-                'price_tether': context.user_data.get('edit_plan_price_usdt', original_plan.get('price_tether')),
+                'base_currency': context.user_data.get('edit_plan_base_currency', original_plan.get('base_currency') or ('USDT' if original_plan.get('price_tether') is not None else 'IRR')),
+                'base_price': context.user_data.get('edit_plan_base_price', original_plan.get('base_price') or original_plan.get('price_tether') or original_plan.get('price')),
                 'duration_days': context.user_data.get('edit_plan_duration', original_plan.get('duration_days')),
                 'capacity': context.user_data.get('edit_plan_capacity', original_plan.get('capacity')),
                 'description': context.user_data.get('edit_plan_description', original_plan.get('description'))
             }
             
-            # Calculate IRR price if USDT price exists
+            # Build price display
             price_display = "رایگان"
-            if updated_data['price_tether'] is not None:
-                usdt_rate = await get_usdt_to_irr_rate()
-                irr_price = None
-                if usdt_rate:
-                    irr_price = int(updated_data['price_tether'] * usdt_rate * 10)
-                
-                price_display = f"{updated_data['price_tether']} USDT"
-                if irr_price:
-                    price_display += f" ({irr_price:,} تومان)"
+            if updated_data['base_price'] is not None:
+                if updated_data['base_currency'] == 'USDT':
+                    usdt_rate = await get_usdt_to_irr_rate()
+                    irr_price = None
+                    if usdt_rate:
+                        irr_price = int(updated_data['base_price'] * usdt_rate * 10)
+                    price_display = f"{updated_data['base_price']} USDT"
+                    if irr_price:
+                        price_display += f" ({irr_price:,} تومان)"
+                else:
+                    price_display = f"{int(updated_data['base_price']):,} تومان"
             
             text = (
                 f"آیا از اعمال تغییرات زیر اطمینان دارید؟\n\n"
@@ -560,7 +713,7 @@ class AdminProductHandler:
                 ]
             ]
             
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
             return EDIT_CONFIRMATION
 
     async def _handle_set_field(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -570,8 +723,18 @@ class AdminProductHandler:
         
         field_key = query.data.replace("set_field_", "")
         logger.info(f"User selected field: {field_key}")
+        # Store under the unified key expected by value-input handlers
+        context.user_data['current_field_key'] = field_key
+        # Keep legacy key for backward-compatibility with any older handlers
         context.user_data['current_field'] = field_key
         
+        # Special handling for category field
+        if field_key == "category_id":
+            # Begin category navigation from root
+            context.user_data['category_nav_stack'] = []
+            await self._show_category_children(query, context, parent_id=None)
+            return FIELD_VALUE
+
         # Special handling for channels field
         if field_key == "channels_json":
             # Show channel picker
@@ -1915,7 +2078,7 @@ class AdminProductHandler:
                 InlineKeyboardButton("⚙️ تنظیم سایر فیلدها", callback_data="add_more_fields"),
                 InlineKeyboardButton("❌ لغو", callback_data="cancel_add_plan")
             ]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
             return ADD_CONFIRMATION
         else:
             # Build confirmation summary for edit flow
@@ -1952,7 +2115,7 @@ class AdminProductHandler:
                 InlineKeyboardButton("⚙️ ویرایش مجدد فیلدها", callback_data="fields_back"),
                 InlineKeyboardButton("❌ لغو", callback_data="cancel_edit_plan")
             ]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
             return EDIT_CONFIRMATION
 
     async def _handle_add_more_fields(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1964,11 +2127,66 @@ class AdminProductHandler:
         return FIELD_VALUE  # We stay in conversation until done
 
     async def _handle_set_field(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Admin selected a specific field to set."""
+        """Handle selection of a specific plan field (add/edit flows)."""
         query = update.callback_query
         await query.answer()
+
         field_key = query.data.replace("set_field_", "")
+        logger.info(f"[SET_FIELD] User chose field: {field_key}")
+
+        # Store under both legacy and new keys so ALL downstream handlers work consistently
+        context.user_data['current_field_key'] = field_key
         context.user_data['current_field'] = field_key
+
+        # ---------------- Special FIELD UIs ----------------
+        # 1) Category – hierarchical picker
+        if field_key == "category_id":
+            # Initialise navigation stack and open root categories
+            context.user_data['category_nav_stack'] = []
+            await self._show_category_children(query, context, parent_id=None)
+            return FIELD_VALUE
+
+        # 2) Videos – open video management UI
+        if field_key == "videos":
+            return await self._show_video_selection(query, context)
+
+        # 3) Survey type – choose poll/none
+        if field_key == "survey_type":
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 نظرسنجی با Poll تلگرام", callback_data="survey_type_poll_based")],
+                [InlineKeyboardButton("❌ بدون نظرسنجی", callback_data="survey_type_none")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="fields_back")],
+            ])
+            await query.edit_message_text(
+                "📋 **انتخاب نوع نظرسنجی:**\n\n"
+                "📊 **Poll تلگرام:** از قابلیت‌های آماده تلگرام استفاده کنید\n"
+                "❌ **بدون نظرسنجی:** هیچ نظرسنجی نداشته باشید",
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+            return FIELD_VALUE
+
+        # 4) Channel multi-select
+        if field_key == "channels_json":
+            selected_ids: Set[int] = context.user_data.get("plch_selected_ids", set())
+            try:
+                channels_info = (
+                    json.loads(config.TELEGRAM_CHANNELS_INFO)
+                    if isinstance(config.TELEGRAM_CHANNELS_INFO, str)
+                    else config.TELEGRAM_CHANNELS_INFO
+                )
+            except Exception:
+                channels_info = []
+            keyboard = self._build_channel_select_keyboard(channels_info, selected_ids)
+            await query.edit_message_text(
+                "کانال‌های موردنظر را انتخاب و سپس دکمه تأیید را بزنید:",
+                reply_markup=keyboard,
+            )
+            return FIELD_VALUE
+
+        # ---------------- Default: prompt for value ----------------
+        await self._prompt_for_field_value(query, field_key)
+        return FIELD_VALUE
         # If admin chose videos, open video selection UI
         if field_key == "survey_type":
             # Show survey type options (Poll-based or none)
@@ -2030,7 +2248,14 @@ class AdminProductHandler:
         if field_key in ['base_price', 'price_tether']:
             text += "مقدار عددی وارد کنید (مثال: 10.5)\n"
         elif field_key == 'duration_days':
-            text += "تعداد روز را وارد کنید (مثال: 30)\n"
+            # Provide unlimited option through inline keyboard
+            text += "مدت زمان پلن را به روز وارد کنید (مثال: 30)\n"
+            keyboard = [
+                [InlineKeyboardButton("♾ نامحدود", callback_data="duration_unlimited")],
+                [InlineKeyboardButton("❌ لغو و بازگشت", callback_data="cancel_field_input")]
+            ]
+            await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
+            return  # wait for unlimited or cancel callbacks
         elif field_key == 'capacity':
             text += "حداکثر تعداد کاربر را وارد کنید (مثال: 100)\n"
         elif field_key == 'expiration_date':
@@ -2792,14 +3017,17 @@ class AdminProductHandler:
                  ],
                  FIELD_VALUE: [
                      CallbackQueryHandler(self._handle_set_field, pattern='^set_field_'),
+                 CallbackQueryHandler(self._handle_category_callback, pattern='^category_'),
                      CallbackQueryHandler(self._handle_fields_done, pattern='^fields_done$'),
                      CallbackQueryHandler(self._handle_fields_back, pattern='^fields_back$'),
                       CallbackQueryHandler(self._plan_channel_picker_callback, pattern='^plch.*'),
                       CallbackQueryHandler(self._handle_base_currency_selection, pattern='^base_currency_'),
                       CallbackQueryHandler(self._handle_plan_type_selection, pattern='^plan_type_'),
+                       CallbackQueryHandler(self._handle_unlimited_duration, pattern='^duration_unlimited$'),
                       CallbackQueryHandler(self._handle_video_management, pattern='^manage_videos$'),
                       CallbackQueryHandler(self._handle_video_toggle, pattern='^toggle_video_'),
-                      CallbackQueryHandler(self._handle_video_selection_confirm, pattern='^confirm_video_selection$'),
+                      CallbackQueryHandler(self._handle_confirm_video_selection, pattern='^confirm_video_selection$'),
+                       CallbackQueryHandler(self._handle_clear_video_selection, pattern='^clear_video_selection$'),
                       CallbackQueryHandler(self._handle_survey_management, pattern='^manage_survey$'),
                       CallbackQueryHandler(self._handle_survey_option, pattern='^(create_default_survey|create_custom_survey|no_survey)$'),
                       CallbackQueryHandler(self._handle_back_to_fields, pattern='^back_to_fields$'),
@@ -2837,14 +3065,17 @@ class AdminProductHandler:
                  EDIT_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_new_plan_description)],
                  FIELD_VALUE: [
                      CallbackQueryHandler(self._handle_set_field, pattern='^set_field_'),
+                 CallbackQueryHandler(self._handle_category_callback, pattern='^category_'),
                      CallbackQueryHandler(self._handle_fields_done, pattern='^fields_done$'),
                      CallbackQueryHandler(self._handle_fields_back, pattern='^fields_back$'),
                       CallbackQueryHandler(self._plan_channel_picker_callback, pattern='^plch.*'),
                       CallbackQueryHandler(self._handle_base_currency_selection, pattern='^base_currency_'),
                       CallbackQueryHandler(self._handle_plan_type_selection, pattern='^plan_type_'),
+                       CallbackQueryHandler(self._handle_unlimited_duration, pattern='^duration_unlimited$'),
                       CallbackQueryHandler(self._handle_video_management, pattern='^manage_videos$'),
                       CallbackQueryHandler(self._handle_video_toggle, pattern='^toggle_video_'),
-                      CallbackQueryHandler(self._handle_video_selection_confirm, pattern='^confirm_video_selection$'),
+                      CallbackQueryHandler(self._handle_confirm_video_selection, pattern='^confirm_video_selection$'),
+                       CallbackQueryHandler(self._handle_clear_video_selection, pattern='^clear_video_selection$'),
                       CallbackQueryHandler(self._handle_survey_management, pattern='^manage_survey$'),
                       CallbackQueryHandler(self._handle_survey_option, pattern='^(create_default_survey|create_custom_survey|no_survey)$'),
                       CallbackQueryHandler(self._handle_back_to_fields, pattern='^back_to_fields$'),
@@ -2864,7 +3095,8 @@ class AdminProductHandler:
                       MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_field_value_input)
                  ],
                  EDIT_CONFIRMATION: [
-                     CallbackQueryHandler(self.update_plan, pattern='^confirm_edit_plan$'),
+                      CallbackQueryHandler(self.update_plan, pattern='^confirm_edit_plan$'),
+                      CallbackQueryHandler(self._handle_fields_back, pattern='^fields_back$'),
                      CallbackQueryHandler(self.cancel_edit_plan, pattern='^cancel_edit_plan$')
                  ]
             },

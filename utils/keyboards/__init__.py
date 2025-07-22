@@ -20,6 +20,13 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
     if is_registered:
         # Free Package
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE))
+        # AltSeason feature button
+        try:
+            from database.altseason_queries import AltSeasonQueries
+            if AltSeasonQueries().is_enabled():
+                keyboard_buttons.insert(0, [KeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON)])
+        except Exception as e:
+            logger.error(f"Unable to add AltSeason button: {e}")
         # Queue position conditional
         if user_id is not None:
             try:
@@ -76,6 +83,13 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
     if is_registered:
         # Free Package
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE))
+        # AltSeason feature button
+        try:
+            from database.altseason_queries import AltSeasonQueries
+            if AltSeasonQueries().is_enabled():
+                keyboard_buttons.insert(0, [KeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON)])
+        except Exception as e:
+            logger.error(f"Unable to add AltSeason button: {e}")
         # Queue position conditional
         if user_id is not None:
             try:
@@ -115,7 +129,9 @@ def get_main_menu_keyboard(user_id=None, is_admin=False, is_registered=False):
         keyboard_buttons.append([
             InlineKeyboardButton("👤 پروفایل کاربری", callback_data="show_status"),
             InlineKeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION, callback_data="start_subscription_flow"),
-            InlineKeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow"), InlineKeyboardButton("📊 جایگاه صف رایگان", callback_data="freepkg_queue_pos")
+            InlineKeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow"),
+            # AltSeason inline button if feature enabled
+            *( [InlineKeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON, callback_data="altseason_flow")] if __import__('database.altseason_queries', fromlist=['AltSeasonQueries']).AltSeasonQueries().is_enabled() else [] ), InlineKeyboardButton("📊 جایگاه صف رایگان", callback_data="freepkg_queue_pos")
         ])
     else:
         keyboard_buttons.append([InlineKeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION, callback_data="start_registration_flow")])
@@ -433,7 +449,9 @@ def get_back_to_ask_discount_keyboard():
         keyboard_buttons.append([
             InlineKeyboardButton("👤 پروفایل کاربری", callback_data="show_status"),
             InlineKeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION, callback_data="start_subscription_flow"),
-            InlineKeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow"), InlineKeyboardButton("📊 جایگاه صف رایگان", callback_data="freepkg_queue_pos")
+            InlineKeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow"),
+            # AltSeason inline button if feature enabled
+            *( [InlineKeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON, callback_data="altseason_flow")] if __import__('database.altseason_queries', fromlist=['AltSeasonQueries']).AltSeasonQueries().is_enabled() else [] ), InlineKeyboardButton("📊 جایگاه صف رایگان", callback_data="freepkg_queue_pos")
         ])
     else:
         keyboard_buttons.append([InlineKeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION, callback_data="start_registration_flow")])
