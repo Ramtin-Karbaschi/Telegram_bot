@@ -364,7 +364,7 @@ class MainBot:
         self.logger.info("Scheduling daily expiration reminder job at 10:00 Asia/Tehran")
         self.application.job_queue.run_daily(
             self.send_expiration_reminders,
-            time=datetime.strptime("10:00", "%H:%M").time(),
+            time=datetime.strptime("10:00", "%H:%M").time().replace(tzinfo=ZoneInfo("Asia/Tehran")),
             name="daily_expiration_reminders",
         )
         # Also run once on startup after 30 seconds
