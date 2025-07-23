@@ -146,7 +146,7 @@ class AltSeasonHandler:
                     message_id=origin_message_id,
                 )
                 # Ensure we cache the file_id even when using copy_message
-                if msg.video:
+                if getattr(msg, 'video', None) or getattr(msg, 'document', None):
                     self.db.update_video_sent(
                         v_id=video.get('id'),
                         file_id=msg.video.file_id,
@@ -180,7 +180,7 @@ class AltSeasonHandler:
             # Cache new file_id & origin so next time copy_message works faster
             self.db.update_video_sent(
                 v_id=video.get('id'),
-                file_id=msg.video.file_id if msg.video else video['telegram_file_id'],
+                file_id=(msg.video.file_id if getattr(msg, 'video', None) else msg.document.file_id if getattr(msg, 'document', None) else video['telegram_file_id']),
                 origin_chat_id=msg.chat_id,
                 origin_message_id=msg.message_id,
             )
