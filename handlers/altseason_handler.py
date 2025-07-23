@@ -148,6 +148,12 @@ class AltSeasonHandler:
                 return True
             except Exception as e:
                 logger.warning(f"AltSeason: copy_message failed ({e}), fallback to send_video")
+        # Determine if we have a saved telegram_file_id; if missing go straight to local upload
+        telegram_file_id = video.get('telegram_file_id')
+        if not telegram_file_id:
+            logger.info("AltSeason: no telegram_file_id stored, trying local file upload")
+            return await self._try_local_video_upload(context, chat_id, video)
+
         # Fallback to send_video with saved file_id
         try:
             msg = await context.bot.send_video(
