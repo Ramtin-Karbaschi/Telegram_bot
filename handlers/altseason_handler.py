@@ -164,11 +164,19 @@ class AltSeasonHandler:
 
         # Fallback to send_video with saved file_id
         try:
-            msg = await context.bot.send_video(
-                chat_id=chat_id,
-                video=video['telegram_file_id'],
-                caption=video.get('caption') or ''
-            )
+            try:
+                msg = await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=video['telegram_file_id'],
+                    caption=video.get('caption') or ''
+                )
+            except Exception as e_vid:
+                logger.warning(f"AltSeason: send_video failed ({e_vid}), trying send_document")
+                msg = await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=video['telegram_file_id'],
+                    caption=video.get('caption') or ''
+                )
             # Cache new file_id & origin so next time copy_message works faster
             self.db.update_video_sent(
                 v_id=video.get('id'),
@@ -189,18 +197,20 @@ class AltSeasonHandler:
     async def _try_local_video_upload(self, context, chat_id: int, video):
         """Try to upload video from local files as last resort"""
         import os
-        videos_dir = "c:/Users/ramti/Documents/GitHub/Telegram_bot/database/data/videos"
+        from pathlib import Path
+        project_root = Path(__file__).resolve().parents[2]
+        videos_dir = project_root / "database" / "data" / "videos"
         
-        if not os.path.exists(videos_dir):
+        if not videos_dir.exists():
             return False
             
         # Look for video files that might match
-        video_files = [f for f in os.listdir(videos_dir) if f.lower().endswith(('.mp4', '.mov', '.avi', '.mkv'))]
+        video_files = [f.name for f in videos_dir.iterdir() if f.suffix.lower() in {'.mp4','.mov','.avi','.mkv'}]
         
         # Try each file (simple fallback - could be improved with better matching)
         for filename in video_files:
             try:
-                file_path = os.path.join(videos_dir, filename)
+                file_path = videos_dir / filename
                 with open(file_path, 'rb') as video_file:
                     msg = await context.bot.send_video(
                         chat_id=chat_id,

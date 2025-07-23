@@ -357,7 +357,7 @@ class AdminAltSeasonHandler:
         import os
         from pathlib import Path
         # Determine project root based on current file location (three levels up)
-        project_root = Path(__file__).resolve().parents[3]
+        project_root = Path(__file__).resolve().parents[2]
         videos_dir = project_root / "database" / "data" / "videos"
         videos_dir = videos_dir.as_posix()  # use POSIX-style path for Telegram messages
         
@@ -414,7 +414,7 @@ class AdminAltSeasonHandler:
         
         selected_file = video_files[file_index]
         from pathlib import Path
-        project_root = Path(__file__).resolve().parents[3]
+        project_root = Path(__file__).resolve().parents[2]
         videos_dir = project_root / "database" / "data" / "videos"
         file_path = videos_dir / selected_file
         
