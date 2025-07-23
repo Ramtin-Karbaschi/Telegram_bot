@@ -12,7 +12,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Conversation states
-SURVEY_RESPONSE = range(1)
+SURVEY_RESPONSE = 1  # Single conversation state
 
 class UserSurveyHandler:
     def __init__(self):
@@ -27,18 +27,18 @@ class UserSurveyHandler:
         survey = self.db_queries.get_plan_survey(plan_id)
         if not survey:
             # No survey required for this plan
-            return True
+            return ConversationHandler.END
         
         survey_id = survey['id']
         
         # Check if user has already completed this survey
         if self.db_queries.has_user_completed_survey(user_id, survey_id):
-            return True
+            return ConversationHandler.END
         
         # Get survey questions
         questions = self.db_queries.get_survey_questions(survey_id)
         if not questions:
-            return True
+            return ConversationHandler.END
         
         # Store survey data in context
         context.user_data['current_survey'] = {
@@ -208,34 +208,48 @@ class UserSurveyHandler:
             # Mark survey as completed
             self.db_queries.mark_survey_completed(user_id, survey_id, plan_id)
         
-        # Show completion message and send videos directly
-        text = "✅ **نظرسنجی تکمیل شد!**\n\n"
-        text += "🙏 از شرکت شما در نظرسنجی متشکریم.\n"
-        text += "📹 در حال ارسال ویدئوهای پلن..."
-        
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text, parse_mode='Markdown')
-        else:
-            await update.message.reply_text(text, parse_mode='Markdown')
-        
-        # Send videos directly
-        from handlers.subscription.subscription_handlers import send_plan_videos
+        # Prepare database access
         from database.queries import DatabaseQueries
         plan = DatabaseQueries.get_plan_by_id(plan_id)
         plan_name = plan['name'] if plan else 'پلن'
-        
-        await send_plan_videos(user_id, context, plan_id, plan_name)
-        
-        # Send final completion message
-        final_text = f"🎉 **تمام ویدئوهای «{plan_name}» ارسال شد!**\n\n"
-        final_text += "✨ از مشاهده محتوا لذت ببرید!\n"
-        final_text += "💡 در صورت نیاز به راهنمایی، با پشتیبانی تماس بگیرید."
-        
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=final_text,
-            parse_mode='Markdown'
-        )
+
+        # Determine whether the plan has videos
+        plan_videos = DatabaseQueries.get_plan_videos(plan_id)
+        has_videos = bool(plan_videos)
+
+        # Initial acknowledgement
+        ack_text = "✅ **نظرسنجی تکمیل شد!**\n\n" \
+                   "🙏 از شرکت شما در نظرسنجی متشکریم."
+        if has_videos:
+            ack_text += "\n📹 در حال ارسال ویدئوهای پلن..."
+
+        if update.callback_query:
+            await update.callback_query.edit_message_text(ack_text, parse_mode='Markdown')
+        else:
+            await update.message.reply_text(ack_text, parse_mode='Markdown')
+
+        # Send content based on plan type
+        if has_videos:
+            # Attempt to send all videos
+            from handlers.subscription.subscription_handlers import send_plan_videos
+            await send_plan_videos(user_id, context, plan_id, plan_name)
+            final_text = (
+                f"🎉 **تمام ویدئوهای «{plan_name}» ارسال شد!**\n\n"
+                "✨ از مشاهده محتوا لذت ببرید!\n"
+                "💡 در صورت نیاز به راهنمایی، با پشتیبانی تماس بگیرید."
+            )
+            await context.bot.send_message(chat_id=user_id, text=final_text, parse_mode='Markdown')
+        else:
+            # اگر پلن ویدئو ندارد، فقط پیام تکمیل نمایش دهید (کانال یا محتوای دیگر قبلاً ارسال می‌شود)
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    f"🎉 دسترسی شما به «{plan_name}» فعال شد!\n\n"
+                    "✨ از محتوای خود لذت ببرید!\n"
+                    "💡 در صورت نیاز به راهنمایی، با پشتیبانی تماس بگیرید."
+                ),
+                parse_mode='Markdown'
+            )
         
         # Clear survey data
         if 'current_survey' in context.user_data:
