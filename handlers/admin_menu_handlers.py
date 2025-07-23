@@ -50,6 +50,11 @@ class AdminMenuHandler:
         self.product_handler = AdminProductHandler(self.db_queries, admin_config=self.admin_config)
         # Support user manager
         self.support_manager = SupportUserManager(admin_config=self.admin_config)
+        
+        # Export subscribers helper
+        from .admin.export_subs_admin_handler import ExportSubsAdminHandler
+        self.export_handler = ExportSubsAdminHandler(db_queries)
+
         # Simple flag for maintenance mode toggle in misc settings
         self.maintenance_mode = False
         self.search_flag = None
@@ -63,6 +68,7 @@ class AdminMenuHandler:
             'broadcast': '📢 ارسال پیام همگانی',
             'stats': '📊 آمار کلی',
             'settings': '⚙️ تنظیمات',
+            'export_subs': '📤 خروجی مشترکین',
             'back_to_main': '🔙 بازگشت به منوی اصلی',
         }
 
@@ -74,6 +80,7 @@ class AdminMenuHandler:
             self.button_texts['broadcast']: self._broadcast_submenu,
             self.button_texts['stats']: self._show_stats_handler,
             self.button_texts['settings']: self._settings_submenu,
+            self.button_texts['export_subs']: self._export_subs_entry,
             self.button_texts['back_to_main']: self.show_admin_menu,
         }
 
@@ -115,6 +122,13 @@ class AdminMenuHandler:
         else: # Assumes (self, query)
             await function_to_call(DummyQuery(update.message))
 
+    async def _export_subs_entry(self, query):
+        """Entry point: delegate to ExportSubsAdminHandler.entry"""
+        # ExportSubsAdminHandler expects an object with .callback_query attribute like Update.
+        from types import SimpleNamespace
+        dummy_update = SimpleNamespace(callback_query=query)
+        await self.export_handler.entry(dummy_update, None)
+
     async def _show_stats_handler(self, query):
         """
         Handles showing stats, designed to be called from a reply keyboard.
@@ -149,6 +163,7 @@ class AdminMenuHandler:
     CREATE_INVITE_LINK = "users_create_invite_link"
     PAYMENTS_MENU = "admin_payments_menu"
     BROADCAST_MENU = "admin_broadcast_menu"
+    EXPORT_SUBS_MENU = "admin_export_subs"
     BROADCAST_ACTIVE = "broadcast_active"
     BROADCAST_ALL = "broadcast_all"
     BROADCAST_WITH_LINK = "broadcast_with_link"
@@ -188,7 +203,8 @@ class AdminMenuHandler:
             keyboard = [
                 [InlineKeyboardButton("🎫 مدیریت تیکت‌ها", callback_data=self.TICKETS_MENU), InlineKeyboardButton("👥 مدیریت کاربران", callback_data=self.USERS_MENU)],
                 [InlineKeyboardButton("💳 مدیریت پرداخت‌ها", callback_data=self.PAYMENTS_MENU), InlineKeyboardButton("📦 مدیریت محصولات", callback_data=self.PRODUCTS_MENU)],
-                [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data=self.BROADCAST_MENU), InlineKeyboardButton("⚙️ تنظیمات", callback_data=self.SETTINGS_MENU)],
+                [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data=self.BROADCAST_MENU), InlineKeyboardButton("📤 خروجی مشترکین", callback_data=self.EXPORT_SUBS_MENU)],
+                [InlineKeyboardButton("⚙️ تنظیمات", callback_data=self.SETTINGS_MENU)],
             ]
         else:
             keyboard = [
@@ -231,6 +247,10 @@ class AdminMenuHandler:
             await self._users_submenu(query)
         elif data == self.PAYMENTS_MENU:
             await self._payments_submenu(query)
+        elif data == self.EXPORT_SUBS_MENU:
+            await self.export_handler.entry(update, context)
+        elif data.startswith("exp_prod_"):
+            await self.export_handler.handle_product(update, context)
         elif data == self.BROADCAST_MENU:
             await self._broadcast_submenu(query)
         elif data == self.BROADCAST_WITH_LINK:
@@ -447,8 +467,8 @@ class AdminMenuHandler:
 
     async def _payments_submenu(self, query):
         keyboard = [
-             [InlineKeyboardButton("💰 تراکنش‌های اخیر", callback_data="payments_recent")],
-             [InlineKeyboardButton("🔍 جستجوی پرداخت", callback_data="payments_search"), InlineKeyboardButton("📈 آمار اشتراک‌ها", callback_data="payments_stats")],
+             [InlineKeyboardButton("💰 تراکنش‌های اخیر", callback_data="payments_recent"), InlineKeyboardButton("🔍 جستجوی پرداخت", callback_data="payments_search")],
+             [InlineKeyboardButton("📤 خروجی مشترکین", callback_data=self.EXPORT_SUBS_MENU), InlineKeyboardButton("📈 آمار اشتراک‌ها", callback_data="payments_stats")],
              [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
          ]
         await query.edit_message_text("💳 *مدیریت پرداخت‌ها*:\nچه کاری می‌خواهید انجام دهید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1876,6 +1896,10 @@ class AdminMenuHandler:
 
         # ---- Support user management handlers ----
         handlers.extend(self.support_manager.get_handlers())
+
+        # ---- Export subscribers handlers ----
+        handlers.append(CallbackQueryHandler(self.export_handler.entry, pattern=f'^{self.EXPORT_SUBS_MENU}$'))
+        handlers.append(CallbackQueryHandler(self.export_handler.handle_product, pattern=r'^exp_prod_\d+$'))
 
         # This is the main handler for all other admin menu callbacks
         # Note: The invite link and ban/unban callbacks are handled by their respective ConversationHandlers.

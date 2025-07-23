@@ -326,6 +326,22 @@ async def log_all_updates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Log any update received by the bot for debugging purposes and persist a user activity log entry."""
     logger.critical(f"CRITICAL_LOG: UNHANDLED_UPDATE_RECEIVED: Type={type(update)}, Content={update}")
 
+    # --- Ensure username in DB is up-to-date ---
+    try:
+        from database.models import Database as _DB
+        tg_user = update.effective_user
+        if tg_user:
+            db = _DB()
+            if db.connect():
+                try:
+                    db.execute("INSERT OR IGNORE INTO users (user_id, username, full_name) VALUES (?, ?, ?)", (tg_user.id, tg_user.username or '', tg_user.full_name or ''))
+                    db.execute("UPDATE users SET username = ? WHERE user_id = ? AND (username IS NULL OR username != ?)", (tg_user.username or '', tg_user.id, tg_user.username or ''))
+                    db.commit()
+                finally:
+                    db.close()
+    except Exception as e:
+        logger.error(f"Failed to sync username for user {telegram_id}: {e}")
+
     # --- Persist user activity in DB (non-blocking, fire-and-forget) ---
     try:
         from utils.user_actions import UserAction  # Local import to avoid circular deps
@@ -447,11 +463,16 @@ class MainBot:
         # Callback handlers for expiration reminder buttons
         self.application.add_handler(CallbackQueryHandler(free_packages_menu, pattern=r"^free_package_menu$"), group=0)
         self.application.add_handler(CallbackQueryHandler(start_subscription_flow, pattern=r"^products_menu(?:_\d+)?$"), group=0)
+        # Survey conversation handler for start_survey_<id>
+        self.application.add_handler(user_survey_handler.get_survey_conversation_handler(), group=0)
         from handlers.payment.payment_handlers import back_to_main_menu_from_categories
         self.application.add_handler(CallbackQueryHandler(back_to_main_menu_from_categories, pattern=r"^back_to_main_menu_from_categories$"), group=0)
         # Callback entry for AltSeason is handled by conversation handler
         # Handler for free plan selection (outside conversation)
         # from handlers.payment.payment_handlers import select_plan_handler
+        # Standalone plan handler needed for free packages selection (outside conversation)
+        from handlers.payment.payment_handlers import select_plan_handler
+        self.application.add_handler(CallbackQueryHandler(select_plan_handler, pattern=r'^plan_\d+$'), group=0)
         # Duplicate standalone plan handler removed - handled inside payment conversation to avoid double execution
         # self.application.add_handler(CallbackQueryHandler(select_plan_handler, pattern=r"^plan_\\d+$"), group=0)
 
@@ -481,6 +502,10 @@ class MainBot:
         
         # Support conversation handler
         self.application.add_handler(ticket_conversation)
+        
+        # User survey conversation handler (for start_survey_<id> callbacks)
+        survey_conv_handler = user_survey_handler.get_survey_conversation_handler()
+        self.application.add_handler(survey_conv_handler, group=0)
         
         # Discount creation handler
         create_discount_conv_handler = get_create_discount_conv_handler()
