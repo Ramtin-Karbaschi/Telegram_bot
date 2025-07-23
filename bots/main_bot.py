@@ -186,24 +186,66 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if subscription_id:
                             await update.message.reply_text(ZARINPAL_PAYMENT_VERIFIED_SUCCESS_AND_SUB_ACTIVATED_MESSAGE_USER.format(ref_id=ref_id, plan_name=plan_info['name']))
                             
-                            # Send channel links and schedule for deletion
-                            channels_info_str = os.getenv('TELEGRAM_CHANNELS_INFO')
-                            if channels_info_str:
-                                try:
-                                    channels = json.loads(channels_info_str)
-                                    keyboard = [[InlineKeyboardButton(f"ورود به {channel['title']}", url=channel['link'])] for channel in channels]
-                                    keyboard.append([InlineKeyboardButton(constants.TEXT_BACK_TO_MAIN_MENU, callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU)])
-                                    
-                                    reply_markup = InlineKeyboardMarkup(keyboard)
-                                    text = "🎉 عالی! اشتراک شما با موفقیت فعال شد. اکنون می‌توانید از طریق دکمه‌های زیر به کانال دسترسی داشته باشید:\n\n⚠️ این لینک‌ها پس از ۵ دقیقه منقضی می‌شوند."
-                                    
-                                    # Send the message and schedule it for deletion
-                                    await send_and_schedule_deletion(update, context, text, reply_markup, 300)
+                            # Get category info to customize success message
+                            category_id = plan_info.get('category_id')
+                            category_info = None
+                            if category_id:
+                                category_info = DatabaseQueries.get_category_by_id(category_id)
+                            
+                            category_name = category_info.get('name', '') if category_info else ''
+                            
+                            # Customize message based on category
+                            if 'VIP' in category_name or 'ویآیپی' in category_name:
+                                # کانال VIP - پیام پیش‌فرض با لینک کانال
+                                channels_info_str = os.getenv('TELEGRAM_CHANNELS_INFO')
+                                if channels_info_str:
+                                    try:
+                                        channels = json.loads(channels_info_str)
+                                        keyboard = [[InlineKeyboardButton(f"ورود به {channel['title']}", url=channel['link'])] for channel in channels]
+                                        keyboard.append([InlineKeyboardButton(constants.TEXT_BACK_TO_MAIN_MENU, callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU)])
+                                        
+                                        reply_markup = InlineKeyboardMarkup(keyboard)
+                                        text = "🎉 عالی! اشتراک شما با موفقیت فعال شد. اکنون می‌توانید از طریق دکمه‌های زیر به کانال دسترسی داشته باشید:\n\n⚠️ این لینک‌ها پس از ۵ دقیقه منقضی می‌شوند."
+                                        
+                                        # Send the message and schedule it for deletion
+                                        await send_and_schedule_deletion(update, context, text, reply_markup, 300)
 
-                                except json.JSONDecodeError:
-                                    logger.error("Failed to parse TELEGRAM_CHANNELS_INFO from .env")
-                                except Exception as e:
-                                    logger.error(f"An error occurred while sending channel links: {e}")
+                                    except json.JSONDecodeError:
+                                        logger.error("Failed to parse TELEGRAM_CHANNELS_INFO from .env")
+                                    except Exception as e:
+                                        logger.error(f"An error occurred while sending channel links: {e}")
+                                        
+                            elif 'آموزش' in category_name:
+                                # آموزش - پیام برای دوره‌های ویدیویی
+                                keyboard = [[InlineKeyboardButton(constants.TEXT_BACK_TO_MAIN_MENU, callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU)]]
+                                reply_markup = InlineKeyboardMarkup(keyboard)
+                                text = "🎉 عالی! اشتراک شما با موفقیت فعال شد.\n\n📚 دوره‌های ویدیویی آموزشی به زودی در اختیار شما قرار خواهند گرفت.\n\n⚠️ این پیام پس از ۵ دقیقه منقضی می‌شود."
+                                
+                                await send_and_schedule_deletion(update, context, text, reply_markup, 300)
+                                
+                            elif 'تورم شکن' in category_name or 'تورم‌شکن' in category_name:
+                                # تورم شکن - پیام سازماندهی
+                                keyboard = [[InlineKeyboardButton(constants.TEXT_BACK_TO_MAIN_MENU, callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU)]]
+                                reply_markup = InlineKeyboardMarkup(keyboard)
+                                text = "🎉 عالی! اشتراک شما با موفقیت فعال شد.\n\n💼 به زودی سازماندهی خواهید شد. برای کسب اطلاعات بیشتر با آیدی پشتیبان @daraeiposhtibani تماس بگیرید.\n\n⚠️ این پیام پس از ۵ دقیقه منقضی می‌شود."
+                                
+                                await send_and_schedule_deletion(update, context, text, reply_markup, 300)
+                                
+                            elif 'مشاوره' in category_name:
+                                # مشاوره - پیام ارسال اسکرین‌شات
+                                keyboard = [[InlineKeyboardButton(constants.TEXT_BACK_TO_MAIN_MENU, callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU)]]
+                                reply_markup = InlineKeyboardMarkup(keyboard)
+                                text = "🎉 عالی! اشتراک شما با موفقیت فعال شد.\n\n🤝 لطفاً با یک اسکرین‌شات از خرید موفق این محصول به آیدی پشتیبان @daraeiposhtibani پیام ارسال کنید.\n\n⚠️ این پیام پس از ۵ دقیقه منقضی می‌شود."
+                                
+                                await send_and_schedule_deletion(update, context, text, reply_markup, 300)
+                                
+                            else:
+                                # پیش‌فرض - برای دسته‌بندی‌های نامشخص
+                                keyboard = [[InlineKeyboardButton(constants.TEXT_BACK_TO_MAIN_MENU, callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU)]]
+                                reply_markup = InlineKeyboardMarkup(keyboard)
+                                text = "🎉 عالی! اشتراک شما با موفقیت فعال شد.\n\n⚠️ این پیام پس از ۵ دقیقه منقضی می‌شود."
+                                
+                                await send_and_schedule_deletion(update, context, text, reply_markup, 300)
                         else:
                             await update.message.reply_text(ZARINPAL_PAYMENT_VERIFIED_SUCCESS_SUB_ACTIVATION_FAILED_MESSAGE_USER.format(ref_id=ref_id))
                     else:
