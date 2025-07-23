@@ -140,11 +140,19 @@ class AltSeasonHandler:
         # Try copy_message first if origin info exists
         if origin_chat_id and origin_message_id:
             try:
-                await context.bot.copy_message(
+                msg = await context.bot.copy_message(
                     chat_id=chat_id,
                     from_chat_id=origin_chat_id,
                     message_id=origin_message_id,
                 )
+                # Ensure we cache the file_id even when using copy_message
+                if msg.video:
+                    self.db.update_video_sent(
+                        v_id=video.get('id'),
+                        file_id=msg.video.file_id,
+                        origin_chat_id=msg.chat_id,
+                        origin_message_id=msg.message_id,
+                    )
                 return True
             except Exception as e:
                 logger.warning(f"AltSeason: copy_message failed ({e}), fallback to send_video")
