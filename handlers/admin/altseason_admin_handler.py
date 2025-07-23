@@ -351,6 +351,8 @@ class AdminAltSeasonHandler:
 
     async def v_browse_files(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show local video files for selection"""
+        from telegram.error import BadRequest
+        """Show local video files for selection"""
         import os
         videos_dir = "c:/Users/ramti/Documents/GitHub/Telegram_bot/database/data/videos"
         
@@ -361,11 +363,14 @@ class AdminAltSeasonHandler:
         video_files = [f for f in os.listdir(videos_dir) if f.lower().endswith(('.mp4', '.mov', '.avi', '.mkv'))]
         
         if not video_files:
-            await update.callback_query.edit_message_text(
-                "📁 هیچ فایل ویدیویی در پوشه یافت نشد.\n\nلطفاً فایل‌های ویدیو را در مسیر زیر قرار دهید:\n`c:/Users/ramti/Documents/GitHub/Telegram_bot/database/data/videos`",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="alt_v_add")]])
-            )
+            try:
+                await update.callback_query.edit_message_text(
+                    "📁 هیچ فایل ویدیویی در پوشه یافت نشد.\n\nلطفاً فایل‌های ویدیو را در مسیر زیر قرار دهید:\n`c:/Users/ramti/Documents/GitHub/Telegram_bot/database/data/videos`",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="alt_v_add")]])
+                )
+            except BadRequest:
+                pass
             return ADD_V
         
         keyboard = []
@@ -377,11 +382,14 @@ class AdminAltSeasonHandler:
         # Store files list in context for callback
         context.user_data['video_files'] = video_files
         
-        await update.callback_query.edit_message_text(
-            "📁 *انتخاب فایل ویدیو*\n\nفایل مورد نظر را انتخاب کنید:",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        try:
+            await update.callback_query.edit_message_text(
+                "📁 *انتخاب فایل ویدیو*\n\nفایل مورد نظر را انتخاب کنید:",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except BadRequest:
+            pass
         return ADD_V
 
     async def v_select_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
