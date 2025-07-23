@@ -353,19 +353,29 @@ class AdminAltSeasonHandler:
         """Show local video files for selection"""
         from telegram.error import BadRequest
         """Show local video files for selection"""
+        await update.callback_query.answer()
         import os
-        videos_dir = "c:/Users/ramti/Documents/GitHub/Telegram_bot/database/data/videos"
+        from pathlib import Path
+        # Determine project root based on current file location (three levels up)
+        project_root = Path(__file__).resolve().parents[3]
+        videos_dir = project_root / "database" / "data" / "videos"
+        videos_dir = videos_dir.as_posix()  # use POSIX-style path for Telegram messages
         
         if not os.path.exists(videos_dir):
             await update.callback_query.answer("📁 پوشه ویدیوها یافت نشد")
             return await self.v_add_prompt(update, context)
         
-        video_files = [f for f in os.listdir(videos_dir) if f.lower().endswith(('.mp4', '.mov', '.avi', '.mkv'))]
+        try:
+            video_files = [f for f in os.listdir(videos_dir) if f.lower().endswith((".mp4", ".mov", ".avi", ".mkv"))]
+            print(f"DEBUG: Found {len(video_files)} video files: {video_files}")
+        except Exception as e:
+            print(f"DEBUG: Error listing directory: {e}")
+            video_files = []
         
         if not video_files:
             try:
                 await update.callback_query.edit_message_text(
-                    "📁 هیچ فایل ویدیویی در پوشه یافت نشد.\n\nلطفاً فایل‌های ویدیو را در مسیر زیر قرار دهید:\n`c:/Users/ramti/Documents/GitHub/Telegram_bot/database/data/videos`",
+                    "📁 هیچ فایل ویدیویی در پوشه یافت نشد.\n\nلطفاً فایل‌های ویدیو را در مسیر زیر قرار دهید:\n`{videos_dir}`",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="alt_v_add")]])
                 )
@@ -403,8 +413,10 @@ class AdminAltSeasonHandler:
             return ADD_V
         
         selected_file = video_files[file_index]
-        videos_dir = "c:/Users/ramti/Documents/GitHub/Telegram_bot/database/data/videos"
-        file_path = os.path.join(videos_dir, selected_file)
+        from pathlib import Path
+        project_root = Path(__file__).resolve().parents[3]
+        videos_dir = project_root / "database" / "data" / "videos"
+        file_path = videos_dir / selected_file
         
         # Upload the file to Telegram and get file_id
         try:
