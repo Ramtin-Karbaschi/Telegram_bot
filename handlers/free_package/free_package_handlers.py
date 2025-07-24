@@ -174,6 +174,22 @@ async def free_packages_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Fallback: ensure a single back row exists pointing to profile
         keyboard.append([InlineKeyboardButton("بازگشت", callback_data="show_status")])
 
+    # Remove any duplicate/legacy back rows that still point elsewhere
+    cleaned_keyboard: list[list[InlineKeyboardButton]] = []
+    back_row_seen = False
+    for row in keyboard:
+        if len(row) == 1 and row[0].callback_data in {"back_to_main_menu_from_plans", "back_to_main_menu"}:
+            # Skip legacy back rows entirely (they are replaced already)
+            continue
+        if len(row) == 1 and row[0].callback_data == "show_status":
+            if back_row_seen:
+                # Skip duplicate profile-back rows
+                continue
+            back_row_seen = True
+        cleaned_keyboard.append(row)
+
+    keyboard = cleaned_keyboard
+
     logger.debug("free_packages_menu: final keyboard rows=%s", len(keyboard))
 
     try:
