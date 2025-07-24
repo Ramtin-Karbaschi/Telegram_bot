@@ -162,19 +162,18 @@ async def free_packages_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     logger.debug("free_packages_menu: received %s rows from get_subscription_plans_keyboard", len(free_plans_markup.inline_keyboard) if hasattr(free_plans_markup, 'inline_keyboard') else 'N/A')
     # InlineKeyboardMarkup object → underlying list is .inline_keyboard
     keyboard: list[list[InlineKeyboardButton]] = []
-    back_row: list[InlineKeyboardButton] | None = None
+    # Extend keyboard with plan rows
     if hasattr(free_plans_markup, "inline_keyboard"):
         keyboard.extend(free_plans_markup.inline_keyboard)
 
-    # Detect and temporarily remove back row (must be last element)
+    # Remove default back-to-products row if present
     if keyboard and len(keyboard[-1]) == 1 and keyboard[-1][0].callback_data == "back_to_main_menu_from_plans":
-        back_row = keyboard.pop()
+        keyboard.pop()
 
-    # keyboard.append([InlineKeyboardButton("🎁 پکیج Toobit", callback_data="freepkg_toobit")])
-
-    # Re-append back row at the very end
-    if back_row:
-        keyboard.append(back_row)
+    # Append back row that returns to user profile
+    keyboard.append([
+        InlineKeyboardButton("👤 پروفایل کاربری", callback_data="show_status")
+    ])
 
     logger.debug("free_packages_menu: final keyboard rows=%s", len(keyboard))
 
