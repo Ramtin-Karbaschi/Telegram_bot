@@ -21,10 +21,22 @@ from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, fi
 # Conversation state definitions
 # Add & Edit flows share a common FIELD_VALUE state for entering arbitrary field values
 (
-    ADD_NAME, ADD_CURRENCY, ADD_PRICE, ADD_DURATION, ADD_CAPACITY, ADD_DESCRIPTION, ADD_CONFIRMATION,
-    EDIT_NAME, EDIT_PRICE, EDIT_DURATION, EDIT_CAPACITY, EDIT_DESCRIPTION, EDIT_CONFIRMATION,
+    ADD_NAME,
+    ADD_CURRENCY,
+    ADD_PRICE,
+    ADD_DURATION,
+    ADD_CAPACITY,
+    ADD_DESCRIPTION,
+    ADD_CONFIRMATION,
+    EDIT_NAME,
+    EDIT_PRICE,
+    EDIT_DURATION,
+    EDIT_CAPACITY,
+    EDIT_DESCRIPTION,
+    EDIT_CONFIRMATION,
     FIELD_VALUE,
-), VIDEO_UPLOAD_PROMPT = range(15)[-1]  # add new state
+    VIDEO_UPLOAD_PROMPT,
+) = range(15)  # Total 15 distinct conversation states
 
 class AdminProductHandler:
     def __init__(self, db_queries=None, admin_config=None):
