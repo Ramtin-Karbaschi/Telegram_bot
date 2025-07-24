@@ -288,18 +288,54 @@ class DatabaseQueries:
             db.close()
     
     @staticmethod
-    def add_video(filename: str, display_name: str, file_path: str, file_size: int = None, duration: int = None):
-        """Add a new video to the database."""
+    def add_video(
+        filename: str,
+        display_name: str,
+        file_path: str,
+        file_size: int | None = None,
+        duration: int | None = None,
+        telegram_file_id: str | None = None,
+    ) -> int | None:
+        """Add a new video to the database.
+
+        Args:
+            filename: Saved filename on disk.
+            display_name: Human-friendly display title.
+            file_path: Absolute path on disk.
+            file_size: Size of the file in bytes.
+            duration: Video duration in seconds (optional).
+            telegram_file_id: Original Telegram **file_id** for faster re-sending / caching (optional).
+
+        Returns:
+            Newly-created *video.id* or ``None`` on failure.
+        """
         db = Database()
         if not db.connect():
             return None
-        
+
         try:
             cursor = db.conn.cursor()
-            cursor.execute("""
-                INSERT INTO videos (filename, display_name, file_path, file_size, duration)
-                VALUES (?, ?, ?, ?, ?)
-            """, (filename, display_name, file_path, file_size, duration))
+            cursor.execute(
+                """
+                INSERT INTO videos (
+                    filename,
+                    display_name,
+                    file_path,
+                    file_size,
+                    duration,
+                    telegram_file_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    filename,
+                    display_name,
+                    file_path,
+                    file_size,
+                    duration,
+                    telegram_file_id,
+                ),
+            )
             db.conn.commit()
             return cursor.lastrowid
         except Exception as e:
