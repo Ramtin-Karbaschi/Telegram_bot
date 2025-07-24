@@ -19,12 +19,12 @@ from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, fi
 
 # Adding capacity states
 # Conversation state definitions
-# Add \u0026 Edit flows share a common FIELD_VALUE state for entering arbitrary field values
+# Add & Edit flows share a common FIELD_VALUE state for entering arbitrary field values
 (
     ADD_NAME, ADD_CURRENCY, ADD_PRICE, ADD_DURATION, ADD_CAPACITY, ADD_DESCRIPTION, ADD_CONFIRMATION,
     EDIT_NAME, EDIT_PRICE, EDIT_DURATION, EDIT_CAPACITY, EDIT_DESCRIPTION, EDIT_CONFIRMATION,
     FIELD_VALUE,
-) = range(14)
+), VIDEO_UPLOAD_PROMPT = range(15)[-1]  # add new state
 
 class AdminProductHandler:
     def __init__(self, db_queries=None, admin_config=None):
@@ -1250,6 +1250,68 @@ class AdminProductHandler:
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         return FIELD_VALUE
     
+    async def _handle_upload_new_video_prompt(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Prompt admin to forward or upload a new video."""
+        query = update.callback_query
+        await query.answer()
+        # Set flag waiting for video
+        context.user_data['waiting_for_video_upload'] = True
+        text = (
+            "📤 **آپلود ویدئو جدید**\n\n"
+            "لطفاً ویدیوی موردنظر را از کانال خصوصی فوروارد کنید و یا مستقیماً از دستگاه خود ارسال نمایید.\n\n"
+            "پس از دریافت و ذخیره ویدئو، دوباره به صفحه انتخاب ویدئو بازخواهید گشت."
+        )
+        keyboard = [[InlineKeyboardButton("🔙 لغو", callback_data="back_to_video_selection")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return FIELD_VALUE
+
+    async def _handle_video_upload(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle actual video message (forwarded or direct) from admin."""
+        # Only proceed if we are awaiting a video upload
+        if not context.user_data.get('waiting_for_video_upload'):
+            return FIELD_VALUE
+        if not update.message or not update.message.video:
+            await update.message.reply_text("❌ لطفاً یک فایل ویدئو ارسال کنید.")
+            return FIELD_VALUE
+        # Save video locally via service
+        video_obj = update.message.video
+        file_obj = await context.bot.get_file(video_obj.file_id)
+        video_id = await video_service.save_uploaded_video(file_obj, original_file_name=video_obj.file_name)
+        if not video_id:
+            await update.message.reply_text("❌ خطا در ذخیره ویدئو. دوباره تلاش کنید.")
+            return FIELD_VALUE
+        vid_info = video_service.get_video_by_id(video_id)
+        # Add to current selection data structure
+        mode = context.user_data.get('extra_mode', 'add')
+        prefix = 'new_plan_' if mode == 'add' else 'edit_plan_'
+        video_data: dict = context.user_data.get(f'{prefix}video_data', {})
+        video_data[video_id] = {
+            'display_name': vid_info['display_name'],
+            'file_path': vid_info['file_path'],
+            'custom_caption': '',
+            'order': len(video_data) + 1
+        }
+        context.user_data[f'{prefix}video_data'] = video_data
+        # Clear flag
+        context.user_data.pop('waiting_for_video_upload', None)
+        # Acknowledge
+        await update.message.reply_text("✅ ویدئو با موفقیت ذخیره شد.")
+        # Reconstruct selection interface via fake callback
+        class MockQuery:
+            def __init__(self, chat_id):
+                self.message = update.message
+                self.id = None
+                self.chat_instance = None
+                self.data = 'back_to_video_selection'
+                self.from_user = update.message.from_user
+
+            async def answer(self, *args, **kwargs):
+                pass
+
+        mock_query = MockQuery(update.message.chat_id)
+        await self._show_video_selection(mock_query, context, 1)
+        return FIELD_VALUE
+
     async def _handle_video_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show video management help."""
         query = update.callback_query
@@ -2748,12 +2810,16 @@ class AdminProductHandler:
         keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="fields_back")])
         if videos and selected:
             keyboard.append([InlineKeyboardButton("✅ تأیید انتخاب", callback_data="confirm_video_selection")])
-        keyboard.append([InlineKeyboardButton("➕ افزودن ویدئو جدید", callback_data="upload_new_video")])
+        keyboard.append([
+            InlineKeyboardButton("➕ افزودن ویدئو جدید", callback_data="upload_new_video"),
+            InlineKeyboardButton("📹 فوروارد ویدئو", callback_data="forward_video")
+        ])
         keyboard.append([InlineKeyboardButton("❌ هیچکدام", callback_data="clear_video_selection")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         return FIELD_VALUE
 
     async def _handle_toggle_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+
         query = update.callback_query
         parts = query.data.split('_')
         video_id = int(parts[2])
@@ -2790,7 +2856,8 @@ class AdminProductHandler:
         prefix = 'new_plan_' if mode=='add' else 'edit_plan_'
         context.user_data[f"{prefix}video_data"] = {}
         # Go back to field selection
-        return await self._show_field_selection(query, context)
+        await self._show_fields_menu(query, context, mode)
+        return FIELD_VALUE
 
     # --- Edit Plan Conversation --- #
 
