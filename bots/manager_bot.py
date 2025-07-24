@@ -644,7 +644,7 @@ class ManagerBot:
                 [KeyboardButton(self.menu_handler.button_texts['tickets']), KeyboardButton(self.menu_handler.button_texts['payments'])],
                 [KeyboardButton(self.menu_handler.button_texts['back_to_main'])],
             ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True, one_time_keyboard=False)
 
         await update.effective_message.reply_text(
             'پنل مدیریت در اختیار شماست. لطفا گزینه مورد نظر را انتخاب کنید:',
@@ -662,26 +662,44 @@ class ManagerBot:
 
         try:
             open_tickets = Database.get_open_tickets()
+            from database.queries import DatabaseQueries  # Local import to avoid circular deps
             if not open_tickets:
                 await update.message.reply_text("در حال حاضر هیچ تیکت بازی وجود ندارد.")
                 return
 
-            response_message = "لیست تیکت‌های باز:\n\n"
+            response_message = "📋 لیست تیکت‌های باز:\n\n"
             for ticket in open_tickets:
                 ticket_id = ticket['id']
                 user_id = ticket['user_id']
                 subject = ticket['subject']
                 created_at = ticket['created_at']
                 # Try to get user's alias or name from MainBot if available
-                user_display = f"کاربر {user_id}"
+                # Fetch user info for nicer display (full name + username if available)
+                try:
+                    user_info = DatabaseQueries.get_user_by_telegram_id(user_id)
+                    if user_info and not isinstance(user_info, dict):
+                        user_info = dict(user_info)
+                except Exception:
+                    user_info = None
+                if user_info:
+                    full_name = user_info.get('full_name') or user_info.get('name') or ""
+                    username = user_info.get('username') or ""
+                    if username:
+                        username = f"@{username}"
+                    if full_name and username:
+                        user_display = f"{full_name} ({username})"
+                    else:
+                        user_display = full_name or username or f"کاربر {user_id}"
+                else:
+                    user_display = f"کاربر {user_id}"
                 if self.main_bot_app and hasattr(self.main_bot_app, 'user_data_cache') and user_id in self.main_bot_app.user_data_cache:
                     user_display = self.main_bot_app.user_data_cache[user_id].get('name', user_display)
                 
-                response_message += f"🎫 تیکت ID: {ticket_id}\n"
-                response_message += f"👤 از طرف: {user_display}\n"
-                response_message += f"موضوع: {subject}\n"
-                response_message += f"📅 تاریخ ایجاد: {created_at}\n"
-                response_message += "---\n"
+                response_message += f"🎫 تیکت #{ticket_id}\n"
+                response_message += f"👤 کاربر: {user_display}\n"
+                response_message += f"🔹 موضوع: {subject}\n"
+                response_message += f"📅 تاریخ: {created_at}\n"
+                response_message += "───────────────────\n\n"
             
             keyboard = []
             for ticket in open_tickets:

@@ -48,7 +48,7 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
 
 
 
-    return ReplyKeyboardMarkup(keyboard_buttons, resize_keyboard=True, one_time_keyboard=False)
+    return ReplyKeyboardMarkup(keyboard_buttons, resize_keyboard=True, one_time_keyboard=False, is_persistent=True)
 
 
 
@@ -111,7 +111,7 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
 
 
 
-    return ReplyKeyboardMarkup(keyboard_buttons, resize_keyboard=True, one_time_keyboard=False)
+    return ReplyKeyboardMarkup(keyboard_buttons, resize_keyboard=True, one_time_keyboard=False, is_persistent=True)
 
 
 
