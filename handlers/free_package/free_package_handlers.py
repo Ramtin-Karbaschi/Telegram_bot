@@ -166,14 +166,13 @@ async def free_packages_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if hasattr(free_plans_markup, "inline_keyboard"):
         keyboard.extend(free_plans_markup.inline_keyboard)
 
-    # Remove default back-to-products row if present
+    # If the last row is the default back-to-products button, convert it to profile-action
     if keyboard and len(keyboard[-1]) == 1 and keyboard[-1][0].callback_data == "back_to_main_menu_from_plans":
-        keyboard.pop()
-
-    # Append back row that returns to user profile
-    keyboard.append([
-        InlineKeyboardButton("👤 پروفایل کاربری", callback_data="show_status")
-    ])
+        back_button = keyboard[-1][0]
+        keyboard[-1][0] = InlineKeyboardButton(back_button.text, callback_data="show_status")
+    else:
+        # Fallback: ensure a single back row exists pointing to profile
+        keyboard.append([InlineKeyboardButton("بازگشت", callback_data="show_status")])
 
     logger.debug("free_packages_menu: final keyboard rows=%s", len(keyboard))
 
