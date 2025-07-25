@@ -468,13 +468,14 @@ class MainBot:
         from handlers.payment.payment_handlers import back_to_main_menu_from_categories
         self.application.add_handler(CallbackQueryHandler(back_to_main_menu_from_categories, pattern=r"^back_to_main_menu_from_categories$"), group=0)
         # Callback entry for AltSeason is handled by conversation handler
-        # Handler for free plan selection (outside conversation)
-        # from handlers.payment.payment_handlers import select_plan_handler
-        # Standalone plan handler needed for free packages selection (outside conversation)
-        from handlers.payment.payment_handlers import select_plan_handler
-        self.application.add_handler(CallbackQueryHandler(select_plan_handler, pattern=r'^plan_\d+$'), group=0)
-        # Duplicate standalone plan handler removed - handled inside payment conversation to avoid double execution
-        # self.application.add_handler(CallbackQueryHandler(select_plan_handler, pattern=r"^plan_\\d+$"), group=0)
+        # Standalone plan handler for free plans outside conversation (higher group to avoid conflict)
+        from handlers.payment.payment_handlers import select_plan_handler, prompt_for_discount_code, show_payment_methods
+        self.application.add_handler(CallbackQueryHandler(select_plan_handler, pattern=r'^plan_\d+$'), group=2)
+        # Standalone handlers for discount step when flow started outside conversation
+        self.application.add_handler(CallbackQueryHandler(prompt_for_discount_code, pattern=r'^have_discount_code$'), group=2)
+        self.application.add_handler(CallbackQueryHandler(show_payment_methods, pattern=r'^skip_discount_code$'), group=2)
+        # Back to plans from discount/payment step outside conversation
+        self.application.add_handler(CallbackQueryHandler(start_subscription_flow, pattern=r'^back_to_plans$'), group=2)
 
         # ---------------- Payment conversation AFTER free package ----------------
         # Add the 'products' text button as an entry point to the conversation
@@ -696,23 +697,58 @@ class MainBot:
                 "اشتراک شما امروز به پایان می‌رسد! 🎯" if days_left == 0 else f"تنها {days_left} روز تا پایان اشتراک شما باقی‌ست ⏰"
             )
             message += "\n\n💡 برای تمدید اشتراک یکی از گزینه‌های زیر را انتخاب کنید:"
-            
-            # Create inline keyboard with free and product options
-            keyboard = [
-                [InlineKeyboardButton("🎁 رایگان", callback_data="free_package_menu"), InlineKeyboardButton("🛒 محصولات", callback_data="products_menu")]
-            ]
+            from database.queries import DatabaseQueries
+            # Build renew buttons keyboard based on dynamic visibility settings
+            visibility = DatabaseQueries.get_renew_visibility()
+            keyboard: list[list[InlineKeyboardButton]] = []
+
+            # -------- Handle visible categories --------
+            for cat_id in visibility.get("categories", set()):
+                try:
+                    cat_id_int = int(cat_id)
+                except (TypeError, ValueError):
+                    continue
+                if cat_id_int == 0:
+                    # Special ID for free plans
+                    keyboard.append([InlineKeyboardButton("🎁 رایگان", callback_data="free_package_menu")])
+                elif cat_id_int == -1:
+                    # Special ID for root products menu
+                    keyboard.append([InlineKeyboardButton("🛒 محصولات", callback_data="products_menu")])
+                else:
+                    cat = DatabaseQueries.get_category_by_id(cat_id_int)
+                    if cat:
+                        name = cat["name"] if isinstance(cat, dict) else cat[1]
+                        keyboard.append([
+                            InlineKeyboardButton(f"🗂 {name}", callback_data=f"products_menu_{cat_id_int}")
+                        ])
+
+            # -------- Handle visible individual plans --------
+            for plan_id in visibility.get("plans", set()):
+                try:
+                    plan_id_int = int(plan_id)
+                except (TypeError, ValueError):
+                    continue
+                plan = DatabaseQueries.get_plan_by_id(plan_id_int)
+                if plan and (plan.get("is_active") if isinstance(plan, dict) else plan[9]):
+                    name = plan["name"] if isinstance(plan, dict) else plan[1]
+                    keyboard.append([
+                        InlineKeyboardButton(name, callback_data=f"plan_{plan_id_int}")
+                    ])
+
+            # Fallback – if no buttons configured, default to products menu
+            if not keyboard:
+                keyboard.append([InlineKeyboardButton("محصولات", callback_data="products_menu")])
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
+
             try:
                 await bot.send_message(chat_id=user_id, text=message, reply_markup=reply_markup)
                 log_reminder_sent(user_id, days_left)
                 self.logger.info(
-                    f"Sent expiration reminder to user {user_id} (days left: {days_left})"
+                    f"Reminder sent to user {user_id} for {days_left} days left."
                 )
-            except Forbidden:
-                self.logger.warning(f"Cannot send reminder to user {user_id} (bot blocked or user privacy).")
-            except Exception as exc:
-                self.logger.error(f"Error sending reminder to {user_id}: {exc}")
+            except Exception as e:
+                self.logger.error(f"Failed to send reminder to user {user_id}: {e}")
+
 
     async def stop(self):
         """Stop the bot"""

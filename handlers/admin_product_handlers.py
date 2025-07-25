@@ -622,16 +622,27 @@ class AdminProductHandler:
         lines: list[str] = ["— وضعیت مقادیر فعلی —"]
         for field, label in self._PLAN_FIELD_LABELS.items():
             val = context.user_data.get(f"{prefix}{field}")
-            emoji = "✅" if val is not None else "▫️"
             
+            # Special handling for videos field to show count and status
+            if field == 'videos':
+                video_data = context.user_data.get(f'{prefix}video_data', {})
+                if video_data:
+                    emoji = "✅"
+                    show_val = f"{len(video_data)} ویدئو انتخاب شده"
+                else:
+                    emoji = "▫️"
+                    show_val = "—"
             # Special handling for category_id to show category name
-            if field == 'category_id' and val is not None:
+            elif field == 'category_id' and val is not None:
                 try:
                     category = self.db_queries.get_category_by_id(val)
                     show_val = category.get('name', f'ID: {val}') if category else f'ID: {val}'
+                    emoji = "✅"
                 except:
                     show_val = f'ID: {val}'
+                    emoji = "✅"
             else:
+                emoji = "✅" if val is not None else "▫️"
                 show_val = val if val is not None else "—"
             
             lines.append(f"{emoji} {label}: {show_val}")
@@ -997,8 +1008,12 @@ class AdminProductHandler:
             is_selected = video['id'] in selected_videos
             status = "✅" if is_selected else "▫️"
             button_text = f"{status} {video['display_name']}"
-            callback_data = f"toggle_video_{video['id']}"
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+            select_callback = f"toggle_video_{video['id']}"
+            delete_callback = f"delete_video_{video['id']}"
+            keyboard.append([
+                InlineKeyboardButton(button_text, callback_data=select_callback),
+                InlineKeyboardButton("🗑 حذف", callback_data=delete_callback)
+            ])
         
         # Add management buttons
         if selected_videos:
@@ -1053,9 +1068,42 @@ class AdminProductHandler:
         context.user_data[f'{prefix}video_data'] = video_data
         
         # Refresh the video selection interface
-        await self._show_video_selection(query, context, 1)
+        await self._show_video_selection(query, context, available_videos)
         return FIELD_VALUE
     
+    async def _handle_delete_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle inline delete video button: delete from storage & db, refresh UI."""
+        query = update.callback_query
+        await query.answer()
+
+        # Parse video ID from callback data e.g. 'delete_video_<id>'
+        try:
+            video_id = int(query.data.split('_')[2])
+        except (IndexError, ValueError):
+            await query.answer("❌ خطا در پردازش شناسه ویدئو.", show_alert=True)
+            return FIELD_VALUE
+
+        # Attempt to delete the video using service
+        deletion_ok = video_service.delete_video(video_id)
+
+        # Remove from any current selections stored in user_data
+        for key in ('new_plan_video_data', 'edit_plan_video_data'):
+            video_data = context.user_data.get(key, {})
+            if video_id in video_data:
+                video_data.pop(video_id)
+                context.user_data[key] = video_data
+
+        # Provide feedback
+        if deletion_ok:
+            await query.answer("✅ ویدئو با موفقیت حذف شد.")
+        else:
+            await query.answer("❌ خطا در حذف ویدئو.", show_alert=True)
+
+        # Refresh the video list UI
+        available_videos = video_service.get_available_videos()
+        await self._show_video_selection(query, context, available_videos)
+        return FIELD_VALUE
+
     async def _handle_video_selection_confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Confirm video selection with validation."""
         query = update.callback_query
@@ -1091,7 +1139,7 @@ class AdminProductHandler:
                 [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_video_selection")]
             ]
             
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             return FIELD_VALUE
         
         # All videos have captions, proceed with confirmation
@@ -1124,7 +1172,7 @@ class AdminProductHandler:
             InlineKeyboardButton("🔙 بازگشت به فیلدها", callback_data="back_to_fields")
         ]]
         
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         
         # Show fields menu after a brief delay
         import asyncio
@@ -1132,7 +1180,7 @@ class AdminProductHandler:
         
         summary_text = self._generate_summary_text(context, mode) + "\n\nستون مورد نظر را برای مقداردهی انتخاب کنید:"
         reply_markup = self._build_fields_keyboard(context, mode)
-        await query.edit_message_text(summary_text, reply_markup=reply_markup)
+        await safe_edit_message_text(query, summary_text, reply_markup=reply_markup)
     
     async def _handle_survey_management(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle survey management for plans."""
@@ -1259,7 +1307,7 @@ class AdminProductHandler:
             [InlineKeyboardButton("✅ تأیید و ادامه", callback_data="confirm_video_selection")]
         ])
         
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         return FIELD_VALUE
     
     async def _handle_upload_new_video_prompt(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1274,7 +1322,7 @@ class AdminProductHandler:
             "پس از دریافت و ذخیره ویدئو، دوباره به صفحه انتخاب ویدئو بازخواهید گشت."
         )
         keyboard = [[InlineKeyboardButton("🔙 لغو", callback_data="back_to_video_selection")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         return FIELD_VALUE
 
     async def _handle_video_upload(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1287,8 +1335,64 @@ class AdminProductHandler:
             return FIELD_VALUE
         # Save video locally via service
         video_obj = update.message.video
-        file_obj = await context.bot.get_file(video_obj.file_id)
-        video_id = await video_service.save_uploaded_video(file_obj, original_file_name=video_obj.file_name)
+        # Extract origin identifiers if video is forwarded
+        origin_chat_id = None
+        origin_msg_id = None
+        origin = update.message.forward_origin
+        if origin and getattr(origin, 'chat', None):
+            origin_chat_id = origin.chat.id
+            origin_msg_id = origin.message_id
+        try:
+            file_obj = await context.bot.get_file(video_obj.file_id)
+            video_id = await video_service.save_uploaded_video(
+                file_obj,
+                original_file_name=video_obj.file_name,
+                telegram_file_id=video_obj.file_id,
+                origin_chat_id=origin_chat_id,
+                origin_message_id=origin_msg_id
+            )
+        except telegram.error.BadRequest as e:
+            if 'file is too big' in str(e).lower():
+                # For large videos, forward to bot to get usable file_id
+                import os
+                try:
+                    # Attempt to copy original channel message to current chat to get a bot-accessible file_id
+                    usable_file_id = video_obj.file_id  # default
+                    origin = update.message.forward_origin
+                    if origin and getattr(origin, 'chat', None):
+                        origin_chat_id = origin.chat.id
+                        origin_msg_id = origin.message_id
+                        try:
+                            copied = await context.bot.copy_message(
+                                chat_id=update.effective_chat.id,
+                                from_chat_id=origin_chat_id,
+                                message_id=origin_msg_id,
+                            )
+                            if copied and copied.video:
+                                usable_file_id = copied.video.file_id
+                                logger.info(f"Got usable file_id for large video via copy_message: {usable_file_id}")
+                            else:
+                                logger.warning("copy_message did not return video, falling back to original file_id")
+                        except Exception as copy_err:
+                            logger.error(f"copy_message failed: {copy_err}")
+                    
+                except Exception as forward_error:
+                    logger.error(f"Failed to forward large video: {forward_error}")
+                    usable_file_id = video_obj.file_id  # Fallback to original
+                
+                display_name = os.path.splitext(video_obj.file_name)[0].replace('_', ' ').title() if video_obj.file_name else f"Video {video_obj.file_unique_id}"
+                video_id = DatabaseQueries.add_video(
+                    filename=video_obj.file_name or f"tg_{video_obj.file_unique_id}.mp4",
+                    display_name=display_name,
+                    file_path='',  # Not downloaded
+                    file_size=video_obj.file_size,
+                    telegram_file_id=usable_file_id,
+                    origin_chat_id=origin_chat_id,
+                    origin_message_id=origin_msg_id
+                )
+                logger.warning("Skipped downloading large video (size=%s). Saved metadata with usable file_id.", video_obj.file_size)
+            else:
+                raise
         if not video_id:
             await update.message.reply_text("❌ خطا در ذخیره ویدئو. دوباره تلاش کنید.")
             return FIELD_VALUE
@@ -1300,7 +1404,7 @@ class AdminProductHandler:
         video_data[video_id] = {
             'display_name': vid_info['display_name'],
             'file_path': vid_info['file_path'],
-            'custom_caption': '',
+            'custom_caption': (update.message.caption or '').strip(),
             'order': len(video_data) + 1
         }
         context.user_data[f'{prefix}video_data'] = video_data
@@ -1320,8 +1424,28 @@ class AdminProductHandler:
             async def answer(self, *args, **kwargs):
                 pass
 
+            async def edit_message_text(self, text, reply_markup=None, parse_mode=None):
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=self.message.chat_id,
+                        message_id=self.message.message_id,
+                        text=text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode,
+                    )
+                except telegram.error.BadRequest:
+                    # Fallback: just send a new message if original cannot be edited
+                    await context.bot.send_message(
+                        chat_id=self.message.chat_id,
+                        text=text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode,
+                    )
+
         mock_query = MockQuery(update.message.chat_id)
-        await self._show_video_selection(mock_query, context, 1)
+        # Get updated video list after upload
+        available_videos = video_service.get_available_videos()
+        await self._show_video_selection(mock_query, context, available_videos)
         return FIELD_VALUE
 
     async def _handle_video_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1349,7 +1473,7 @@ class AdminProductHandler:
             InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_video_selection")
         ]]
         
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         return FIELD_VALUE
     
     async def _handle_force_confirm_videos(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1365,6 +1489,7 @@ class AdminProductHandler:
         query = update.callback_query
         await query.answer()
         
+        # Get available videos and show selection interface
         available_videos = video_service.get_available_videos()
         await self._show_video_selection(query, context, available_videos)
         return FIELD_VALUE
@@ -1410,7 +1535,7 @@ class AdminProductHandler:
             InlineKeyboardButton("❌ لغو", callback_data="cancel_caption_edit")
         ]]
         
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         return FIELD_VALUE
     
     async def _handle_caption_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1448,6 +1573,8 @@ class AdminProductHandler:
                 return FIELD_VALUE
             
             video_data[video_id]['custom_caption'] = caption_text
+            # Persist as default caption for future
+            video_service.set_video_caption(video_id, caption_text)
             success_text = "✅ کپشن با موفقیت ذخیره شد."
         
         # Clear editing state
@@ -2260,7 +2387,7 @@ class AdminProductHandler:
 
         # 2) Videos – open video management UI
         if field_key == "videos":
-            return await self._show_video_selection(query, context)
+            return await self._show_video_selection_paginated(query, context)
 
         # 3) Survey type – choose poll/none
         if field_key == "survey_type":
@@ -2316,7 +2443,7 @@ class AdminProductHandler:
             )
             return FIELD_VALUE
         if field_key == "videos":
-            return await self._show_video_selection(query, context)
+            return await self._show_video_selection_paginated(query, context)
         # Special handling for channel multi-select field
         if field_key == "channels_json":
             selected_ids: Set[int] = context.user_data.get("plch_selected_ids", set())
@@ -2792,7 +2919,7 @@ class AdminProductHandler:
     # --- Video Selection & Paging --- #
     VIDEO_PAGE_SIZE = 8
 
-    async def _show_video_selection(self, query, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
+    async def _show_video_selection_paginated(self, query, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
         """Display paginated list of available videos for selection (read-only draft)."""
         await query.answer()
         videos, total = video_service.list_all_videos(page, self.VIDEO_PAGE_SIZE)
@@ -2844,21 +2971,42 @@ class AdminProductHandler:
         else:
             vid = video_service.get_video_by_id(video_id)
             if vid:
-                video_data[video_id] = {'display_name': vid['display_name'], 'custom_caption':'', 'order': len(video_data)+1}
+                # Default caption is the video's existing display_name
+                video_data[video_id] = {
+                    'display_name': vid['display_name'],
+                    'custom_caption': vid.get('display_name', ''),
+                    'order': len(video_data)+1,
+                }
         context.user_data[f"{prefix}video_data"] = video_data
-        return await self._show_video_selection(query, context, page)
+        return await self._show_video_selection_paginated(query, context, page)
 
     async def _handle_confirm_video_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """When admin presses ✅ تأیید و ادامه from caption manager.
+        If همهٔ ویدئوها کپشن دارند => finalize flow.
+        Otherwise باز‌ همان صفحهٔ مدیریت کپشن را نشان بده.
+        """
         query = update.callback_query
         await query.answer()
-        # After selection redirect to caption manager
-        return await self._handle_manage_video_captions(update, context)
+
+        mode = context.user_data.get('extra_mode', 'add')
+        prefix = 'new_plan_' if mode == 'add' else 'edit_plan_'
+        video_data: dict = context.user_data.get(f'{prefix}video_data', {})
+
+        # Determine if any selected video still lacks a caption
+        missing_caption = any(not info.get('custom_caption', '').strip() for info in video_data.values())
+
+        if missing_caption:
+            # Still captions missing – stay in caption manager (or show warning)
+            await query.answer("لطفاً برای همهٔ ویدئوها کپشن وارد کنید یا از گزینهٔ بازگشت استفاده کنید.", show_alert=True)
+            return await self._handle_manage_video_captions(update, context)
+        # All good → finalize
+        return await self._finalize_video_selection(query, context)
 
     async def _handle_video_page_nav(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle navigation callbacks vid sel page."""
         query = update.callback_query
         page = int(query.data.split('_')[-1])
-        return await self._show_video_selection(query, context, page)
+        return await self._show_video_selection_paginated(query, context, page)
 
     async def _handle_clear_video_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Clear all video selections and go back to field selection."""
@@ -2991,19 +3139,53 @@ class AdminProductHandler:
             'description': context.user_data.get('edit_plan_description'),
         }
         
-        # Handle base currency and price updates
+        # ------------------------------------------------------------
+        # Handle price updates coming from either:
+        # 1) New unified base_currency/base_price fields (preferred)
+        # 2) Legacy edit_plan_price_usdt or edit_plan_price (IRR) keys
+        # The logic below normalizes everything to base_currency/base_price
+        # plus legacy price_tether / price for maximum compatibility.
+        # ------------------------------------------------------------
+
+        # 1) Explicit base currency chosen via dedicated callback
         if base_currency is not None:
             update_kwargs['base_currency'] = base_currency
         if base_price is not None:
             update_kwargs['base_price'] = float(base_price)
-            # Update legacy price fields for backward compatibility
-            if base_currency == 'USDT':
-                update_kwargs['price_tether'] = float(base_price)
-                update_kwargs['price'] = None  # Clear IRR price
-            elif base_currency == 'IRR':
-                update_kwargs['price'] = int(float(base_price))
-                update_kwargs['price_tether'] = None  # Clear USDT price
-        
+
+        # 2) Price edited directly without re-selecting base currency
+        price_usdt = context.user_data.get('edit_plan_price_usdt')
+        price_irr = context.user_data.get('edit_plan_price')  # kept for backward compatibility
+
+        # Prefer explicit base_ values, otherwise infer from edited price keys
+        if base_currency is None and price_usdt is not None:
+            base_currency = 'USDT'
+        if base_currency is None and price_irr is not None:
+            base_currency = 'IRR'
+
+        if base_currency == 'USDT':
+            # Determine final price value precedence: base_price -> price_usdt
+            final_price = float(base_price) if base_price is not None else (
+                float(price_usdt) if price_usdt is not None else None)
+            if final_price is not None:
+                update_kwargs.update({
+                    'base_currency': 'USDT',
+                    'base_price': final_price,
+                    'price_tether': final_price,
+                    'price': None,
+                })
+        elif base_currency == 'IRR':
+            final_price = float(base_price) if base_price is not None else (
+                float(price_irr) if price_irr is not None else None)
+            if final_price is not None:
+                update_kwargs.update({
+                    'base_currency': 'IRR',
+                    'base_price': final_price,
+                    'price': int(final_price),
+                    'price_tether': None,
+                })
+        # If base_currency still None we leave price unchanged.
+
         # Collect values for any additional fields that were set via the extra-fields menu
         # Exclude main fields to avoid conflicts
         main_fields = {
@@ -3143,6 +3325,7 @@ class AdminProductHandler:
                        CallbackQueryHandler(self._handle_unlimited_duration, pattern='^duration_unlimited$'),
                       CallbackQueryHandler(self._handle_video_management, pattern='^manage_videos$'),
                       CallbackQueryHandler(self._handle_video_toggle, pattern='^toggle_video_'),
+                     CallbackQueryHandler(self._handle_delete_video, pattern='^delete_video_'),
                       CallbackQueryHandler(self._handle_confirm_video_selection, pattern='^confirm_video_selection$'),
                        CallbackQueryHandler(self._handle_clear_video_selection, pattern='^clear_video_selection$'),
                       CallbackQueryHandler(self._handle_survey_management, pattern='^manage_survey$'),
@@ -3160,6 +3343,8 @@ class AdminProductHandler:
                       CallbackQueryHandler(self._handle_video_help, pattern='^video_help$'),
                       CallbackQueryHandler(self._handle_force_confirm_videos, pattern='^force_confirm_videos$'),
                       CallbackQueryHandler(self._handle_back_to_video_selection, pattern='^back_to_video_selection$'),
+                       CallbackQueryHandler(self._handle_upload_new_video_prompt, pattern='^(upload_new_video|forward_video)$'),
+                       MessageHandler(filters.VIDEO & ~filters.COMMAND, self._handle_video_upload),
                      MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_caption_input),
                       MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_field_value_input)
                  ]
@@ -3191,6 +3376,7 @@ class AdminProductHandler:
                        CallbackQueryHandler(self._handle_unlimited_duration, pattern='^duration_unlimited$'),
                       CallbackQueryHandler(self._handle_video_management, pattern='^manage_videos$'),
                       CallbackQueryHandler(self._handle_video_toggle, pattern='^toggle_video_'),
+                     CallbackQueryHandler(self._handle_delete_video, pattern='^delete_video_'),
                       CallbackQueryHandler(self._handle_confirm_video_selection, pattern='^confirm_video_selection$'),
                        CallbackQueryHandler(self._handle_clear_video_selection, pattern='^clear_video_selection$'),
                       CallbackQueryHandler(self._handle_survey_management, pattern='^manage_survey$'),
@@ -3208,6 +3394,8 @@ class AdminProductHandler:
                       CallbackQueryHandler(self._handle_video_help, pattern='^video_help$'),
                       CallbackQueryHandler(self._handle_force_confirm_videos, pattern='^force_confirm_videos$'),
                       CallbackQueryHandler(self._handle_back_to_video_selection, pattern='^back_to_video_selection$'),
+                       CallbackQueryHandler(self._handle_upload_new_video_prompt, pattern='^(upload_new_video|forward_video)$'),
+                       MessageHandler(filters.VIDEO & ~filters.COMMAND, self._handle_video_upload),
                      MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_caption_input),
                       MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_field_value_input)
                  ],

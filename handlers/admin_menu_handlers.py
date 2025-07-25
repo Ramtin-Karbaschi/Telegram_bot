@@ -449,7 +449,7 @@ class AdminMenuHandler:
     async def _tickets_submenu(self, query):
         keyboard = [
             [InlineKeyboardButton("🟢 تیکت‌های منتظر پاسخ", callback_data="tickets_open"), InlineKeyboardButton("📜 همهٔ تیکت‌ها", callback_data="tickets_all")],
-            [InlineKeyboardButton("🔎 تاریخچهٔ تیکت کاربر", callback_data=self.TICKETS_HISTORY)],
+            [InlineKeyboardButton("🔎 تاریخچهٔ تیکت کاربر", callback_data=self.TICKETS_HISTORY), InlineKeyboardButton("📄 خروجی تیکت‌ها", callback_data="export_all_tickets")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text("🎫 *مدیریت تیکت‌ها*\nگزینه مورد نظر را انتخاب کنید:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -662,13 +662,139 @@ class AdminMenuHandler:
 
     async def _settings_submenu(self, query):
         keyboard = [
-            [InlineKeyboardButton("🔐 تنظیم مدیران", callback_data="settings_admins"), InlineKeyboardButton("⚙️ سایر تنظیمات", callback_data="settings_misc")],
-            [InlineKeyboardButton("👥 مدیریت پشتیبان‌ها", callback_data=self.SUPPORT_MENU)],
-            [InlineKeyboardButton("💸 مدیریت کدهای تخفیف", callback_data="discounts_menu")],
-                        [InlineKeyboardButton("💾 بکاپ JSON دیتابیس", callback_data=self.BACKUP_CALLBACK), InlineKeyboardButton("📊 بکاپ Excel دیتابیس", callback_data=self.BACKUP_XLSX_CALLBACK)],
+            [InlineKeyboardButton("🔐 مدیران", callback_data="settings_admins"), InlineKeyboardButton("👥 مدیریت پشتیبان‌ها", callback_data=self.SUPPORT_MENU)],
+            [InlineKeyboardButton("🔘 دکمه‌های تمدید", callback_data="settings_renew_buttons"), InlineKeyboardButton("💸 مدیریت کدهای تخفیف", callback_data="discounts_menu")],
+            [InlineKeyboardButton("💾 بکاپ JSON دیتابیس", callback_data=self.BACKUP_CALLBACK), InlineKeyboardButton("📊 بکاپ Excel دیتابیس", callback_data=self.BACKUP_XLSX_CALLBACK)],
+            [InlineKeyboardButton("⚙️ سایر تنظیمات", callback_data="settings_misc")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text("⚙️ *تنظیمات ربات*:\nکدام بخش را می‌خواهید مدیریت کنید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def _settings_renew_buttons_submenu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show dynamic submenu listing all active plans & root categories to toggle renew button visibility."""
+        query = update.callback_query
+        await query.answer()
+
+        visibility = DatabaseQueries.get_renew_visibility()
+        selected_plans = visibility["plans"]
+        selected_cats = visibility["categories"]
+
+        # Fetch active plans and full category tree (nested)
+        plans = DatabaseQueries.get_active_plans()
+        category_tree = DatabaseQueries.get_category_tree() or []
+
+        keyboard: list[list[InlineKeyboardButton]] = []
+
+        # ------------------------------------------------------------
+        # Special categories (Free plans and Products)
+        # ------------------------------------------------------------
+        free_enabled = 0 in selected_cats
+        prod_enabled = -1 in selected_cats
+        free_text = ("✅ " if free_enabled else "❌ ") + "🎁 رایگان"
+        prod_text = ("✅ " if prod_enabled else "❌ ") + "🛒 محصولات"
+        keyboard.append([InlineKeyboardButton(free_text, callback_data="toggle_renew_cat_0")])
+        keyboard.append([InlineKeyboardButton(prod_text, callback_data="toggle_renew_cat_-1")])
+
+        # ------------------------------------------------------------
+        # Helper to flatten category tree with indentation
+        # ------------------------------------------------------------
+        def _flatten(tree: list[dict], level: int = 0):
+            flat: list[tuple[int, str]] = []
+            prefix = "  " * level  # two spaces per hierarchy level for indentation
+            for node in tree:
+                cid = node.get("id")
+                cname = node.get("name", "-")
+                flat.append((cid, f"{prefix}{cname}"))
+                children = node.get("children")
+                if children:
+                    flat.extend(_flatten(children, level + 1))
+            return flat
+
+        categories_flat = _flatten(category_tree)
+
+        # Divider before categories
+        if categories_flat:
+            keyboard.append([InlineKeyboardButton("──────────", callback_data="noop")])
+
+        # Category toggle buttons (in hierarchical order)
+        for cid, cname in categories_flat:
+            enabled = cid in selected_cats
+            text = ("✅ " if enabled else "❌ ") + f"{cname}"
+            keyboard.append([InlineKeyboardButton(text, callback_data=f"toggle_renew_cat_{cid}")])
+
+        # Divider before plans
+        if plans:
+            keyboard.append([InlineKeyboardButton("──────────", callback_data="noop")])
+
+        # Plans
+        for plan in plans:
+            pid = plan["id"] if isinstance(plan, dict) else plan[0]
+            pname = plan["name"] if isinstance(plan, dict) else plan[1]
+            enabled = pid in selected_plans
+            text = ("✅ " if enabled else "❌ ") + f"{pname}"
+            keyboard.append([InlineKeyboardButton(text, callback_data=f"toggle_renew_plan_{pid}")])
+
+        # Back button
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data=self.SETTINGS_MENU)])
+
+        await query.edit_message_text(
+            "🔘 تنظیم نمایش دکمه‌های تمدید برای هر طرح و دسته‌بندی:\nبا لمس هر مورد، وضعیت آن تغییر خواهد کرد.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    async def _settings_renew_toggle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        data = query.data
+        await query.answer()
+
+        visibility = DatabaseQueries.get_renew_visibility()
+
+        if data.startswith("toggle_renew_plan_"):
+            pid = int(data.split("_")[-1])
+            if pid in visibility["plans"]:
+                visibility["plans"].remove(pid)
+            else:
+                visibility["plans"].add(pid)
+            DatabaseQueries.set_renew_visibility(visibility)
+        elif data.startswith("toggle_renew_cat_"):
+            cid = int(data.split("_")[-1])
+            if cid in visibility["categories"]:
+                visibility["categories"].remove(cid)
+            else:
+                visibility["categories"].add(cid)
+            DatabaseQueries.set_renew_visibility(visibility)
+        else:
+            # legacy free/products toggles – treat as special categories
+            if data.endswith("_free"):
+                special = 0
+            else:
+                special = -1
+            if special in visibility["categories"]:
+                visibility["categories"].remove(special)
+            else:
+                visibility["categories"].add(special)
+            DatabaseQueries.set_renew_visibility(visibility)
+
+        # Refresh submenu
+        await self._settings_renew_buttons_submenu(update, context)
+
+    async def _toggle_renew_button(self, query, key):
+        """Toggle db setting and refresh the renew buttons submenu."""
+        current = DatabaseQueries.get_setting(key, '1')
+        new_val = '0' if current == '1' else '1'
+        DatabaseQueries.set_setting(key, new_val)
+        # Rebuild the submenu keyboard after toggle
+        free_enabled = DatabaseQueries.get_setting('renew_free', '1') == '1'
+        prod_enabled = DatabaseQueries.get_setting('renew_products', '1') == '1'
+        free_text = ('✅' if free_enabled else '❌') + " 🎁 رایگان"
+        prod_text = ('✅' if prod_enabled else '❌') + " 🛒 محصولات"
+        keyboard = [
+            [InlineKeyboardButton(free_text, callback_data="toggle_renew_free")],
+            [InlineKeyboardButton(prod_text, callback_data="toggle_renew_products")],
+            [InlineKeyboardButton("✔️ ذخیره و بازگشت", callback_data=self.SETTINGS_MENU)]
+        ]
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _settings_misc_submenu(self, query):
         """Show miscellaneous settings such as maintenance toggle."""
@@ -1285,19 +1411,24 @@ class AdminMenuHandler:
 
         await query.edit_message_text("\n".join(lines), parse_mode="MarkdownV2")
     async def _show_admins_settings(self, query):
+        """Display list of configured admins. Use safe HTML formatting to avoid Markdown errors."""
+        import html as _html
         if not self.admin_config:
             await query.edit_message_text("🔐 پیکربندی مدیران یافت نشد.")
             return
-        lines = ["🔐 *فهرست مدیران:*\n"]
-            # Add support users header later
+        lines = ["<b>🔐 فهرست مدیران:</b>"]
         if isinstance(self.admin_config, list):
             for adm in self.admin_config:
                 if isinstance(adm, dict):
-                    lines.append(f"• {adm.get('alias','-')} – {adm.get('chat_id')}")
+                    alias = _html.escape(str(adm.get('alias', '-')))
+                    cid = _html.escape(str(adm.get('chat_id', '-')))
+                    lines.append(f"• {alias} – {cid}")
         elif isinstance(self.admin_config, dict):
             for uid, alias in self.admin_config.items():
-                lines.append(f"• {alias} – {uid}")
-        await query.edit_message_text("\n".join(lines), parse_mode="MarkdownV2")
+                alias_h = _html.escape(str(alias))
+                uid_h = _html.escape(str(uid))
+                lines.append(f"• {alias_h} – {uid_h}")
+        await query.edit_message_text("\n".join(lines), parse_mode="HTML")
 
     # ---------- Public helper ----------
     # ---------- Invite Link Conversation Handlers ----------
@@ -1883,6 +2014,11 @@ class AdminMenuHandler:
 
         # Channel multi-select picker for broadcast with link
         handlers.append(CallbackQueryHandler(self._broadcast_wl_picker_callback, pattern=r"^(chpick_.*|chpick_all|chpick_done)$"))
+
+        # ---- Renew buttons settings handlers ----
+        handlers.append(CallbackQueryHandler(self._settings_renew_buttons_submenu, pattern='^settings_renew_buttons$'))
+        handlers.append(CallbackQueryHandler(self._settings_renew_toggle_callback, pattern=r'^toggle_renew_(free|products)$'))
+        handlers.append(CallbackQueryHandler(self._settings_renew_toggle_callback, pattern=r'^toggle_renew_(cat|plan)_-?\d+$'))
 
         # Conversation handler for extend all subscriptions
         extend_all_conv_handler = ConversationHandler(

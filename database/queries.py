@@ -9,6 +9,7 @@ from database.schema import ALL_TABLES
 import logging
 
 # Migration to add custom_caption column if missing
+# Migration to add origin_chat_id/origin_message_id columns to videos table if missing
 def _ensure_custom_caption_column():
     """Ensure custom_caption column exists in plan_videos table."""
     db = Database()
@@ -37,6 +38,34 @@ def _ensure_custom_caption_column():
 # ---------------------------------------------------------------------------
 # Migration to ensure category_id column exists in plans table
 # ---------------------------------------------------------------------------
+
+def _ensure_video_origin_columns():
+    """Ensure origin_chat_id and origin_message_id columns exist in videos table."""
+    db = Database()
+    if not db.connect():
+        return False
+    try:
+        cursor = db.conn.cursor()
+        cursor.execute("PRAGMA table_info(videos)")
+        cols = [row[1] for row in cursor.fetchall()]
+        added = False
+        if 'origin_chat_id' not in cols:
+            logging.info("Adding origin_chat_id column to videos table")
+            cursor.execute("ALTER TABLE videos ADD COLUMN origin_chat_id INTEGER")
+            added = True
+        if 'origin_message_id' not in cols:
+            logging.info("Adding origin_message_id column to videos table")
+            cursor.execute("ALTER TABLE videos ADD COLUMN origin_message_id INTEGER")
+            added = True
+        if added:
+            db.conn.commit()
+            logging.info("Successfully ensured origin columns in videos table")
+        return True
+    except Exception as e:
+        logging.error(f"Error ensuring origin columns: {e}")
+        return False
+    finally:
+        db.close()
 
 def _ensure_category_id_column():
     """Ensure category_id column exists in plans table."""
@@ -89,6 +118,7 @@ def _ensure_root_category():
 # Run migrations on import
 _ensure_custom_caption_column()
 _ensure_category_id_column()
+_ensure_video_origin_columns()
 _ensure_root_category()
 
 import logging
@@ -98,6 +128,110 @@ from database.schema import ALL_TABLES
 from utils.helpers import get_current_time  # ensure Tehran-tz aware now
 
 class DatabaseQueries:
+    # --- Global bot settings helpers ---
+    @staticmethod
+    def _ensure_settings_table():
+        from database.connection import get_db
+        db = get_db()
+        db.execute("CREATE TABLE IF NOT EXISTS bot_settings (key TEXT PRIMARY KEY, value TEXT)")
+        db.commit()
+
+    # ------------------------------------------------------------------
+    # Renew buttons visibility helpers
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Renew buttons visibility helpers (JSON based)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _migrate_renew_visibility():
+        """Migrate legacy renew settings (renew_free/renew_products/renew_plan_ids) -> JSON config."""
+        existing = DatabaseQueries.get_setting("renew_visibility_json", None)
+        if existing is not None:
+            return  # Already migrated
+
+        plans: set[int] = set()
+        categories: set[int] = set()
+
+        # Legacy comma-separated plan IDs
+        legacy_csv = DatabaseQueries.get_setting("renew_plan_ids", "")
+        if legacy_csv:
+            try:
+                plans.update(int(x) for x in legacy_csv.split(",") if x.strip().isdigit())
+            except Exception:
+                pass
+
+        # Very old boolean flags – keep old semantics: free=true → show all free plans, products=true → show root products category id=1 maybe.
+        renew_free = DatabaseQueries.get_setting("renew_free", None)
+        renew_products = DatabaseQueries.get_setting("renew_products", None)
+        if renew_free == "1":
+            # Convention: use special category id 0 to denote "Free plans"
+            categories.add(0)
+        if renew_products == "1":
+            categories.add(-1)  # -1 → all products/category root
+
+        DatabaseQueries.set_renew_visibility({"plans": list(plans), "categories": list(categories)})
+
+    @staticmethod
+    def get_renew_visibility() -> dict[str, set[int]]:
+        """Return a dict with 'plans' and 'categories' sets representing IDs to show renew buttons for."""
+        DatabaseQueries._migrate_renew_visibility()
+        import json
+        raw = DatabaseQueries.get_setting("renew_visibility_json", "")
+        if not raw:
+            return {"plans": set(), "categories": set()}
+        try:
+            data = json.loads(raw)
+            return {
+                "plans": set(map(int, data.get("plans", []))),
+                "categories": set(map(int, data.get("categories", []))),
+            }
+        except Exception:
+            logging.exception("Failed to parse renew_visibility_json; falling back to empty sets")
+            return {"plans": set(), "categories": set()}
+
+    @staticmethod
+    def set_renew_visibility(visibility: dict[str, set[int] | list[int]]):
+        """Persist visibility dict to bot_settings as JSON. Accepts sets or lists for values."""
+        import json
+        data = {
+            "plans": list(visibility.get("plans", [])),
+            "categories": list(visibility.get("categories", [])),
+        }
+        DatabaseQueries.set_setting("renew_visibility_json", json.dumps(data, separators=(",", ":")))
+
+    # ------------------------------------------------------------------
+    # Legacy wrapper helpers (keep external API stable)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def get_renew_plan_ids() -> set[int]:
+        return DatabaseQueries.get_renew_visibility()["plans"]
+
+    @staticmethod
+    def set_renew_plan_ids(ids: set[int]):
+        vis = DatabaseQueries.get_renew_visibility()
+        vis["plans"] = set(ids)
+        DatabaseQueries.set_renew_visibility(vis)
+
+    @staticmethod
+    def get_setting(key: str, default: str | None = None):
+        DatabaseQueries._ensure_settings_table()
+        from database.connection import get_db
+        db = get_db()
+        cur = db.execute("SELECT value FROM bot_settings WHERE key=?", (key,))
+        row = cur.fetchone()
+        return row[0] if row else default
+
+    @staticmethod
+    def set_setting(key: str, value: str):
+        DatabaseQueries._ensure_settings_table()
+        from database.connection import get_db
+        db = get_db()
+        db.execute("INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?,?)", (key, value))
+        db.commit()
+
     """Class for handling database operations"""
 
     # ---------------------------------------------------------------------
@@ -275,7 +409,7 @@ class DatabaseQueries:
             cursor = db.conn.cursor()
             cursor.execute("""
                 SELECT id, filename, display_name, file_path, file_size, 
-                       duration, telegram_file_id, is_active
+                       duration, telegram_file_id, origin_chat_id, origin_message_id, is_active
                 FROM videos 
                 WHERE is_active = 1
                 ORDER BY display_name
@@ -295,6 +429,8 @@ class DatabaseQueries:
         file_size: int | None = None,
         duration: int | None = None,
         telegram_file_id: str | None = None,
+        origin_chat_id: int | None = None,
+        origin_message_id: int | None = None,
     ) -> int | None:
         """Add a new video to the database.
 
@@ -305,6 +441,8 @@ class DatabaseQueries:
             file_size: Size of the file in bytes.
             duration: Video duration in seconds (optional).
             telegram_file_id: Original Telegram **file_id** for faster re-sending / caching (optional).
+            origin_chat_id: Source channel ID if video copied from private channel (optional).
+            origin_message_id: Source message ID for copy_message fallback (optional).
 
         Returns:
             Newly-created *video.id* or ``None`` on failure.
@@ -323,9 +461,11 @@ class DatabaseQueries:
                     file_path,
                     file_size,
                     duration,
-                    telegram_file_id
+                    telegram_file_id,
+                    origin_chat_id,
+                    origin_message_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     filename,
@@ -334,6 +474,8 @@ class DatabaseQueries:
                     file_size,
                     duration,
                     telegram_file_id,
+                    origin_chat_id,
+                    origin_message_id,
                 ),
             )
             db.conn.commit()
@@ -343,7 +485,7 @@ class DatabaseQueries:
             return None
         finally:
             db.close()
-    
+
     @staticmethod
     def get_video_by_id(video_id: int):
         """Get a video by its ID."""
@@ -355,7 +497,7 @@ class DatabaseQueries:
             cursor = db.conn.cursor()
             cursor.execute("""
                 SELECT id, filename, display_name, file_path, file_size, 
-                       duration, telegram_file_id, is_active
+                       duration, telegram_file_id, origin_chat_id, origin_message_id, is_active
                 FROM videos 
                 WHERE id = ? AND is_active = 1
             """, (video_id,))
@@ -388,6 +530,98 @@ class DatabaseQueries:
             return False
         finally:
             db.close()
+
+    # -----------------------------------------------------------------
+    # NEW: keep DB paths in sync when we discover a better local path
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def update_video_file_path(video_id: int, new_file_path: str) -> bool:
+        """
+        Update the local file_path of a video record.
+        """
+        if not new_file_path:
+            return False
+        db = Database()
+        if not db.connect():
+            return False
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute(
+                """
+                UPDATE videos
+                SET file_path = ?
+                WHERE id = ?
+                """,
+                (new_file_path, video_id)
+            )
+            db.conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logging.error(f"Error updating video telegram file ID: {e}")
+            return False
+        finally:
+            db.close()
+
+    @staticmethod
+    def delete_video(video_id: int) -> bool:
+        """
+        Delete a video and its plan associations from the database.
+        1. Remove all plan_videos links for this video.
+        2. Delete the video record from videos table.
+        Returns True if video was deleted (even if no plan links existed).
+        """
+        db = Database()
+        if not db.connect():
+            return False
+        try:
+            cursor = db.conn.cursor()
+            # Remove from plan_videos
+            cursor.execute(
+                "DELETE FROM plan_videos WHERE video_id = ?",
+                (video_id,)
+            )
+            # Remove from videos
+            cursor.execute(
+                "DELETE FROM videos WHERE id = ?",
+                (video_id,)
+            )
+            db.conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logging.error(f"Error deleting video {video_id}: {e}")
+            return False
+        finally:
+            db.close()
+        """Update the local file_path of a video record.
+
+        This is useful when a video was forwarded from another chat and its original
+        `file_path` was not known at the time of insertion, or if the absolute path
+        has changed due to a move/rename. We keep DB in sync so subsequent sends can
+        reuse the correct path without another lookup.
+        """
+        if not new_file_path:
+            return False
+        db = Database()
+        if not db.connect():
+            return False
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute(
+                """
+                UPDATE videos
+                SET file_path = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (new_file_path, video_id),
+            )
+            db.conn.commit()
+            return cursor.rowcount > 0
+        except Exception as exc:
+            logging.error("Error updating video file_path: %s", exc)
+            return False
+        finally:
+            db.close()
     
     @staticmethod
     def get_plan_videos(plan_id: int):
@@ -400,7 +634,7 @@ class DatabaseQueries:
             cursor = db.conn.cursor()
             cursor.execute("""
                 SELECT v.id, v.filename, v.display_name, v.file_path, v.file_size, 
-                       v.duration, v.telegram_file_id, v.is_active, pv.display_order, pv.custom_caption
+                       v.duration, v.telegram_file_id, v.origin_chat_id, v.origin_message_id, v.is_active, pv.display_order, pv.custom_caption
                 FROM videos v
                 JOIN plan_videos pv ON v.id = pv.video_id
                 WHERE pv.plan_id = ? AND v.is_active = 1
@@ -3317,7 +3551,7 @@ class DatabaseQueries:
             cursor = db.conn.cursor()
             cursor.execute("""
                 SELECT v.id, v.filename, v.display_name, v.file_path, v.file_size, 
-                       v.duration, v.telegram_file_id, v.is_active, pv.display_order, pv.custom_caption
+                       v.duration, v.telegram_file_id, v.origin_chat_id, v.origin_message_id, v.is_active, pv.display_order, pv.custom_caption
                 FROM videos v
                 JOIN plan_videos pv ON v.id = pv.video_id
                 WHERE pv.plan_id = ? AND v.is_active = 1

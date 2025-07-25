@@ -593,12 +593,15 @@ class ManagerBot:
             )
             message += "\n\n💡 برای تمدید اشتراک یکی از گزینه‌های زیر را انتخاب کنید:"
             
-            # Create inline keyboard with free and product options
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            keyboard = [
-                [InlineKeyboardButton("🎁 رایگان", callback_data="free_package_menu")],
-                [InlineKeyboardButton("🛒 محصولات", callback_data="products_menu")]
-            ]
+            from database.queries import DatabaseQueries
+            keyboard = []
+            if DatabaseQueries.get_setting('renew_free', '1') == '1':
+                keyboard.append([InlineKeyboardButton("🎁 رایگان", callback_data="free_package_menu")])
+            if DatabaseQueries.get_setting('renew_products', '1') == '1':
+                keyboard.append([InlineKeyboardButton("🛒 محصولات", callback_data="products_menu")])
+            if not keyboard:
+                keyboard.append([InlineKeyboardButton("🛒 محصولات", callback_data="products_menu")])  # fallback
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             try:

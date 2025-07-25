@@ -259,7 +259,8 @@ def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False
                 if capacity is not None:
                     # Capacity column stores the REMAINING slots (decremented on each purchase).
                     # Plan is full if remaining capacity is 0 or less.
-                    if capacity is not None and capacity <= 0:
+                    # Safety check: ensure capacity is a number, not a list or other type
+                    if isinstance(capacity, (int, float)) and capacity <= 0:
                         # Skip full plans
                         continue
                 filtered_plans.append(p)
@@ -277,7 +278,8 @@ def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False
         if capacity is not None:
             # Capacity column stores the REMAINING slots (decremented on each purchase).
             # Plan is full if remaining capacity is 0 or less.
-            if capacity <= 0:
+            # Safety check: ensure capacity is a number, not a list or other type
+            if isinstance(capacity, (int, float)) and capacity <= 0:
                 plan_buttons_row.append(
                     InlineKeyboardButton(
                         f"{plan['name']} (تکمیل)", callback_data=f"plan_{plan['id']}"

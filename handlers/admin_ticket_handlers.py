@@ -20,6 +20,9 @@ from utils.helpers import staff_only_decorator as staff_only
 import json
 from ai.model import responder
 import html  # For escaping HTML entities
+from io import BytesIO
+from docx import Document
+from docx.shared import RGBColor
 from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
 
@@ -224,6 +227,7 @@ class AdminTicketHandler:
                 CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern=r'^ignore$'),
                 CallbackQueryHandler(self.refresh_tickets_callback, pattern="^refresh_tickets$"),
                 CallbackQueryHandler(self.refresh_all_tickets_callback, pattern="^refresh_all_tickets$"),
+                CallbackQueryHandler(self.export_all_tickets_callback, pattern="^export_all_tickets$"),
                 CallbackQueryHandler(self.paginate_all_tickets_callback, pattern=r'^all_tickets_page_\d+$')
             ],
             states={
@@ -303,6 +307,11 @@ class AdminTicketHandler:
             # Add refresh button on its own row
             keyboard.append([
                 InlineKeyboardButton("به‌روزرسانی لیست تیکت‌ها", callback_data="refresh_tickets")
+            ])
+
+            # Add export tickets button on its own row
+            keyboard.append([
+                InlineKeyboardButton("📄 خروجی تیکت‌ها", callback_data="export_all_tickets")
             ])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -482,66 +491,79 @@ class AdminTicketHandler:
         await query.edit_message_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def send_answer_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Send the stored AI answer to the ticket owner"""
+        """Send the stored AI answer to the ticket owner and refresh admin menu so the keyboard remains available."""
         query = update.callback_query
         await query.answer()
 
-        user_id = query.from_user.id
-        if not self._is_admin(user_id):
+        admin_id = query.from_user.id
+        if not self._is_admin(admin_id):
             await query.edit_message_text("شما دسترسی لازم برای این عملیات را ندارید.")
             return
 
-        ticket_id = int(query.data.split('_')[-1])
+        # Extract ticket_id from callback_data e.g. 'send_answer_123'
+        try:
+            ticket_id = int(query.data.split('_')[-1])
+        except (IndexError, ValueError):
+            await query.edit_message_text("شناسهٔ تیکت نامعتبر است.")
+            return
+
         ticket = self._get_ticket_by_id(ticket_id)
         if not ticket:
             await query.edit_message_text("تیکت یافت نشد.")
             return
 
-        target_user_id = ticket.get('user_id')
+        # Retrieve previously generated AI answer from user_data
         ai_answer = context.user_data.get(f'ai_answer_{ticket_id}')
         if not ai_answer:
             await query.edit_message_text("پاسخ هوش‌مصنوعی یافت نشد.")
             return
 
         try:
+            # Compose text for the ticket owner
             original_question = ticket.get('message') or self._get_original_question(ticket_id)
             user_reply_text = (
-                f"سوال شما:\n{original_question}\n\n"
-                f"پاسخ:\n{ai_answer}"
+                f"❔ سوال شما:\n{original_question}\n\n"
+                f"✅ پاسخ:\n{ai_answer}"
             )
+
+            # Send the answer using main bot if available (for multi-bot setups)
             bot_to_use = self.main_bot or context.bot
-            await bot_to_use.send_message(chat_id=target_user_id, text=user_reply_text)
-            DatabaseQueries.add_ticket_message(ticket_id, user_id, ai_answer, is_admin_message=True, update_status=False)
+            await bot_to_use.send_message(chat_id=ticket.get('user_id'), text=user_reply_text)
+
+            # Update DB: store answer as admin message + close ticket
+            DatabaseQueries.add_ticket_message(ticket_id, admin_id, ai_answer, is_admin_message=True, update_status=False)
             DatabaseQueries.update_ticket_status(ticket_id, 'closed')
-            await query.edit_message_text(
-                f"💠 پاسخ برای کاربر ارسال شد و تیکت بسته شد.\n\nسوال:\n{original_question}\n\nپاسخ ارسال شده:\n{ai_answer}"
-            )
+
+            # Refresh the tickets list so inline keyboard stays accessible
+            await self._show_tickets_inline(query, page=0)
         except Exception as e:
             logger.error(f"Error sending AI answer: {e}")
             await query.edit_message_text("خطا در ارسال پاسخ به کاربر.")
 
+
+
     async def edit_answer_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Provide AI answer for admin to edit manually"""
+        """Let admin edit the AI-generated answer before sending."""
         query = update.callback_query
         await query.answer()
-
-        user_id = query.from_user.id
-        if not self._is_admin(user_id):
+        admin_id = query.from_user.id
+        if not self._is_admin(admin_id):
             await query.edit_message_text("شما دسترسی لازم برای این عملیات را ندارید.")
             return
-
-        ticket_id = int(query.data.split('_')[-1])
+        try:
+            ticket_id = int(query.data.split('_')[-1])
+        except (IndexError, ValueError):
+            await query.edit_message_text("شناسهٔ تیکت نامعتبر است.")
+            return
         ai_answer = context.user_data.get(f'ai_answer_{ticket_id}')
         if not ai_answer:
             await query.edit_message_text("پاسخ هوش‌مصنوعی یافت نشد.")
             return
-
-        # Ask admin to edit the answer using ForceReply
+        # Send ForceReply with pre-filled answer
         await query.message.reply_text(
             f"لطفاً پاسخ را ویرایش کرده و ارسال کنید. پس از ارسال، ربات آن را به کاربر فوروارد خواهد کرد.\n\nمتن پیشنهادی:\n{ai_answer}",
             reply_markup=ForceReply(selective=True)
         )
-        # Set state for later processing (implementation of listener not included here)
         context.user_data['editing_ticket_id'] = ticket_id
 
     async def manual_answer_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -566,6 +588,18 @@ class AdminTicketHandler:
             reply_markup=ForceReply(selective=True)
         )
         context.user_data['editing_ticket_id'] = ticket_id
+
+    def _get_admin_reply(self, ticket_id: int):
+        """Return the latest admin message for a ticket, as a dict, or None."""
+        try:
+            messages = DatabaseQueries.get_ticket_messages(ticket_id)
+            for m in reversed(messages or []):
+                m = dict(m)
+                if m.get('is_admin'):
+                    return m
+        except Exception:
+            pass
+        return None
 
     async def receive_edited_answer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle admin's edited answer after ForceReply"""
@@ -689,6 +723,7 @@ class AdminTicketHandler:
 
             # All-tickets list callbacks
             CallbackQueryHandler(self.refresh_all_tickets_callback, pattern=r'^refresh_all_tickets$'),
+        CallbackQueryHandler(self.export_all_tickets_callback, pattern=r'^export_all_tickets$'),
             CallbackQueryHandler(self.paginate_all_tickets_callback, pattern=r'^all_tickets_page_\d+$'),
 
             # Edited answers (plain text reply)
@@ -769,6 +804,11 @@ class AdminTicketHandler:
             # Add refresh button
             keyboard.append([
                 InlineKeyboardButton("به‌روزرسانی", callback_data="refresh_tickets")
+            ])
+
+            # Add export tickets button
+            keyboard.append([
+                InlineKeyboardButton("📄 خروجی تیکت‌ها", callback_data="export_all_tickets")
             ])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -859,6 +899,11 @@ class AdminTicketHandler:
             keyboard.append([
                 InlineKeyboardButton("🔄 به‌روزرسانی", callback_data="refresh_all_tickets")
             ])
+
+            # Add export tickets button
+            keyboard.append([
+                InlineKeyboardButton("📄 خروجی تیکت‌ها", callback_data="export_all_tickets")
+            ])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
@@ -888,6 +933,92 @@ class AdminTicketHandler:
             page = 0
         logger.debug(f"paginate_all_tickets_callback: user={query.from_user.id} requested page {page}")
         await self._show_all_tickets_inline(query, page=page)
+
+    async def export_all_tickets_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Generate a Word (.docx) report for *all* tickets and send to admin."""
+        query = update.callback_query
+        await query.answer()
+        if not self._is_admin(query.from_user.id):
+            await query.edit_message_text("❌ شما دسترسی لازم برای این عملیات را ندارید.")
+            return
+        try:
+            tickets = self._get_all_tickets()
+            if not tickets:
+                await query.edit_message_text("📋 هیچ تیکتی یافت نشد.")
+                return
+            # Convert sqlite3.Row objects to dict for easy access
+            tickets = [dict(t) for t in tickets]
+            # Sort from oldest to newest
+            tickets.sort(key=lambda x: x.get('created_at') or '')
+            doc = Document()
+            doc.add_heading("گزارش کامل تیکت‌ها", level=1)
+            for t in tickets:
+                status = t.get('status', '').lower()
+                emoji = self._get_status_emoji(status)
+                ticket_id = t.get('ticket_id') or t.get('id')
+                subject = t.get('subject', '-')
+                created_at = t.get('created_at', '-')
+                # Heading with emoji and ticket id
+                doc.add_heading(f"{emoji} تیکت #{ticket_id} - {subject}", level=2)
+                # Status and timestamps
+                status_emoji = self._get_status_emoji(status)
+                status_readable = str(status).replace('_',' ')
+                doc.add_paragraph(f"{status_emoji} وضعیت: {status_readable}")
+                doc.add_paragraph(f"📅 تاریخ ثبت: {created_at}")
+                # Find answer timestamp & admin reply
+                admin_reply = self._get_admin_reply(ticket_id)
+                admin_reply_time = None
+                try:
+                    msgs_all = DatabaseQueries.get_ticket_messages(ticket_id)
+                    for m in reversed(msgs_all or []):
+                        m = dict(m)
+                        if m.get('is_admin'):
+                            admin_reply_time = m.get('timestamp')
+                            break
+                except Exception:
+                    pass
+                if admin_reply_time:
+                    # Find responder name
+                    responder_info = self._get_user_info(admin_reply.get('user_id')) if admin_reply else None
+                    responder_display = self._format_user_info(responder_info) if responder_info else "نامشخص"
+                    doc.add_paragraph(f"📨 تاریخ پاسخ: {admin_reply_time} توسط {responder_display}")
+                # User info
+                user_info = self._get_user_info(t.get('user_id'))
+                user_full = user_info.get('full_name') or f"{user_info.get('first_name','')} {user_info.get('last_name','')}".strip()
+                username = user_info.get('username','-')
+                phone = user_info.get('phone') or user_info.get('phone_number','-')
+                telegram_id = t.get('user_id') or user_info.get('telegram_id') or '-'
+                doc.add_paragraph(f"👤 کاربر: {user_full} | @{username} | ID: {telegram_id} | 📞 {phone}")
+                # Messages section
+                messages = DatabaseQueries.get_ticket_messages(ticket_id)
+                if messages:
+                    doc.add_heading("پیام‌ها", level=3)
+                    for m in messages:
+                        m = dict(m)
+                        sender = "ادمین" if m.get('is_admin') else "کاربر"
+                        ts = m.get('timestamp', '')
+                        doc.add_paragraph(f"[{ts}] {sender}: {m.get('message', '')}")
+                # Answer status
+                if not admin_reply:
+                    p = doc.add_paragraph()
+                    run = p.add_run("پاسخی داده نشده است")
+                    run.font.color.rgb = RGBColor(255,0,0)
+                # Separator
+                doc.add_paragraph("_"*40)
+
+            buffer = BytesIO()
+            doc.save(buffer)
+            buffer.seek(0)
+            filename = f"tickets_report_{context.bot.id}.docx"
+            await context.bot.send_document(
+                chat_id=query.from_user.id,
+                document=buffer,
+                filename=filename,
+                caption="📄 گزارش کامل تیکت‌ها",
+            )
+        except Exception as e:
+            logger.error(f"Error exporting tickets: {e}")
+            await query.edit_message_text("❌ خطا در تولید خروجی.")
 
     async def refresh_all_tickets_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Refresh all tickets list"""
@@ -948,6 +1079,7 @@ class AdminTicketHandler:
                 keyboard.append(nav_row)
 
             keyboard.append([InlineKeyboardButton("🔄 به‌روزرسانی", callback_data="refresh_all_tickets")])
+            keyboard.append([InlineKeyboardButton("📄 خروجی تیکت‌ها", callback_data="export_all_tickets")])
 
             await update.message.reply_text(
                 message_text,

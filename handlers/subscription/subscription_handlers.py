@@ -75,6 +75,9 @@ async def handle_post_subscription_flow(telegram_id: int, context: ContextTypes.
 async def send_plan_videos(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_id: int, plan_name: str):
     """Send all videos for a plan to the user with caching."""
     try:
+        # Import DatabaseQueries locally to avoid circular imports
+        from database.queries import DatabaseQueries
+        
         # Check if plan has videos first
         plan_videos = DatabaseQueries.get_plan_videos(plan_id)
         if not plan_videos:
@@ -99,7 +102,7 @@ async def send_plan_videos(telegram_id: int, context: ContextTypes.DEFAULT_TYPE,
             text="⚠️ خطا در ارسال ویدیوها. لطفاً بعداً تلاش کنید."
         )
 
-async def send_channel_links_and_confirmation(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_name: str, channels_json: str | None = None, auto_delete_links: bool = True):
+async def send_channel_links_and_confirmation(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_name: str, channels_json: str | None = None, auto_delete_links: bool = True, plan_details: dict | None = None):
     """Sends a confirmation message with channel links and optionally schedules it for deletion."""
     # First, send success confirmation with appropriate warning message
     if auto_delete_links:
@@ -213,12 +216,8 @@ async def send_channel_links_and_confirmation(telegram_id: int, context: Context
         else:
             logger.info(f"Message {sent_message.message_id} will NOT be auto-deleted for user {telegram_id} (auto_delete_links=False).")
 
-        # After links/confirmation, trigger survey & video flow
-        try:
-            from handlers.subscription.subscription_handlers import handle_post_subscription_flow as _post_flow
-            await _post_flow(telegram_id, context, plan_details, plan_name)
-        except Exception as exc:
-            logger.error(f"Error in post subscription flow for user {telegram_id}: {exc}")
+        # Note: post subscription flow (survey & videos) is handled in activate_or_extend_subscription
+        # to avoid duplicate video sending
 
     except Exception as e:
         logger.error(f"Failed to send channel links message to user {telegram_id}: {e}")
@@ -336,7 +335,7 @@ async def activate_or_extend_subscription(
                     auto_delete_links = bool(auto_delete_raw)
                 
                 logger.info(f"Plan {plan_id} auto_delete_links: {auto_delete_raw} -> {auto_delete_links}")
-                await send_channel_links_and_confirmation(telegram_id=telegram_id, context=context, plan_name=plan_name, channels_json=channels_json, auto_delete_links=auto_delete_links)
+                await send_channel_links_and_confirmation(telegram_id=telegram_id, context=context, plan_name=plan_name, channels_json=channels_json, auto_delete_links=auto_delete_links, plan_details=plan_details)
         
         # Handle survey flow and content delivery
         await handle_post_subscription_flow(telegram_id, context, plan_details, plan_name)

@@ -75,7 +75,21 @@ async def handle_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         file_obj = await video.get_file()
         # Save using existing util, returns video_id
-        video_id = await video_service.save_uploaded_video(file_obj, original_file_name=f"{video.file_unique_id}.mp4")
+        # Extract origin identifiers if forwarded
+        origin_chat_id = None
+        origin_msg_id = None
+        origin = update.message.forward_origin
+        if origin and getattr(origin, 'chat', None):
+            origin_chat_id = origin.chat.id
+            origin_msg_id = origin.message_id
+        
+        video_id = await video_service.save_uploaded_video(
+            file_obj,
+            original_file_name=f"{video.file_unique_id}.mp4",
+            telegram_file_id=video.file_id,
+            origin_chat_id=origin_chat_id,
+            origin_message_id=origin_msg_id,
+        )
     except Exception as exc:
         logger.error("Error saving uploaded video: %s", exc)
         await update.message.reply_text("⚠️ خطا در ذخیره‌سازی ویدئو. لطفاً دوباره تلاش کنید.")

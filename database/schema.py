@@ -258,6 +258,8 @@ CREATE TABLE IF NOT EXISTS videos (
     file_size INTEGER,
     duration INTEGER, -- Duration in seconds
     telegram_file_id TEXT, -- Cached Telegram file ID for faster sending
+    origin_chat_id INTEGER, -- Original private channel ID for copy_message fallback
+    origin_message_id INTEGER, -- Original message ID in the source channel
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
     is_active INTEGER DEFAULT 1
@@ -342,6 +344,8 @@ CREATE TABLE IF NOT EXISTS videos (
     file_size INTEGER,
     duration INTEGER,
     telegram_file_id TEXT,
+    origin_chat_id INTEGER,
+    origin_message_id INTEGER,
     is_active INTEGER DEFAULT 1,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 )
