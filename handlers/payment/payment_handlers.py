@@ -165,8 +165,9 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
 
         # Detect optional category id from callback data (products_menu_<id>)
         category_id = None
-        # If callback is for returning to top-level categories
-        if query.data in ("start_subscription_flow", "products_menu", "back_to_plans"):
+        # Handle different entry points
+        if query.data in ("start_subscription_flow", "products_menu"):
+            # Always show top-level categories
             await safe_edit_message_text(
                 query.message,
                 text="📋 دسته‌بندی محصولات\n\nلطفاً یک دسته‌بندی را انتخاب کنید:",
@@ -174,6 +175,40 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
                 parse_mode=ParseMode.HTML,
             )
             return SELECT_PLAN
+        elif query.data == "back_to_plans":
+            # Try to restore the last parent category from user_data
+            parent_id = context.user_data.get('current_parent_category_id')
+            if parent_id:
+                from database.queries import DatabaseQueries as _DB
+                parent_cat = _DB.get_category_by_id(parent_id)
+                children = _DB.get_children_categories(parent_id)
+                if children:
+                    category_name = parent_cat.get('name', 'دسته‌بندی') if parent_cat else 'دسته‌بندی'
+                    await safe_edit_message_text(
+                        query.message,
+                        text=f"📋 {category_name}\n\nلطفاً یک زیردسته را انتخاب کنید:",
+                        reply_markup=get_categories_keyboard(parent_id=parent_id),
+                        parse_mode=ParseMode.HTML,
+                    )
+                else:
+                    keyboard = get_subscription_plans_keyboard(user_id, category_id=parent_id)
+                    category_name = parent_cat.get('name', 'محصولات') if parent_cat else 'محصولات'
+                    await safe_edit_message_text(
+                        query.message,
+                        text=f"🛍️ {category_name}\n\nلطفاً محصول مورد نظر خود را انتخاب کنید:",
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.HTML,
+                    )
+                return SELECT_PLAN
+            else:
+                # Fallback to top-level categories
+                await safe_edit_message_text(
+                    query.message,
+                    text="📋 دسته‌بندی محصولات\n\nلطفاً یک دسته‌بندی را انتخاب کنید:",
+                    reply_markup=get_categories_keyboard(),
+                    parse_mode=ParseMode.HTML,
+                )
+                return SELECT_PLAN
 
         # products_menu_<id>  -- extract numeric id safely
         if query.data.startswith("products_menu_"):
@@ -189,6 +224,8 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
         parent_cat = _DB.get_category_by_id(category_id)
         children = _DB.get_children_categories(category_id)
         if children:
+            # Store current parent category for back navigation
+            context.user_data['current_parent_category_id'] = category_id
             # Show sub-categories instead of plans
             category_name = parent_cat.get('name', 'دسته‌بندی') if parent_cat else 'دسته‌بندی'
             await safe_edit_message_text(
@@ -199,6 +236,8 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
             )
         else:
             # Leaf: show plans
+            # Store parent category id (if any) for back navigation
+            context.user_data['current_parent_category_id'] = parent_cat.get('parent_id') if parent_cat else None
             keyboard = get_subscription_plans_keyboard(user_id, category_id=category_id)
             category_name = parent_cat.get('name', 'محصولات') if parent_cat else 'محصولات'
             await safe_edit_message_text(
@@ -210,11 +249,39 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
             return SELECT_PLAN
     # If called via Message (e.g. reply keyboard)
     elif update.message:
-        await update.message.reply_text(
-            text="📋 دسته‌بندی محصولات\n\nلطفاً یک دسته‌بندی را انتخاب کنید:",
-            reply_markup=get_categories_keyboard(),
-            parse_mode=ParseMode.HTML,
-        )
+        # If triggered via a message (e.g. main menu button "🛒 محصولات")
+        from database.queries import DatabaseQueries as _DB
+        top_categories = _DB.get_children_categories(None)
+        if len(top_categories) == 1:
+            # Skip the redundant level when there is only one root category
+            single_cat = top_categories[0]
+            cat_id = single_cat['id']
+            context.user_data['current_parent_category_id'] = cat_id
+            children = _DB.get_children_categories(cat_id)
+            if children:
+                # Show sub-categories of that root
+                cat_name = single_cat.get('name', 'دسته‌بندی')
+                await update.message.reply_text(
+                    text=f"📋 {cat_name}\n\nلطفاً یک زیردسته را انتخاب کنید:",
+                    reply_markup=get_categories_keyboard(parent_id=cat_id),
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                # Leaf: show plans of the root category
+                keyboard = get_subscription_plans_keyboard(user_id, category_id=cat_id)
+                cat_name = single_cat.get('name', 'محصولات')
+                await update.message.reply_text(
+                    text=f"🛍️ {cat_name}\n\nلطفاً محصول مورد نظر خود را انتخاب کنید:",
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.HTML,
+                )
+        else:
+            # Default behaviour – show top-level categories when there are multiple choices
+            await update.message.reply_text(
+                text="📋 دسته‌بندی محصولات\n\nلطفاً یک دسته‌بندی را انتخاب کنید:",
+                reply_markup=get_categories_keyboard(),
+                parse_mode=ParseMode.HTML,
+            )
     else:
         logger.error("start_subscription_flow called but neither callback_query nor message is present in update.")
         return ConversationHandler.END
@@ -287,7 +354,8 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     message_text += "\n\n⚠️ قیمت‌ها تا ۳۰ دقیقه اعتبار دارند."
     
-    await query.message.edit_text(
+    await safe_edit_message_text(
+        query.message,
         text=message_text,
         reply_markup=get_payment_methods_keyboard(),
         parse_mode=ParseMode.HTML
@@ -336,7 +404,8 @@ async def handle_free_content_plan(update: Update, context: ContextTypes.DEFAULT
 
     # 1. Check if the plan capacity is full (capacity stores remaining slots)
     if plan.get('capacity') is not None:
-        if plan['capacity'] <= 0:
+        # Safety check: ensure capacity is a number, not a list or other type
+        if isinstance(plan['capacity'], (int, float)) and plan['capacity'] <= 0:
             await query.message.edit_text(
                 "ظرفیت این پلن تکمیل شده است.",
                 reply_markup=get_main_menu_keyboard()
@@ -469,7 +538,8 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Check remaining capacity slots (capacity stores remaining slots).
     plan_capacity = plan_dict.get('capacity')
     if plan_capacity is not None:
-        if plan_capacity <= 0:
+        # Safety check: ensure capacity is a number, not a list or other type
+        if isinstance(plan_capacity, (int, float)) and plan_capacity <= 0:
             logger.info(f"User {user_id} tried to select plan {plan_id} which is at full capacity.")
             await query.message.edit_text(
                 text="ظرفیت این محصول تکمیل شده است.",
