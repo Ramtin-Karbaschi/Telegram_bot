@@ -104,17 +104,34 @@ async def send_plan_videos(telegram_id: int, context: ContextTypes.DEFAULT_TYPE,
 
 async def send_channel_links_and_confirmation(telegram_id: int, context: ContextTypes.DEFAULT_TYPE, plan_name: str, channels_json: str | None = None, auto_delete_links: bool = True, plan_details: dict | None = None):
     """Sends a confirmation message with channel links and optionally schedules it for deletion."""
-    # First, send success confirmation with appropriate warning message
+    # Determine if plan has videos to adjust the message text
+    has_videos = False
+    try:
+        if plan_details and isinstance(plan_details, dict):
+            from database.queries import DatabaseQueries
+            videos = DatabaseQueries.get_plan_videos(plan_details.get('id'))
+            has_videos = bool(videos)
+    except Exception as e:
+        logger.error("Error checking videos for plan in send_channel_links: %s", e)
+
+    # Build success confirmation text with appropriate warning message
     if auto_delete_links:
-        success_text = (
+        base_success = (
             f"✅ اشتراک پلن «{plan_name}» برای شما با موفقیت فعال شد.\n\n"
             "⚠️ توجه: لینک‌های دسترسی فقط ۵ دقیقه اعتبار دارند."
         )
     else:
-        success_text = (
+        base_success = (
             f"✅ اشتراک پلن «{plan_name}» برای شما با موفقیت فعال شد.\n\n"
             "🔗 لینک‌های دسترسی برای همیشه در دسترس شما خواهند بود."
         )
+
+    if has_videos:
+        success_text = (
+            "🎬 ویدئوهای آموزشی بالا در دسترس شماست. 👆🏻\n" + base_success
+        )
+    else:
+        success_text = base_success
     try:
         await context.bot.send_message(
             chat_id=telegram_id,
