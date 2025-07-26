@@ -510,11 +510,16 @@ class AdminMenuHandler:
         keyboard = []
         row = []
         for d in discounts:
-            d = dict(d)
-            status = "🟢 فعال" if d.get("is_active") else "🔴 غیرفعال"
-            text += f"\n• {d.get('code')} ({status})"
+            # Convert sqlite3.Row to dict properly
+            if hasattr(d, 'keys'):
+                d_dict = {key: d[key] for key in d.keys()}
+            else:
+                d_dict = dict(d)
+            
+            status = "🟢 فعال" if d_dict.get("is_active") else "🔴 غیرفعال"
+            text += f"\n• {d_dict.get('code')} ({status})"
             # add button
-            row.append(InlineKeyboardButton(d.get('code'), callback_data=f"view_discount_{d.get('id')}") )
+            row.append(InlineKeyboardButton(d_dict.get('code'), callback_data=f"view_discount_{d_dict.get('id')}") )
             if len(row) == 3:
                 keyboard.append(row)
                 row = []
@@ -531,19 +536,25 @@ class AdminMenuHandler:
         if not d:
             await query.edit_message_text("کد تخفیف یافت نشد.")
             return
-        d = dict(d)
-        status_text = "فعال 🟢" if d.get("is_active") else "غیرفعال 🔴"
-        toggle_text = "🔴 غیرفعال کردن" if d.get("is_active") else "🟢 فعال کردن"
+        
+        # Convert sqlite3.Row to dict properly
+        if hasattr(d, 'keys'):
+            d_dict = {key: d[key] for key in d.keys()}
+        else:
+            d_dict = dict(d)
+            
+        status_text = "فعال 🟢" if d_dict.get("is_active") else "غیرفعال 🔴"
+        toggle_text = "🔴 غیرفعال کردن" if d_dict.get("is_active") else "🟢 فعال کردن"
         text = (
-            f"جزئیات کد تخفیف {d['code']}\n\n"
-            f"شناسه: {d['id']}\n"
-            f"نوع: {d['type']}\n"
-            f"مقدار: {d['value']}\n"
+            f"جزئیات کد تخفیف {d_dict['code']}\n\n"
+            f"شناسه: {d_dict['id']}\n"
+            f"نوع: {d_dict['type']}\n"
+            f"مقدار: {d_dict['value']}\n"
             f"وضعیت: {status_text}\n"
-            f"تاریخ شروع: {d.get('start_date','-')}\n"
-            f"تاریخ پایان: {d.get('end_date','-')}\n"
-            f"حداکثر استفاده: {d.get('max_uses','-')}\n"
-            f"تعداد استفاده: {d.get('uses_count','0')}"
+            f"تاریخ شروع: {d_dict.get('start_date','-')}\n"
+            f"تاریخ پایان: {d_dict.get('end_date','-')}\n"
+            f"حداکثر استفاده: {d_dict.get('max_uses','-')}\n"
+            f"تعداد استفاده: {d_dict.get('uses_count','0')}"
         )
         keyboard = [
             [InlineKeyboardButton(toggle_text, callback_data=f"toggle_discount_{discount_id}")],
@@ -561,8 +572,18 @@ class AdminMenuHandler:
         keyboard = []
         row = []
         for p in plans:
-            pid = p[0] if isinstance(p, (list, tuple)) else p.get("id")
-            pname = p[1] if isinstance(p, (list, tuple)) else p.get("name")
+            # Handle different data types (tuple/list vs sqlite3.Row)
+            if isinstance(p, (list, tuple)):
+                pid = p[0]
+                pname = p[1]
+            else:
+                # Convert sqlite3.Row to dict properly
+                if hasattr(p, 'keys'):
+                    p_dict = {key: p[key] for key in p.keys()}
+                else:
+                    p_dict = dict(p)
+                pid = p_dict.get("id")
+                pname = p_dict.get("name")
             selected = pid in selected_ids
             button_text = ("✅ " if selected else "☑️ ") + str(pname)
             row.append(InlineKeyboardButton(button_text, callback_data=f"planpick_{pid}"))
@@ -645,7 +666,14 @@ class AdminMenuHandler:
         if not d:
             await query.answer("خطا", show_alert=True)
             return
-        new_status = 0 if d['is_active'] else 1
+        
+        # Convert sqlite3.Row to dict properly
+        if hasattr(d, 'keys'):
+            d_dict = {key: d[key] for key in d.keys()}
+        else:
+            d_dict = dict(d)
+            
+        new_status = 0 if d_dict['is_active'] else 1
         DatabaseQueries.toggle_discount_status(discount_id, new_status)
         await self._show_single_discount(query, discount_id)
 

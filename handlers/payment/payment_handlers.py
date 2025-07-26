@@ -369,6 +369,52 @@ async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
 
     selected_plan = context.user_data.get('selected_plan_details')
+    if not selected_plan:
+        await query.edit_message_text("خطا: پلن انتخاب شده یافت نشد.")
+        return ConversationHandler.END
+    
+    # Calculate and store the live price for discount validation
+    # Get current exchange rate
+    usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
+    if not usdt_rate:
+        await query.edit_message_text("خطا در دریافت نرخ ارز. لطفاً دوباره تلاش کنید.")
+        return SELECT_PLAN
+    
+    # Get base currency and price from plan
+    base_currency = selected_plan.get('base_currency', 'IRR')
+    base_price = selected_plan.get('base_price')
+    
+    if base_price is None:
+        # Fallback to legacy fields for backward compatibility
+        if selected_plan.get('price_tether') is not None:
+            base_currency = 'USDT'
+            base_price = selected_plan['price_tether']
+        elif selected_plan.get('price') is not None:
+            base_currency = 'IRR'
+            base_price = selected_plan['price']
+        else:
+            await query.edit_message_text("خطا: قیمت پلن تعریف نشده است.")
+            return ConversationHandler.END
+    
+    # Calculate prices in both currencies
+    if base_currency == 'USDT':
+        usdt_price = float(base_price)
+        irr_price = int(usdt_price * usdt_rate * 10)  # Convert to Rial (with 10x multiplier)
+    else:  # base_currency == 'IRR'
+        irr_price = int(float(base_price))
+        usdt_price = irr_price / (usdt_rate * 10)  # Convert to USDT
+    
+    # Store calculated prices with expiry time (30 minutes)
+    from datetime import datetime, timedelta
+    expiry_time = datetime.utcnow() + timedelta(minutes=30)
+    context.user_data.update({
+        'live_usdt_price': usdt_price,
+        'live_irr_price': irr_price,
+        'price_expiry': expiry_time.isoformat(),
+        'base_currency': base_currency,
+        'base_price': base_price
+    })
+    
     message_text = f"شما پلن «{selected_plan['name']}» را انتخاب کرده‌اید. آیا کد تخفیف دارید؟"
 
     # Use safe_edit_message_text to prevent 'Message is not modified' errors if user triggers the same callback repeatedly
@@ -1491,7 +1537,8 @@ async def prompt_for_discount_code(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     await query.answer()
 
-    await query.message.edit_text(
+    await safe_edit_message_text(
+        query.message,
         text="لطفاً کد تخفیف خود را وارد کنید:",
         reply_markup=get_back_to_ask_discount_keyboard()
     )
@@ -1529,19 +1576,35 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
     error_message = None
     if not discount:
         error_message = "کد تخفیف وارد شده معتبر نیست."
-    elif not discount['is_active']:
-        error_message = "این کد تخفیف دیگر فعال نیست."
-    elif discount['start_date'] and datetime.strptime(discount['start_date'], '%Y-%m-%d') > datetime.now():
-        error_message = "زمان استفاده از این کد تخفیف هنوز شروع نشده است."
-    elif discount['end_date'] and datetime.strptime(discount['end_date'], '%Y-%m-%d') < datetime.now():
-        error_message = "زمان استفاده از این کد تخفیف به پایان رسیده است."
-    elif discount['max_uses'] is not None and discount['times_used'] >= discount['max_uses']:
-        error_message = "ظرفیت استفاده از این کد تخفیف به اتمام رسیده است."
     else:
-        # Check if discount is applicable to the selected plan
-        applicable_plans = Database.get_plans_for_discount(discount['id'])
-        if not any(p['id'] == selected_plan['id'] for p in applicable_plans):
-            error_message = "این کد تخفیف برای پلن انتخابی شما معتبر نیست."
+        # Convert sqlite3.Row to dict properly
+        if hasattr(discount, 'keys'):
+            discount_dict = {key: discount[key] for key in discount.keys()}
+        else:
+            discount_dict = dict(discount)
+            
+        if not discount_dict['is_active']:
+            error_message = "این کد تخفیف دیگر فعال نیست."
+        elif discount_dict['start_date'] and datetime.strptime(discount_dict['start_date'], '%Y-%m-%d') > datetime.now():
+            error_message = "زمان استفاده از این کد تخفیف هنوز شروع نشده است."
+        elif discount_dict['end_date'] and datetime.strptime(discount_dict['end_date'], '%Y-%m-%d') < datetime.now():
+            error_message = "زمان استفاده از این کد تخفیف به پایان رسیده است."
+        elif discount_dict['max_uses'] is not None and discount_dict['uses_count'] >= discount_dict['max_uses']:
+            error_message = "ظرفیت استفاده از این کد تخفیف به اتمام رسیده است."
+        else:
+            # Check if discount is applicable to the selected plan
+            applicable_plans = Database.get_plans_for_discount(discount_dict['id'])
+            # Convert plan Row objects to dicts for comparison
+            plan_ids = []
+            for p in applicable_plans:
+                if hasattr(p, 'keys'):
+                    p_dict = {key: p[key] for key in p.keys()}
+                else:
+                    p_dict = dict(p)
+                plan_ids.append(p_dict['id'])
+            
+            if not any(pid == selected_plan['id'] for pid in plan_ids):
+                error_message = "این کد تخفیف برای پلن انتخابی شما معتبر نیست."
 
     if error_message:
         await update.message.reply_text(
@@ -1550,15 +1613,15 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
         )
         return ASK_DISCOUNT
 
-    # Apply discount
-    if discount['type'] == 'percentage':
-        final_price -= final_price * (discount['value'] / 100)
-    elif discount['type'] == 'fixed_amount':
-        final_price -= discount['value']
+    # Apply discount (use discount_dict from above)
+    if discount_dict['type'] == 'percentage':
+        final_price -= final_price * (discount_dict['value'] / 100)
+    elif discount_dict['type'] == 'fixed_amount':
+        final_price -= discount_dict['value']
     
     final_price = int(max(0, final_price)) # Ensure price doesn't go below zero and is an integer
     context.user_data['final_price'] = final_price
-    context.user_data['discount_id'] = discount['id']
+    context.user_data['discount_id'] = discount_dict['id']
 
     # If price is zero after discount, activate subscription directly
     if final_price == 0:
@@ -1571,7 +1634,7 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
             amount=0,
             payment_method='discount_100',
             status='completed',
-            description=f"Activated with 100% discount code id: {discount['id']}"
+            description=f"Activated with 100% discount code id: {discount_dict['id']}"
         )
 
         success, message = await activate_or_extend_subscription(
@@ -1581,13 +1644,15 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
             plan_name=selected_plan.get('name', 'N/A'),
             payment_amount=0,
             payment_method='discount_100',
-            transaction_id=f"discount_{discount['id']}",
+            transaction_id=f"discount_{discount_dict['id']}",
             context=context,
             payment_table_id=payment_id
         )
         
         if success:
-            logger.info(f"User {user_id} activated plan {plan_id} for free using discount code ID {discount['id']}.")
+            # Increment discount usage count
+            Database.increment_discount_usage(discount_dict['id'])
+            logger.info(f"User {user_id} activated plan {plan_id} for free using discount code ID {discount_dict['id']}.")
             # پیام لینک‌ها در activate_or_extend_subscription ارسال شده است؛ ارسال دوباره لازم نیست.
             context.user_data.clear()
             return ConversationHandler.END

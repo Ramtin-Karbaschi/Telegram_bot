@@ -264,6 +264,17 @@ async def unknown_message_handler(update: Update, context: ContextTypes.DEFAULT_
     # اگر در حالت انتظار TxHash هستیم، پیام را نادیده بگیریم تا هندلر پرداخت آن را پردازش کند
     if context.user_data.get('awaiting_tx_hash'):
         return
+    
+    # Check if user is in any conversation state - if so, don't show unknown message
+    # This prevents the unknown handler from interfering with conversation handlers
+    conversation_keys = [
+        'selected_plan', 'selected_plan_details', 'payment_method', 'live_irr_price',
+        'discount_id', 'final_price', 'awaiting_registration', 'awaiting_profile_edit',
+        'awaiting_support_message', 'awaiting_survey_response'
+    ]
+    if any(key in context.user_data for key in conversation_keys):
+        # User is likely in a conversation flow, don't show unknown message
+        return
 
     # در سایر موارد پیام راهنمای کوتاه با تنها یک کلید «مشاهده پروفایل» نشان داده شود
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
