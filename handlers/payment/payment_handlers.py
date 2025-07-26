@@ -1608,10 +1608,10 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
 
     if error_message:
         await update.message.reply_text(
-            error_message + "\nلطفا کد دیگری وارد کنید یا بدون تخفیف ادامه دهید.",
-            reply_markup=get_ask_discount_keyboard()
+            error_message + "\nلطفاً یک کد تخفیف معتبر وارد کنید یا با دکمهٔ «بازگشت» به مرحلهٔ قبل بروید.",
+            reply_markup=get_back_to_ask_discount_keyboard()
         )
-        return ASK_DISCOUNT
+        return VALIDATE_DISCOUNT
 
     # Apply discount (use discount_dict from above)
     if discount_dict['type'] == 'percentage':
@@ -1775,8 +1775,13 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
 
 payment_conversation = ConversationHandler(
     entry_points=[
+        # Main menu buttons
         CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'),
+        CallbackQueryHandler(start_subscription_flow, pattern='^products_menu(?:_\\d+)?$'),
         CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
+        # Direct plan buttons (e.g., from reminder messages)
+        CallbackQueryHandler(select_plan_handler, pattern='^plan_\\d+$'),
+        # Text menu buttons
         MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 محصولات)$"), start_subscription_flow),
     ],
     states={
