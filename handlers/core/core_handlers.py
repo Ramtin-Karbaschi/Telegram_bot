@@ -257,7 +257,7 @@ async def unknown_message_handler(update: Update, context: ContextTypes.DEFAULT_
     # اگر کاربر در واقع قصد خرید محصولات را داشته ولی پیام توسط Unknown handler پردازش شده، او را به فلو صحیح هدایت کنیم
     text = (update.message.text or '').strip()
     from utils import constants
-    if text in (constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION, '🛒 محصولات', '🛒 خرید محصولات'):
+    if text in (constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION, '🛒 محصولات', '🛒 VIP', '🛒 خرید محصولات'):
         # این پیام توسط Handler دیگری مدیریت می‌شود؛ نیازی به پاسخ اینجا نیست.
         return
 

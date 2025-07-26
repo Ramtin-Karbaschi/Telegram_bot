@@ -32,7 +32,7 @@ def get_categories_keyboard(parent_id: int | None = None):
     for cat in categories:
         cb_data = f"products_menu_{cat['id']}"
         row.append(InlineKeyboardButton(cat["name"], callback_data=cb_data))
-        if len(row) == 2:  # two buttons per row
+        if len(row) == 3:  # three buttons per row
             keyboard.append(row)
             row = []
     if row:

@@ -15,8 +15,8 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
 
     row1 = []
     if is_registered:
-        row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION))
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_STATUS))
+        row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION))
     if is_registered:
         # Free Package
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE))
@@ -78,8 +78,8 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
 
     row1 = []
     if is_registered:
-        row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION))
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_STATUS))
+        row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION))
     if is_registered:
         # Free Package
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE))

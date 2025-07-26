@@ -53,8 +53,8 @@ RULES_MESSAGE = """
 """
 
 # Main Menu Button Texts
-TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🛒 محصولات"
-TEXT_MAIN_MENU_FREE_PACKAGE = "🎁 رایگان"
+TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🛒 VIP"
+TEXT_MAIN_MENU_FREE_PACKAGE = "🎁 خدمات رایگان"
 TEXT_MAIN_MENU_STATUS = "👤 پروفایل کاربری"
 TEXT_BACK_TO_MAIN_MENU = " بازگشت به منوی اصلی"
 TEXT_MAIN_MENU_ALTSEASON = "🌊 آلت‌سیزن"

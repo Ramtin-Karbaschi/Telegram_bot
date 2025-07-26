@@ -457,7 +457,7 @@ class MainBot:
         self.application.add_handler(CallbackQueryHandler(show_queue_position, pattern=r"^freepkg_queue_pos$"), group=0)
         self.application.add_handler(MessageHandler(filters.Regex(r"^📊 جایگاه صف رایگان$"), show_queue_position_message), group=0)
         # Free packages submenu (text button)
-        self.application.add_handler(MessageHandler(filters.Regex(r"^🎁 رایگان$"), free_packages_menu), group=0)
+        self.application.add_handler(MessageHandler(filters.Regex(r"^🎁 (?:رایگان|خدمات رایگان)$"), free_packages_menu), group=0)
         # Callback for Toobit package selection from submenu
         self.application.add_handler(CallbackQueryHandler(start_free_package_flow, pattern=r"^freepkg_toobit$"), group=0)
         # Callback handlers for expiration reminder buttons
@@ -479,7 +479,7 @@ class MainBot:
 
         # ---------------- Payment conversation AFTER free package ----------------
         # Add the 'products' text button as an entry point to the conversation
-        payment_conversation.entry_points.append(MessageHandler(filters.TEXT & filters.Regex(r"^🛒 محصولات$"), start_subscription_flow))
+        payment_conversation.entry_points.append(MessageHandler(filters.TEXT & filters.Regex(r"^🛒 (?:محصولات|VIP)$"), start_subscription_flow))
         self.application.add_handler(payment_conversation, group=1)
 
         # Handler for back button from payment method selection to plan selection

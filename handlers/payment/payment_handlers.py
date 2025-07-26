@@ -1782,7 +1782,7 @@ payment_conversation = ConversationHandler(
         # Direct plan buttons (e.g., from reminder messages)
         CallbackQueryHandler(select_plan_handler, pattern='^plan_\\d+$'),
         # Text menu buttons
-        MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 محصولات)$"), start_subscription_flow),
+        MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 (?:محصولات|VIP))$"), start_subscription_flow),
     ],
     states={
         SELECT_PLAN: [
@@ -1800,7 +1800,7 @@ payment_conversation = ConversationHandler(
         SELECT_PAYMENT_METHOD: [
             CallbackQueryHandler(select_payment_method, pattern='^payment_(rial|crypto)$'),
             CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
-            MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 محصولات)$"), start_subscription_flow),
+            MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 (?:محصولات|VIP))$"), start_subscription_flow),
         ],
         VERIFY_PAYMENT: [
             CallbackQueryHandler(verify_payment_status, pattern='^payment_verify$'),
@@ -1808,7 +1808,7 @@ payment_conversation = ConversationHandler(
             CallbackQueryHandler(payment_verify_zarinpal_handler, pattern=f'^{VERIFY_ZARINPAL_PAYMENT_CALLBACK}$'),
             CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$'),
             CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
-            MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 محصولات)$"), start_subscription_flow),
+            MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 (?:محصولات|VIP))$"), start_subscription_flow),
         ],
         WAIT_FOR_TX_HASH: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_tx_hash_handler),

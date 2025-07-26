@@ -135,8 +135,8 @@ TEXT_MAIN_MENU_REGISTRATION = "📝 ثبت نام"
 TEXT_MAIN_MENU_EDIT_PROFILE = "👤 ویرایش پروفایل"
 TEXT_MAIN_MENU_SUPPORT = "🤝🏻 پشتیبانی"
 TEXT_MAIN_MENU_RULES = "⚠ قوانین"
-TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🛒 محصولات"
-TEXT_MAIN_MENU_FREE_PACKAGE = "🎁 رایگان"
+TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🛒 VIP"
+TEXT_MAIN_MENU_FREE_PACKAGE = "🎁 خدمات رایگان"
 
 # Profile Editing Callback Data
 CALLBACK_PROFILE_EDIT_FULLNAME = "edit_profile_fullname"
