@@ -335,10 +335,17 @@ async def activate_or_extend_subscription(
                     auto_delete_links = bool(auto_delete_raw)
                 
                 logger.info(f"Plan {plan_id} auto_delete_links: {auto_delete_raw} -> {auto_delete_links}")
-                await send_channel_links_and_confirmation(telegram_id=telegram_id, context=context, plan_name=plan_name, channels_json=channels_json, auto_delete_links=auto_delete_links, plan_details=plan_details)
-        
-        # Handle survey flow and content delivery
-        await handle_post_subscription_flow(telegram_id, context, plan_details, plan_name)
+                # First handle post-subscription flow (survey/videos)
+                await handle_post_subscription_flow(telegram_id, context, plan_details, plan_name)
+                # Then send channel links so that they appear after any videos
+                await send_channel_links_and_confirmation(
+                    telegram_id=telegram_id,
+                    context=context,
+                    plan_name=plan_name,
+                    channels_json=channels_json,
+                    auto_delete_links=auto_delete_links,
+                    plan_details=plan_details
+                )
         
         # Return success
         return True, ""
