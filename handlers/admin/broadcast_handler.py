@@ -336,6 +336,8 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Use main bot if available, else fallback to current bot
     from telegram import Bot
+    from utils.text_utils import buttonize_markdown
+    import re
     try:
         from config import MAIN_BOT_TOKEN
     except ImportError:
@@ -349,20 +351,28 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for b in buttons_data:
             suffix = f"plan_{b.get('id')}" if b.get('type') == 'plan' else f"cat_{b.get('id')}"
             url = f"https://t.me/{bot_username}?start={suffix}"
-            rows.append([InlineKeyboardButton(b.get('text', '-'), url=url)])
+            label = buttonize_markdown(b.get('text', '-'))
+            rows.append([InlineKeyboardButton(label, url=url)])
         keyboard = InlineKeyboardMarkup(rows)
     draft_msg = context.user_data.get("bc_draft_obj")
     success = 0
     for uid in user_ids:
         try:
             if draft_msg and draft_msg.text and not draft_msg.photo and not draft_msg.document and not draft_msg.video and not draft_msg.audio:
-                await bot_to_use.send_message(chat_id=uid, text=draft_msg.text, reply_markup=keyboard, parse_mode="HTML")
+                formatted = re.sub(r"~([^~]+)~", r"<s>\1</s>", draft_msg.text)
+                await bot_to_use.send_message(chat_id=uid, text=formatted, reply_markup=keyboard, parse_mode="HTML")
             elif draft_msg and draft_msg.photo:
-                await bot_to_use.send_photo(chat_id=uid, photo=draft_msg.photo[-1].file_id, caption=draft_msg.caption_html or draft_msg.caption or "", parse_mode="HTML", reply_markup=keyboard)
+                caption = draft_msg.caption_html or draft_msg.caption or ""
+                caption = re.sub(r"~([^~]+)~", r"<s>\1</s>", caption)
+                await bot_to_use.send_photo(chat_id=uid, photo=draft_msg.photo[-1].file_id, caption=caption, parse_mode="HTML", reply_markup=keyboard)
             elif draft_msg and draft_msg.document:
-                await bot_to_use.send_document(chat_id=uid, document=draft_msg.document.file_id, caption=draft_msg.caption_html or draft_msg.caption or "", parse_mode="HTML", reply_markup=keyboard)
+                caption = draft_msg.caption_html or draft_msg.caption or ""
+                caption = re.sub(r"~([^~]+)~", r"<s>\1</s>", caption)
+                await bot_to_use.send_document(chat_id=uid, document=draft_msg.document.file_id, caption=caption, parse_mode="HTML", reply_markup=keyboard)
             elif draft_msg and draft_msg.video:
-                await bot_to_use.send_video(chat_id=uid, video=draft_msg.video.file_id, caption=draft_msg.caption_html or draft_msg.caption or "", parse_mode="HTML", reply_markup=keyboard)
+                caption = draft_msg.caption_html or draft_msg.caption or ""
+                caption = re.sub(r"~([^~]+)~", r"<s>\1</s>", caption)
+                await bot_to_use.send_video(chat_id=uid, video=draft_msg.video.file_id, caption=caption, parse_mode="HTML", reply_markup=keyboard)
             else:
                 # Fallback to copying via manager bot if message type not handled
                 await context.bot.copy_message(chat_id=uid, from_chat_id=draft["data"]["chat_id"], message_id=draft["data"]["message_id"], reply_markup=keyboard)
