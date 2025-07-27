@@ -6,7 +6,13 @@ so administrators can quickly access management features
 import logging
 from typing import Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, MessageHandler, filters, ConversationHandler
+from telegram.ext import ConversationHandler
+from telegram.ext import (
+    ContextTypes,
+    CallbackQueryHandler, CommandHandler, MessageHandler, filters, ConversationHandler
+)
+# Import broadcast_start for custom broadcast
+from handlers.admin.broadcast_handler import broadcast_start
 
 from utils.helpers import admin_only_decorator as admin_only
 from utils.helpers import staff_only_decorator as staff_only
@@ -237,6 +243,7 @@ class AdminMenuHandler:
             return
 
         logger.debug("Admin menu callback: %s", data)
+        logger.info(f"DEBUG: callback={data}, bc_flow={context.user_data.get('bc_flow')}, user_data_keys={list(context.user_data.keys())}")
 
         if data == self.TICKETS_MENU:
             await self._tickets_submenu(query)
@@ -251,6 +258,7 @@ class AdminMenuHandler:
             await self.export_handler.entry(update, context)
         elif data.startswith("exp_prod_"):
             await self.export_handler.handle_product(update, context)
+
         elif data == self.BROADCAST_MENU:
             await self._broadcast_submenu(query)
         elif data == self.BROADCAST_WITH_LINK:
@@ -418,6 +426,36 @@ class AdminMenuHandler:
         elif data == self.BACK_MAIN:
             # Just recreate the main admin menu correctly
             await self.show_admin_menu(update, context)
+        elif data == "broadcast_custom":
+            # جریان پیام همگانی با دکمه محصول/دسته
+            await query.answer()
+            from handlers.admin.broadcast_handler import broadcast_start  # local import to avoid circular
+            # علامت گذاری فعال بودن جریان
+            context.user_data["bc_flow"] = True
+            # start flow and set flag to capture next message
+            await broadcast_start(update=update, context=context)
+            return
+        elif context.user_data.get("bc_flow") and data in {"broadcast_add", "broadcast_send", "broadcast_cancel"}:
+            logger.info(f"Routing broadcast menu callback: {data}")
+            from handlers.admin.broadcast_handler import menu_callback
+            await menu_callback(update, context)
+            return
+        elif context.user_data.get("bc_flow") and (data.startswith("bc_cat_") or data.startswith("bc_plan_")):
+            logger.info(f"Routing broadcast add_select callback: {data}")
+            from handlers.admin.broadcast_handler import add_select_callback
+            await add_select_callback(update, context)
+            return
+        elif context.user_data.get("bc_flow") and data in {"audience_active", "audience_all"}:
+            logger.info(f"Routing broadcast audience callback: {data}")
+            from handlers.admin.broadcast_handler import audience_callback
+            await audience_callback(update, context)
+            return
+        elif context.user_data.get("bc_flow"):
+            # Catch-all for any other broadcast callbacks
+            logger.info(f"Routing other broadcast callback: {data}")
+            from handlers.admin.broadcast_handler import add_select_callback
+            await add_select_callback(update, context)
+            return
         else:
             await query.answer("دستور ناشناخته!", show_alert=True)
 
@@ -843,6 +881,7 @@ class AdminMenuHandler:
             [InlineKeyboardButton("🟢 کاربران فعال", callback_data=self.BROADCAST_ACTIVE)],
             [InlineKeyboardButton("👥 تمامی اعضا", callback_data=self.BROADCAST_ALL)],
             [InlineKeyboardButton("🔗 پیام با دکمهٔ لینک کانال", callback_data="broadcast_with_link")],
+            [InlineKeyboardButton("🛍️ پیام با دکمه‌های محصولات/دسته‌ها", callback_data="broadcast_custom")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text(
@@ -1102,6 +1141,14 @@ class AdminMenuHandler:
 
         logger.info("Admin message_handler triggered with text: %s | bw_content=%s | search_flag=%s", update.effective_message.text if update.effective_message else "<no message>", context.user_data.get("bw_awaiting_content"), context.user_data.get("awaiting_user_search_query"))
         message = update.effective_message
+        # -------- Broadcast custom (product/category buttons) flow --------
+        if context.user_data.get("bc_waiting_msg"):
+            from handlers.admin.broadcast_handler import handle_message_content, MENU
+            await handle_message_content(update, context)
+            # if handle_message_content accepted, remove flag
+            context.user_data.pop("bc_waiting_msg", None)
+            return
+
         # -------- Broadcast-with-link content flow --------
         if context.user_data.get("bw_awaiting_content"):
             # Accept a single message (text/photo/document) as content.
@@ -2067,6 +2114,6 @@ class AdminMenuHandler:
 
         # This is the main handler for all other admin menu callbacks
         # Note: The invite link and ban/unban callbacks are handled by their respective ConversationHandlers.
-        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|settings_|products_|discounts_|view_discount_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_)"))
+        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|bc_cat_|bc_plan_|audience_|broadcast_continue$|broadcast_cancel$|settings_|products_|discounts_|view_discount_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_)"))
 
         return handlers

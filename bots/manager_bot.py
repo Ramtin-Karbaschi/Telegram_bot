@@ -41,6 +41,7 @@ from handlers.admin.altseason_admin_handler import AdminAltSeasonHandler
 from handlers.admin_menu_handlers import AdminMenuHandler  # Import admin menu handler
 from handlers.admin_product_handlers import AdminProductHandler
 from handlers.admin_category_handlers import AdminCategoryHandler
+# from handlers.admin.broadcast_handler import get_broadcast_conv_handler  # Now integrated in admin_menu_handlers
 from handlers.video_upload_handlers import get_conv_handler as get_video_upload_conv
 from handlers.survey_builder import get_conv_handler as get_survey_builder_conv
 from utils.invite_link_manager import InviteLinkManager  # Import InviteLinkManager
@@ -1213,26 +1214,28 @@ def setup_handlers(self):
     application.add_handler(self.ticket_handler.get_ticket_conversation_handler())
     application.add_handler(self.menu_handler.get_invite_link_conv_handler())
     application.add_handler(self.menu_handler.get_ban_unban_conv_handler())
-    application.add_handler(self.menu_handler.get_broadcast_conv_handler())
+    # Broadcast handler is now integrated into admin_menu_handlers routing
+    # application.add_handler(get_broadcast_conv_handler(), group=-2)
+    application.add_handler(get_video_upload_conv(), group=-1)
 
     # --- CallbackQuery Handlers for static menus ---
     # This handles callbacks from non-conversation inline keyboards, like the main settings menu.
-    application.add_handler(CallbackQueryHandler(self.menu_handler.callback_query_handler))
+    application.add_handler(CallbackQueryHandler(self.menu_handler.callback_query_handler), group=2)
 
     # --- Message Handlers for Admin Private Chat (Group 0) ---
     # This handler is specifically for the admin's main menu, which uses ReplyKeyboardMarkup.
     admin_button_filter = filters.Text(list(self.admin_buttons_map.keys()))
     application.add_handler(MessageHandler(
-        admin_button_filter & filters.ChatType.PRIVATE,
-        self._admin_reply_keyboard_handler
-    ))
+         admin_button_filter & filters.ChatType.PRIVATE,
+         self._admin_reply_keyboard_handler
+     ), group=2)
 
     # This is a general message handler for admins, which can be used for features like search.
     # It should not handle commands or the main menu buttons.
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE & ~admin_button_filter,
         self.menu_handler.message_handler
-    ))
+    ), group=2)
 
     # Generic UpdateHandler for logging (Group 100)
     application.add_handler(TypeHandler(Update, self.log_all_updates), group=100)
