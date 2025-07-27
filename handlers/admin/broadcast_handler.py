@@ -325,11 +325,8 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     from database.queries import DatabaseQueries
     buttons_data = context.user_data.get("broadcast_buttons", [])
-    # Build inline keyboard buttons (for products/categories we only have callback placeholders, replace with url '#')
+    # We'll build the inline keyboard after we know the main-bot username
     keyboard = None
-    if buttons_data:
-        rows = [[InlineKeyboardButton(b.get("text", "-"), callback_data="ignore")] for b in buttons_data]
-        keyboard = InlineKeyboardMarkup(rows)
 
     if context.user_data["bc_audience"] == "active":
         users_rows = DatabaseQueries.get_all_active_subscribers()
@@ -344,6 +341,16 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ImportError:
         MAIN_BOT_TOKEN = None
     bot_to_use = Bot(MAIN_BOT_TOKEN) if MAIN_BOT_TOKEN else context.bot
+    # Build keyboard with deep links to the main bot if buttons exist
+    if buttons_data:
+        me = await bot_to_use.get_me()
+        bot_username = me.username
+        rows = []
+        for b in buttons_data:
+            suffix = f"plan_{b.get('id')}" if b.get('type') == 'plan' else f"cat_{b.get('id')}"
+            url = f"https://t.me/{bot_username}?start={suffix}"
+            rows.append([InlineKeyboardButton(b.get('text', '-'), url=url)])
+        keyboard = InlineKeyboardMarkup(rows)
     draft_msg = context.user_data.get("bc_draft_obj")
     success = 0
     for uid in user_ids:
