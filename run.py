@@ -72,7 +72,11 @@ async def main():
     
     # Store manager_bot instance in main bot's application for cross-bot communication
     main_bot.application.manager_bot = manager_bot
-    logger.info("Manager bot instance stored in main bot application context")
+
+    # Expose main bot's Bot object via bot_data so that other apps/handlers can access it
+    main_bot.application.bot_data["main_bot_bot"] = main_bot.application.bot
+    manager_bot.application.bot_data["main_bot_bot"] = main_bot.application.bot
+    logger.info("main_bot_bot reference stored in bot_data for both applications")
     
     try:
         # Start both bots

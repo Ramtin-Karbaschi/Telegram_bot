@@ -342,7 +342,7 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from config import MAIN_BOT_TOKEN
     except ImportError:
         MAIN_BOT_TOKEN = None
-    bot_to_use = Bot(MAIN_BOT_TOKEN) if MAIN_BOT_TOKEN else context.bot
+    bot_to_use = context.application.bot_data.get("main_bot_bot") or (Bot(token=MAIN_BOT_TOKEN) if MAIN_BOT_TOKEN else context.bot)
     # Build keyboard with deep links to the main bot if buttons exist
     if buttons_data:
         me = await bot_to_use.get_me()
