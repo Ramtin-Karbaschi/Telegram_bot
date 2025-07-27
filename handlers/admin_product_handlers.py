@@ -329,7 +329,10 @@ class AdminProductHandler:
 
     async def get_plan_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Store plan name, then ask admin to pick price base currency."""
-        context.user_data['new_plan_name'] = update.message.text.strip()
+        from utils.text_utils import buttonize_markdown
+        raw_name = update.message.text.strip()
+        context.user_data['new_plan_name_raw'] = raw_name
+        context.user_data['new_plan_name'] = buttonize_markdown(raw_name)
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🪙 تتر (USDT)", callback_data="currency_usdt")],
             [InlineKeyboardButton("﷼ ریال (IRR)", callback_data="currency_irr")]
@@ -3055,10 +3058,12 @@ class AdminProductHandler:
         await self._show_fields_menu(query, context, mode="edit")
         return FIELD_VALUE
 
-
     async def get_new_plan_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message.text != '/skip':
-            context.user_data['edit_plan_name'] = update.message.text
+            from utils.text_utils import buttonize_markdown
+            raw_name = update.message.text.strip()
+            context.user_data['edit_plan_name_raw'] = raw_name
+            context.user_data['edit_plan_name'] = buttonize_markdown(raw_name)
         await update.message.reply_text("لطفاً قیمت جدید را وارد کنید (برای رد شدن، /skip را بزنید):")
         return EDIT_PRICE
 

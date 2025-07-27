@@ -57,7 +57,11 @@ TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🛒 VIP"
 TEXT_MAIN_MENU_FREE_PACKAGE = "🎁 خدمات رایگان"
 TEXT_MAIN_MENU_STATUS = "👤 پروفایل کاربری"
 TEXT_BACK_TO_MAIN_MENU = " بازگشت به منوی اصلی"
-TEXT_MAIN_MENU_ALTSEASON = "🌊 میخوای بدونی آلت‌سیزن چیه؟"
+TEXT_MAIN_MENU_ALTSEASON = "🌊 میخوای بدونی آلت‌سیزن چیه?"
+
+# Example discounted plan button using utility (imported at runtime where used)
+# e.g., from utils.text_utils import price_with_discount
+# TEXT_PLAN_1M_DISCOUNTED = price_with_discount("150$", "70$")
 
 # Profile Editing specific constants
 PROFILE_EDIT_MENU_PROMPT = "کدام بخش از اطلاعات خود را می‌خواهید ویرایش کنید؟"

@@ -298,7 +298,8 @@ def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False
         plan_buttons_row = []
         for plan in active_plans:
             plan_id = plan['id']
-            button_text = plan['name']  # Use plan's name directly for the button
+            from utils.text_utils import buttonize_markdown
+            button_text = buttonize_markdown(plan['name'])
             plan_buttons_row.append(InlineKeyboardButton(button_text, callback_data=f"plan_{plan_id}"))
             if len(plan_buttons_row) == 2:
                 keyboard.append(plan_buttons_row)
