@@ -3,6 +3,7 @@ Support ticket handlers for the Daraei Academy Telegram bot
 """
 
 from telegram import Update, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 from telegram.constants import ParseMode
 from database.queries import DatabaseQueries as Database
@@ -588,7 +589,7 @@ async def ticket_history_handler(update: Update, context: ContextTypes.DEFAULT_T
                 "شما تاکنون تیکتی ثبت نکرده‌اید.",
                 reply_markup=get_support_menu_keyboard([])
             )
-        except telegram.error.BadRequest as e:
+        except BadRequest as e:
             if "Message is not modified" not in str(e):
                 raise
         return SUPPORT_MENU
