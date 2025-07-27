@@ -347,8 +347,10 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
     plan_price_usdt_formatted = f"{usdt_price:.5f}"
     
     # Create message with price expiry warning
+    from utils.text_utils import buttonize_markdown
+    plan_display_name = buttonize_markdown(selected_plan.get('name', 'N/A'))
     message_text = PAYMENT_METHOD_MESSAGE.format(
-        plan_name=selected_plan.get('name', 'N/A'),
+        plan_name=plan_display_name,
         plan_price=plan_price_irr_formatted,
         plan_tether=plan_price_usdt_formatted
     )
@@ -415,7 +417,9 @@ async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         'base_price': base_price
     })
     
-    message_text = f"شما پلن «{selected_plan['name']}» را انتخاب کرده‌اید. آیا کد تخفیف دارید؟"
+    from utils.text_utils import buttonize_markdown
+    plan_display_name = buttonize_markdown(selected_plan['name'])
+    message_text = f"شما پلن «{plan_display_name}» را انتخاب کرده‌اید. آیا کد تخفیف دارید؟"
 
     # Use safe_edit_message_text to prevent 'Message is not modified' errors if user triggers the same callback repeatedly
     await safe_edit_message_text(
@@ -446,7 +450,8 @@ async def handle_free_content_plan(update: Update, context: ContextTypes.DEFAULT
         return ConversationHandler.END
 
     plan_id = plan['id']
-    plan_name = plan['name']
+    from utils.text_utils import buttonize_markdown
+    plan_name = buttonize_markdown(plan['name'])
 
     # 1. Check if the plan capacity is full (capacity stores remaining slots)
     if plan.get('capacity') is not None:
@@ -744,7 +749,8 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
     if db_plan is not None:
         selected_plan = dict(db_plan)
         context.user_data['selected_plan_details'] = selected_plan
-    plan_name = selected_plan['name']
+    from utils.text_utils import buttonize_markdown
+    plan_name = buttonize_markdown(selected_plan['name'])
 
     # --- Handle free plans or plans discounted to zero ---
     if price_irr is None or price_irr <= 0:
@@ -1497,8 +1503,10 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
     
     plan_price_irr_formatted = f"{int(live_irr_price):,}"
     plan_price_usdt_formatted = f"{live_usdt_price:.5f}"
+    from utils.text_utils import buttonize_markdown
+    plan_display_name = buttonize_markdown(selected_plan.get('name', 'N/A'))
     message_text = PAYMENT_METHOD_MESSAGE.format(
-        plan_name=selected_plan.get('name', 'N/A'),
+        plan_name=plan_display_name,
         plan_price=plan_price_irr_formatted,
         plan_tether=plan_price_usdt_formatted
     )
