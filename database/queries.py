@@ -1308,7 +1308,8 @@ class DatabaseQueries:
         """Retrieve a single plan by its ID."""
         try:
             self.db.execute("SELECT * FROM plans WHERE id = ?", (plan_id,))
-            return self.db.fetchone()
+            row = self.db.fetchone()
+            return dict(row) if row else None
         except sqlite3.Error as e:
             logging.error(f"SQLite error in get_plan_by_id: {e}")
             return None
@@ -2306,7 +2307,7 @@ class DatabaseQueries:
                 db.execute("SELECT * FROM plans WHERE id = ?", (plan_id,))
                 result = db.fetchone()
                 db.close()
-                return result
+                return dict(result) if result else None
             except sqlite3.Error as e:
                 logging.error(f"SQLite error in get_plan_by_id: {e}")
                 return None
