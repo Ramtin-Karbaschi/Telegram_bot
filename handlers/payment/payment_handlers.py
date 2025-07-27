@@ -366,18 +366,31 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
     return SELECT_PAYMENT_METHOD
 
 async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Asks the user if they have a discount code."""
-    query = update.callback_query
-    await query.answer()
+    # """Asks the user if they have a discount code."""
+    # query = update.callback_query
+    # await query.answer()
 
-    selected_plan = context.user_data.get('selected_plan_details')
-    if not selected_plan:
-        await query.edit_message_text("خطا: پلن انتخاب شده یافت نشد.")
-        return ConversationHandler.END
+    # selected_plan = context.user_data.get('selected_plan_details')
+    # if not selected_plan:
+    #     await query.edit_message_text("خطا: پلن انتخاب شده یافت نشد.")
+    #     return ConversationHandler.END
     
-    # Calculate and store the live price for discount validation
-    # Get current exchange rate
-    usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
+    # # Calculate and store the live price for discount validation
+    # # Get current exchange rate
+    # usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
+    ####################################
+    """Temporarily bypass the discount question and directly show payment methods.
+    This shortcut can be reverted by restoring original implementation."""
+    # Simply delegate to show_payment_methods to keep rest of flow unchanged
+    # Works for both initial callback and potential message scenarios.
+    if update.callback_query:
+        await show_payment_methods(update, context)
+    else:
+        # create a dummy CallbackQuery-like context by re-invoking the same handler via stored message id is complex,
+        # so we skip; payment flow mainly uses callbacks.
+        pass
+    return SELECT_PAYMENT_METHOD
+    ####################################
     if not usdt_rate:
         await query.edit_message_text("خطا در دریافت نرخ ارز. لطفاً دوباره تلاش کنید.")
         return SELECT_PLAN
