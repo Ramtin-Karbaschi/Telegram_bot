@@ -57,7 +57,7 @@ TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🛒 VIP"
 TEXT_MAIN_MENU_FREE_PACKAGE = "🎁 خدمات رایگان"
 TEXT_MAIN_MENU_STATUS = "👤 پروفایل کاربری"
 TEXT_BACK_TO_MAIN_MENU = " بازگشت به منوی اصلی"
-TEXT_MAIN_MENU_ALTSEASON = "🌊 آلت‌سیزن"
+TEXT_MAIN_MENU_ALTSEASON = "🌊 میخوای بدونی آلت‌سیزن چیه؟"
 
 # Profile Editing specific constants
 PROFILE_EDIT_MENU_PROMPT = "کدام بخش از اطلاعات خود را می‌خواهید ویرایش کنید؟"
