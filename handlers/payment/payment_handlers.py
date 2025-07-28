@@ -146,14 +146,44 @@ async def back_to_main_menu_from_payment_handler(update: Update, context: Contex
     return await view_active_subscription(update, context)
 
 async def safe_edit_message_text(message, **kwargs):
-    """Edit message text safely, ignoring 'Message is not modified' errors."""
+    """Edit a message's text or caption safely.
+
+    Falls back in the following order:
+    1. edit_text – if message had textual content originally.
+    2. edit_caption – if message is media with caption (common for broadcasted photos/videos).
+    3. send a new message – if neither edit succeeds (e.g. no editable content).
+    Silently ignores *Message is not modified* errors.
+    """
+    from telegram.error import BadRequest as TGBadRequest
+
     try:
         await message.edit_text(**kwargs)
-    except BadRequest as e:
-        if 'Message is not modified' in str(e):
-            pass  # Silently ignore
-        else:
-            raise
+        return
+    except TGBadRequest as e:
+        # If there is no text (media message), try editing the caption instead
+        if 'There is no text in the message to edit' in str(e):
+            try:
+                caption_kwargs = kwargs.copy()
+                # edit_caption expects 'caption' instead of 'text'
+                caption_kwargs['caption'] = caption_kwargs.pop('text', '')
+                await message.edit_caption(**caption_kwargs)
+                return
+            except TGBadRequest as e2:
+                if 'Message is not modified' in str(e2):
+                    return
+                # fall through to send a new message
+        elif 'Message is not modified' in str(e):
+            return
+        # For other cases, try to send a standalone message to the same chat
+    try:
+        chat_id = message.chat_id
+        bot = message.get_bot()
+        text = kwargs.get('text') or kwargs.get('caption', '')
+        reply_markup = kwargs.get('reply_markup')
+        await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+    except Exception:
+        # As a last resort, swallow error to avoid crashing the handler
+        logger.warning("safe_edit_message_text: failed to edit or send fallback message", exc_info=True)
 
 async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry point for the subscription flow. Displays subscription plans."""

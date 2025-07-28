@@ -359,11 +359,9 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for b in buttons_data:
             label = buttonize_markdown(b.get('text', '-'))
             if b.get('type') == 'plan':
-                deep_link = f"https://t.me/{bot_username}?start=plan_{b.get('id')}"
-                rows.append([InlineKeyboardButton(label, url=deep_link)])
+                rows.append([InlineKeyboardButton(label, callback_data=f"plan_{b.get('id')}")])
             else:
-                deep_link = f"https://t.me/{bot_username}?start=cat_{b.get('id')}"
-                rows.append([InlineKeyboardButton(label, url=deep_link)])
+                rows.append([InlineKeyboardButton(label, callback_data=f"cat_{b.get('id')}")])
         keyboard = InlineKeyboardMarkup(rows)
     draft_msg = context.user_data.get("bc_draft_obj")
     
@@ -388,13 +386,24 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 formatted = re.sub(r"~([^~]+)~", r"<s>\1</s>", draft_msg.text)
                 await bot_to_use.send_message(chat_id=uid, text=formatted, reply_markup=keyboard, parse_mode="HTML")
             elif shared_message_id and SHARED_CHANNEL_ID:
-                # Copy from shared channel using main bot (preserves content and allows keyboard)
-                await bot_to_use.copy_message(
+                # Copy from shared channel using main bot (preserves content). Telegram Bot API
+                # may not accept inline keyboards directly in copy_message across all versions,
+                # therefore we first copy the message and then attach the keyboard in a second
+                # step via edit_message_reply_markup.
+                sent_msg = await bot_to_use.copy_message(
                     chat_id=uid,
                     from_chat_id=SHARED_CHANNEL_ID,
-                    message_id=shared_message_id,
-                    reply_markup=keyboard
+                    message_id=shared_message_id
                 )
+                if keyboard:
+                    try:
+                        await bot_to_use.edit_message_reply_markup(
+                            chat_id=uid,
+                            message_id=sent_msg.message_id,
+                            reply_markup=keyboard
+                        )
+                    except Exception as em:
+                        logger.warning("Failed to attach keyboard to copied message for %s: %s", uid, em)
             else:
                 # Fallback for other message types - send as text
                 await bot_to_use.send_message(
@@ -412,7 +421,12 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if draft_msg and draft_msg.text:
                         await bot_to_use.send_message(chat_id=uid, text=draft_msg.text, reply_markup=keyboard)
                     elif shared_message_id and SHARED_CHANNEL_ID:
-                        await bot_to_use.copy_message(chat_id=uid, from_chat_id=SHARED_CHANNEL_ID, message_id=shared_message_id, reply_markup=keyboard)
+                        sent_msg = await bot_to_use.copy_message(chat_id=uid, from_chat_id=SHARED_CHANNEL_ID, message_id=shared_message_id)
+                        if keyboard:
+                            try:
+                                await bot_to_use.edit_message_reply_markup(chat_id=uid, message_id=sent_msg.message_id, reply_markup=keyboard)
+                            except Exception as em:
+                                logger.warning("Fallback: failed to attach keyboard to copied message for %s: %s", uid, em)
                     else:
                         await bot_to_use.send_message(chat_id=uid, text="پیام همگانی", reply_markup=keyboard)
                     success += 1
