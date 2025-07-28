@@ -359,9 +359,11 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for b in buttons_data:
             label = buttonize_markdown(b.get('text', '-'))
             if b.get('type') == 'plan':
-                rows.append([InlineKeyboardButton(label, callback_data=f"plan_{b.get('id')}")])
+                deep_link = f"https://t.me/{bot_username}?start=plan_{b.get('id')}"
+                rows.append([InlineKeyboardButton(label, url=deep_link)])
             else:
-                rows.append([InlineKeyboardButton(label, callback_data=f"cat_{b.get('id')}")])
+                deep_link = f"https://t.me/{bot_username}?start=cat_{b.get('id')}"
+                rows.append([InlineKeyboardButton(label, url=deep_link)])
         keyboard = InlineKeyboardMarkup(rows)
     draft_msg = context.user_data.get("bc_draft_obj")
     
