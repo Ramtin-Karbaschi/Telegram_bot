@@ -997,10 +997,11 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
         keyboard_buttons = [
             [InlineKeyboardButton("📷 نمایش QR کد", callback_data=f"show_qr_code_{crypto_payment_request_db_id}")],
-            [InlineKeyboardButton("🔗 ارسال Tx Hash", callback_data="payment_send_tx")]
+            [InlineKeyboardButton("🔗 ارسال Tx Hash", callback_data="payment_send_tx")] 
         ]
-        # Always use the standard 'back to payment methods' button
-        keyboard_buttons.append([get_back_to_payment_methods_button()]) 
+        # افزودن دکمه تماس با پشتیبان جهت ارسال تصویر تراکنش
+        keyboard_buttons.append([InlineKeyboardButton("📨 ارتباط با پشتیبان", url="https://t.me/daraeiposhtibani")])
+        keyboard_buttons.append([get_back_to_payment_methods_button()])
 
         keyboard = InlineKeyboardMarkup(keyboard_buttons)
 
