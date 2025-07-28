@@ -127,6 +127,8 @@ PAYMENT_METHOD_MESSAGE = """
 CRYPTO_PAYMENT_UNIQUE_AMOUNT_MESSAGE = """
 💰 <b>پرداخت با تتر (USDT TRC20)</b> 💰
 
+<b>توجه:</b> کارمزد شبکه (Network Fee) را جداگانه پرداخت کنید. مبلغ زیر فقط قیمت محصول است.
+
 لطفاً مبلغ دقیقاً <code>{usdt_amount}</code> USDT (شبکه TRC20) را به آدرس کیف پول زیر واریز نمایید:
 
 آدرس کیف پول:

@@ -37,7 +37,7 @@ class CryptoPaymentService:
 
     @staticmethod
     def verify_payment_by_hash(tx_hash: str, min_amount: float, wallet_address: str) -> tuple[bool, float]:
-        """Validate a single transaction by its hash.
+        """Validate a single transaction by its hash with comprehensive security checks.
 
         Args:
             tx_hash: Transaction hash provided by the user.
@@ -52,18 +52,72 @@ class CryptoPaymentService:
         if not (tx_hash and wallet_address and min_amount > 0):
             logger.warning("verify_payment_by_hash called with invalid arguments")
             return False, 0.0
+        
+        # Check if this hash was already used
+        from database.models import Database
+        db = Database()
+        existing_payment = db.get_crypto_payment_by_transaction_id(tx_hash)
+        if existing_payment:
+            logger.warning("Transaction hash %s already used in payment %s", tx_hash, existing_payment.get('payment_id', 'unknown'))
+            # Log audit trail
+            CryptoPaymentService._log_verification_attempt(tx_hash, "duplicate_hash", min_amount, wallet_address)
+            return False, 0.0
+        
+        # Log verification attempt
+        CryptoPaymentService._log_verification_attempt(tx_hash, "started", min_amount, wallet_address)
 
         headers = {"TRON-PRO-API-KEY": config.TRONGRID_API_KEY} if getattr(config, "TRONGRID_API_KEY", None) else {}
-        url = f"{CryptoPaymentService.TRONGRID_ENDPOINT}/v1/transactions/{tx_hash}/events"
+        
+        # First check transaction success and confirmations
+        tx_url = f"{CryptoPaymentService.TRONGRID_ENDPOINT}/v1/transactions/{tx_hash}"
         try:
-            resp = requests.get(url, headers=headers, timeout=10)
+            tx_resp = requests.get(tx_url, headers=headers, timeout=10)
+            tx_resp.raise_for_status()
+            tx_data = tx_resp.json().get("data", [])
+            if not tx_data:
+                logger.info("Transaction %s not found", tx_hash)
+                return False, 0.0
+            
+            tx_info = tx_data[0]
+            # Check if transaction was successful
+            if tx_info.get("ret", [{}])[0].get("contractRet") != "SUCCESS":
+                logger.info("Transaction %s failed on-chain", tx_hash)
+                return False, 0.0
+            
+            # Check confirmations (optional - can be configured)
+            min_confirmations = getattr(config, "TRON_MIN_CONFIRMATIONS", 1)
+            if min_confirmations > 0:
+                try:
+                    latest_resp = requests.get(f"{CryptoPaymentService.TRONGRID_ENDPOINT}/v1/blocks/latest", headers=headers, timeout=10)
+                    latest_resp.raise_for_status()
+                    current_block = latest_resp.json()["block_header"]["raw_data"]["number"]
+                    tx_block = tx_info.get("blockNumber", 0)
+                    confirmations = current_block - tx_block
+                    if confirmations < min_confirmations:
+                        logger.info("Transaction %s has %d confirmations, need %d", tx_hash, confirmations, min_confirmations)
+                        return False, 0.0
+                except (requests.RequestException, KeyError, ValueError) as e:
+                    logger.warning("Could not check confirmations for %s: %s", tx_hash, e)
+                    # Continue without confirmation check if API fails
+            
+        except requests.RequestException as e:
+            logger.error("TronGrid tx info lookup failed: %s", e)
+            return False, 0.0
+        except (ValueError, KeyError) as e:
+            logger.error("Invalid response from TronGrid for tx %s: %s", tx_hash, e)
+            return False, 0.0
+        
+        # Now check transaction events
+        events_url = f"{CryptoPaymentService.TRONGRID_ENDPOINT}/v1/transactions/{tx_hash}/events"
+        try:
+            resp = requests.get(events_url, headers=headers, timeout=10)
             resp.raise_for_status()
             events = resp.json().get("data", [])
         except requests.RequestException as e:
-            logger.error("TronGrid tx lookup failed: %s", e)
+            logger.error("TronGrid events lookup failed: %s", e)
             return False, 0.0
         except ValueError:
-            logger.error("Invalid JSON from TronGrid when fetching tx %s", tx_hash)
+            logger.error("Invalid JSON from TronGrid when fetching events for tx %s", tx_hash)
             return False, 0.0
 
         contract_addr = config.USDT_TRC20_CONTRACT_ADDRESS
@@ -81,10 +135,40 @@ class CryptoPaymentService:
             except (TypeError, ValueError):
                 continue
             if amount >= min_amount:
+                # Additional validation: check transaction timestamp
+                tx_timestamp = tx_info.get("block_timestamp", 0) / 1000  # Convert ms to seconds
+                current_time = time.time()
+                max_age_hours = getattr(config, "MAX_TX_AGE_HOURS", 24)  # Default 24 hours
+                if current_time - tx_timestamp > max_age_hours * 3600:
+                    logger.info("Transaction %s too old (%.1f hours)", tx_hash, (current_time - tx_timestamp) / 3600)
+                    return False, 0.0
+                
                 logger.info("Tx %s valid: %.6f USDT to our wallet", tx_hash, amount)
+                CryptoPaymentService._log_verification_attempt(tx_hash, "success", min_amount, wallet_address, amount)
                 return True, amount
         logger.info("Tx %s not matched or insufficient amount", tx_hash)
+        CryptoPaymentService._log_verification_attempt(tx_hash, "failed_amount_mismatch", min_amount, wallet_address)
         return False, 0.0
+    
+    @staticmethod
+    def _log_verification_attempt(tx_hash: str, status: str, min_amount: float, wallet_address: str, actual_amount: float = 0.0):
+        """Log verification attempts for audit purposes."""
+        try:
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "tx_hash": tx_hash,
+                "status": status,
+                "min_amount": min_amount,
+                "actual_amount": actual_amount,
+                "wallet_address": wallet_address
+            }
+            logger.info("Verification audit: %s", log_entry)
+            
+            # Optional: Store in database or external audit system
+            # Database.log_verification_attempt(log_entry)
+            
+        except Exception as e:
+            logger.error("Failed to log verification attempt: %s", e)
 
     @staticmethod
     def _fetch_trc20_transfers(wallet_address: str, contract_address: str, min_timestamp: int, api_key: str, limit: int = 200):
@@ -140,11 +224,13 @@ class CryptoPaymentService:
             if tr.get("to") != wallet_address:
                 continue
             # `value` is hex of integer amount
-            if tr.get("value") == amount_hex:
+            # Accept payment if value >= expected (users may send a bit extra)
+            tr_value_int = int(tr.get("value"), 16)
+            if tr_value_int >= int_amount:
                 txid = tr.get("transaction_id")
                 logger.info("Matched USDT payment tx %s for amount %.6f", txid, expected_amount)
                 return True, txid
-        logger.info("No matching USDT payment found for amount %.6f", expected_amount)
+        logger.info("No matching USDT payment found for expected ≥ %.6f", expected_amount)
         return False, None
     @staticmethod
     def get_final_usdt_payment_amount(base_usdt_amount_rounded_to_3_decimals: float, payment_request_id: str | int) -> float:

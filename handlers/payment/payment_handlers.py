@@ -41,6 +41,7 @@ _CallbackQueryOriginal.answer = _safe_answer
 from datetime import datetime, timedelta
 import uuid
 import os
+import math
 # import config # Direct access to SUBSCRIPTION_PLANS removed
 from database.queries import DatabaseQueries as Database
 from utils.price_utils import get_usdt_to_irr_rate, convert_irr_to_usdt, convert_usdt_to_irr
@@ -98,11 +99,11 @@ async def _payment_timer_callback(context: ContextTypes.DEFAULT_TYPE):
         mins, secs = divmod(int(remaining.total_seconds()), 60)
         timer_str = f"{mins:02d}:{secs:02d}"
         usdt_display = user_data.get('live_usdt_price')
-        usdt_str = f"{usdt_display:.5f}" if usdt_display is not None else "N/A"
+        usdt_str = f"{int(usdt_display)}" if usdt_display is not None else "N/A"
         text = (
             f"{user_data['payment_message_header']}\n\n"
             f"⏳ اعتبار قیمت: {timer_str} دقیقه\n"
-            f"💵 مبلغ تتر: {usdt_str} USDT"
+            f"💵 مبلغ تتر: {usdt_str} USDT (شبکه) — کارمزد را جداگانه بپردازید"
         )
         context.bot.edit_message_text(
             chat_id=chat_id,
@@ -325,11 +326,11 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # Calculate prices in both currencies
     if base_currency == 'USDT':
-        usdt_price = float(base_price)
+        usdt_price = math.ceil(float(base_price))
         irr_price = int(usdt_price * usdt_rate * 10)  # Convert to Rial (with 10x multiplier)
     else:  # base_currency == 'IRR'
         irr_price = int(float(base_price))
-        usdt_price = irr_price / (usdt_rate * 10)  # Convert to USDT
+        usdt_price = math.ceil(irr_price / (usdt_rate * 10))  # Convert to USDT and round up
     
     # Store calculated prices with expiry time (30 minutes)
     from datetime import datetime, timedelta
@@ -344,7 +345,7 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # Format prices for display
     plan_price_irr_formatted = f"{irr_price:,}"
-    plan_price_usdt_formatted = f"{usdt_price:.5f}"
+    plan_price_usdt_formatted = f"{usdt_price}"
     
     # Create message with price expiry warning
     from utils.text_utils import buttonize_markdown
@@ -413,11 +414,11 @@ async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # Calculate prices in both currencies
     if base_currency == 'USDT':
-        usdt_price = float(base_price)
+        usdt_price = math.ceil(float(base_price))
         irr_price = int(usdt_price * usdt_rate * 10)  # Convert to Rial (with 10x multiplier)
     else:  # base_currency == 'IRR'
         irr_price = int(float(base_price))
-        usdt_price = irr_price / (usdt_rate * 10)  # Convert to USDT
+        usdt_price = math.ceil(irr_price / (usdt_rate * 10))  # Convert to USDT and round up
     
     # Store calculated prices with expiry time (30 minutes)
     from datetime import datetime, timedelta
@@ -887,9 +888,12 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             return SELECT_PAYMENT_METHOD
 
     elif payment_method == 'crypto':
+        import math
         # Determine live USDT price (base price possibly discounted)
-        live_calculated_usdt_price = context.user_data.get('live_usdt_price') or (
-            selected_plan.get('price_tether') or selected_plan.get('original_price_usdt')
+        live_calculated_usdt_price = math.ceil(
+            context.user_data.get('live_usdt_price') or (
+                selected_plan.get('price_tether') or selected_plan.get('original_price_usdt')
+            )
         )
         # Cache for later verification steps
         context.user_data['live_usdt_price'] = live_calculated_usdt_price
@@ -985,7 +989,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
         payment_info_text = CRYPTO_PAYMENT_UNIQUE_AMOUNT_MESSAGE.format(
             wallet_address=CRYPTO_WALLET_ADDRESS,
-            usdt_amount=f"{usdt_amount_requested:.5f}",
+            usdt_amount=f"{usdt_amount_requested}",
             timeout_minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES
         )
 
@@ -1319,7 +1323,7 @@ async def show_qr_code_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_photo(
             chat_id=telegram_id,
             photo=qr_image_bytes,
-            caption=f"آدرس کیف پول (TRC20):\n`{wallet_address}`\n\nمبلغ: `{usdt_amount:.5f}` USDT (در صورت نمایش در QR)\n\nاسکن کنید:"
+            caption=f"آدرس کیف پول (TRC20):\n`{wallet_address}`\n\nمبلغ: `{usdt_amount}` USDT (بدون کارمزد)\nلطفاً کارمزد شبکه را جداگانه پرداخت کنید.\n\nاسکن کنید:"
         )
         UserAction.log_user_action(telegram_id, action_type='qr_code_displayed', details={'crypto_payment_request_id': crypto_payment_request_db_id})
     except Exception as e:
@@ -1515,7 +1519,7 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
         return SELECT_PLAN
     
     plan_price_irr_formatted = f"{int(live_irr_price):,}"
-    plan_price_usdt_formatted = f"{live_usdt_price:.5f}"
+    plan_price_usdt_formatted = f"{live_usdt_price}"
     from utils.text_utils import buttonize_markdown
     plan_display_name = buttonize_markdown(selected_plan.get('name', 'N/A'))
     message_text = PAYMENT_METHOD_MESSAGE.format(

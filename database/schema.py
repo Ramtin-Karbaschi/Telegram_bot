@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS crypto_payments (
     usdt_amount_requested REAL NOT NULL,
     usdt_amount_received REAL, -- Actual USDT amount confirmed on blockchain
     wallet_address TEXT NOT NULL, -- The wallet address payment was requested to
-    transaction_id TEXT UNIQUE, -- Blockchain transaction ID, initially NULL
+    transaction_id TEXT UNIQUE, -- Blockchain transaction ID, initially NULL (prevents duplicate hash usage)
     status TEXT NOT NULL DEFAULT 'pending', -- e.g., pending, paid, expired, failed, error, underpaid, overpaid
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Tracks the last status update
