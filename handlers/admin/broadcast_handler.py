@@ -367,9 +367,15 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption = re.sub(r"~([^~]+)~", r"<s>\1</s>", caption)
                 await bot_to_use.send_photo(chat_id=uid, photo=draft_msg.photo[-1].file_id, caption=caption, parse_mode="HTML", reply_markup=keyboard)
             elif draft_msg and draft_msg.document:
+                # If the document is actually a video (Telegram sometimes treats large videos as document)
+                mime = getattr(draft_msg.document, 'mime_type', '') or ''
                 caption = draft_msg.caption_html or draft_msg.caption or ""
                 caption = re.sub(r"~([^~]+)~", r"<s>\1</s>", caption)
-                await bot_to_use.send_document(chat_id=uid, document=draft_msg.document.file_id, caption=caption, parse_mode="HTML", reply_markup=keyboard)
+                if mime.startswith('video/'):
+                    # Send as document to avoid 50-MB limit of sendVideo uploads; file_id replay works fine
+                    await bot_to_use.send_document(chat_id=uid, document=draft_msg.document.file_id, caption=caption, parse_mode="HTML", reply_markup=keyboard)
+                else:
+                    await bot_to_use.send_document(chat_id=uid, document=draft_msg.document.file_id, caption=caption, parse_mode="HTML", reply_markup=keyboard)
             elif draft_msg and draft_msg.video:
                 caption = draft_msg.caption_html or draft_msg.caption or ""
                 caption = re.sub(r"~([^~]+)~", r"<s>\1</s>", caption)

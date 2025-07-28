@@ -168,13 +168,27 @@ class AdminTicketHandler:
                     raw = msg_dict.get("message")
                     if isinstance(raw, dict):
                         return raw.get("text", str(raw))
-                    else:
-                        return str(raw) if raw is not None else None
+                    return str(raw)
             return None
         except Exception:
             return None
 
-        # -----------------------------------------------------------------
+    # -----------------------------------------------------------------
+    # Ticket mutation helpers
+    # -----------------------------------------------------------------
+    def _close_ticket(self, ticket_id: int, admin_id: int | None = None) -> bool:
+        """Set ticket status to 'closed'. Returns True on success."""
+        try:
+            DatabaseQueries.update_ticket_status(ticket_id, 'closed')
+            # Optionally log admin action
+            if admin_id:
+                logger.info(f"[AdminTicket] Admin {admin_id} closed ticket {ticket_id}")
+            return True
+        except Exception as e:
+            logger.error(f"[AdminTicket] Failed to close ticket {ticket_id}: {e}")
+            return False
+
+    # -----------------------------------------------------------------
     # UI origin helper
     # -----------------------------------------------------------------
     def _determine_origin_list(self, query) -> str:
