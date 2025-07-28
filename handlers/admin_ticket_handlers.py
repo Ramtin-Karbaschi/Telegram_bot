@@ -73,6 +73,23 @@ class AdminTicketHandler:
                 pass
         return row
 
+    def _get_original_question(self, ticket_id: int) -> str:
+        """Return the first (original) message text of a ticket, if exists."""
+        try:
+            messages = DatabaseQueries.get_ticket_messages(ticket_id)
+            if not messages:
+                return ""
+            first = messages[0]
+            if not isinstance(first, dict):
+                try:
+                    first = dict(first)
+                except Exception:
+                    pass
+            return first.get("message", "") or ""
+        except Exception as e:
+            logger.error(f"Error fetching original ticket question for {ticket_id}: {e}")
+            return ""
+
     # --------------------------- User helpers -----------------------------
     def _get_user_info(self, user_id: int):
         """Return minimal user info dict for display (full_name / username)."""
@@ -148,7 +165,11 @@ class AdminTicketHandler:
             for m in reversed(msgs):
                 msg_dict = dict(m)
                 if msg_dict.get("is_admin"):
-                    return msg_dict.get("message")
+                    raw = msg_dict.get("message")
+                    if isinstance(raw, dict):
+                        return raw.get("text", str(raw))
+                    else:
+                        return str(raw) if raw is not None else None
             return None
         except Exception:
             return None
@@ -353,7 +374,23 @@ class AdminTicketHandler:
 
             user_id_ticket = ticket.get('user_id')
             subject = ticket.get('subject', 'بدون موضوع')
-            message = ticket.get('message') or self._get_original_question(ticket_id)
+            message_raw = ticket.get('message') or self._get_original_question(ticket_id)
+            # Ensure message is a plain string for html.escape
+            if isinstance(message_raw, dict):
+                # Try common textual keys first
+                for key in ("text", "body", "message", "content"):
+                    if key in message_raw and isinstance(message_raw[key], str):
+                        message = message_raw[key]
+                        break
+                else:
+                    # Fallback: dump JSON for readability
+                    import json as _json
+                    message = _json.dumps(message_raw, ensure_ascii=False)
+            else:
+                message = str(message_raw)
+            # Final guard: ensure message is str
+            if not isinstance(message, str):
+                message = str(message)
             created_at = ticket.get('created_at', 'نامشخص')
             status = ticket.get('status', 'نامشخص')
 
@@ -365,6 +402,7 @@ class AdminTicketHandler:
                 await query.edit_message_text("اطلاعات کاربر یافت نشد.")
                 return
 
+
             user_display = html.escape(self._format_user_info(user_info))
             contact_info = html.escape(self._get_contact_info(user_info))
             subject_html = html.escape(subject)
@@ -372,6 +410,7 @@ class AdminTicketHandler:
 
             # Retrieve last admin reply if exists
             admin_reply = self._get_admin_reply(ticket_id)
+
             admin_reply_html = html.escape(admin_reply) if admin_reply else None
 
             # Format ticket details
@@ -589,17 +628,7 @@ class AdminTicketHandler:
         )
         context.user_data['editing_ticket_id'] = ticket_id
 
-    def _get_admin_reply(self, ticket_id: int):
-        """Return the latest admin message for a ticket, as a dict, or None."""
-        try:
-            messages = DatabaseQueries.get_ticket_messages(ticket_id)
-            for m in reversed(messages or []):
-                m = dict(m)
-                if m.get('is_admin'):
-                    return m
-        except Exception:
-            pass
-        return None
+
 
     async def receive_edited_answer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle admin's edited answer after ForceReply"""
