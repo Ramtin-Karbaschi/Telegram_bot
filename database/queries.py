@@ -532,6 +532,112 @@ class DatabaseQueries:
             db.close()
 
     # -----------------------------------------------------------------
+    # Statistics helper methods
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def get_total_users_count() -> int:
+        """Return total number of registered users."""
+        db = Database()
+        if not db.connect():
+            return 0
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users")
+            return cursor.fetchone()[0]
+        except Exception as e:
+            logging.error(f"Error fetching total users count: {e}")
+            return 0
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_active_users_count() -> int:
+        """Return number of active subscribers (users with active plan)."""
+        db = Database()
+        if not db.connect():
+            return 0
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(DISTINCT user_id)
+                FROM subscriptions
+                WHERE status = 'active' AND datetime(end_date) > datetime('now')
+            """)
+            return cursor.fetchone()[0]
+        except Exception as e:
+            logging.error(f"Error fetching active users count: {e}")
+            return 0
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_all_plans() -> list[dict]:
+        """Return list of all plans with id, name, price."""
+        db = Database()
+        if not db.connect():
+            return []
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("SELECT id, name, price FROM plans WHERE is_active = 1")
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logging.error(f"Error fetching plans: {e}")
+            return []
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_plan_sales_count(plan_id: int) -> int:
+        """Return count of successful payments for given plan."""
+        db = Database()
+        if not db.connect():
+            return 0
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*) FROM payments
+                WHERE plan_id = ? AND status = 'paid'
+            """, (plan_id,))
+            return cursor.fetchone()[0]
+        except Exception as e:
+            logging.error(f"Error fetching sales count for plan {plan_id}: {e}")
+            return 0
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_pending_tickets_count() -> int:
+        db = Database()
+        if not db.connect():
+            return 0
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM tickets WHERE status = 'pending'")
+            return cursor.fetchone()[0]
+        except Exception as e:
+            logging.error(f"Error fetching pending tickets count: {e}")
+            return 0
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_total_tickets_count() -> int:
+        db = Database()
+        if not db.connect():
+            return 0
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM tickets")
+            return cursor.fetchone()[0]
+        except Exception as e:
+            logging.error(f"Error fetching total tickets count: {e}")
+            return 0
+        finally:
+            db.close()
+
+    # -----------------------------------------------------------------
     # NEW: keep DB paths in sync when we discover a better local path
     # -----------------------------------------------------------------
 

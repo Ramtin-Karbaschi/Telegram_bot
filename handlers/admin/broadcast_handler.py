@@ -339,10 +339,18 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.text_utils import buttonize_markdown
     import re
     try:
-        from config import MAIN_BOT_TOKEN
+        from config import MAIN_BOT_TOKEN, SHARED_CHANNEL_ID
     except ImportError:
         MAIN_BOT_TOKEN = None
-    bot_to_use = context.application.bot_data.get("main_bot_bot") or (Bot(token=MAIN_BOT_TOKEN) if MAIN_BOT_TOKEN else context.bot)
+        SHARED_CHANNEL_ID = None
+    # Always send از طریق ربات اصلی؛ اگر شیء آن در bot_data موجود نباشد، با توکن مستقل ساخته می‌شود.
+    if context.application.bot_data.get("main_bot_bot"):
+        bot_to_use = context.application.bot_data["main_bot_bot"]
+    elif MAIN_BOT_TOKEN:
+        bot_to_use = Bot(token=MAIN_BOT_TOKEN)
+    else:
+        await query.answer("توکن ربات اصلی تنظیم نشده است –‌ ارسال لغو شد", show_alert=True)
+        return
     # Build keyboard with deep links to the main bot if buttons exist
     if buttons_data:
         me = await bot_to_use.get_me()
@@ -356,36 +364,60 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows.append([InlineKeyboardButton(label, callback_data=f"cat_{b.get('id')}")])
         keyboard = InlineKeyboardMarkup(rows)
     draft_msg = context.user_data.get("bc_draft_obj")
+    
+    # First, forward message to shared channel if it has media
+    shared_message_id = None
+    if draft_msg and (draft_msg.photo or draft_msg.video or draft_msg.document or draft_msg.audio) and SHARED_CHANNEL_ID:
+        try:
+            # Forward to shared channel using manager bot
+            forwarded = await context.bot.forward_message(
+                chat_id=SHARED_CHANNEL_ID,
+                from_chat_id=draft_msg.chat_id,
+                message_id=draft_msg.message_id
+            )
+            shared_message_id = forwarded.message_id
+        except Exception as e:
+            logger.warning(f"Failed to forward to shared channel: {e}")
     success = 0
     for uid in user_ids:
         try:
             if draft_msg and draft_msg.text and not draft_msg.photo and not draft_msg.document and not draft_msg.video and not draft_msg.audio:
+                # Text message
                 formatted = re.sub(r"~([^~]+)~", r"<s>\1</s>", draft_msg.text)
                 await bot_to_use.send_message(chat_id=uid, text=formatted, reply_markup=keyboard, parse_mode="HTML")
-            elif draft_msg and draft_msg.photo:
-                caption = draft_msg.caption_html or draft_msg.caption or ""
-                caption = re.sub(r"~([^~]+)~", r"<s>\1</s>", caption)
-                await bot_to_use.send_photo(chat_id=uid, photo=draft_msg.photo[-1].file_id, caption=caption, parse_mode="HTML", reply_markup=keyboard)
-            elif draft_msg and draft_msg.document:
-                # If the document is actually a video (Telegram sometimes treats large videos as document)
-                mime = getattr(draft_msg.document, 'mime_type', '') or ''
-                caption = draft_msg.caption_html or draft_msg.caption or ""
-                caption = re.sub(r"~([^~]+)~", r"<s>\1</s>", caption)
-                if mime.startswith('video/'):
-                    # Send as document to avoid 50-MB limit of sendVideo uploads; file_id replay works fine
-                    await bot_to_use.send_document(chat_id=uid, document=draft_msg.document.file_id, caption=caption, parse_mode="HTML", reply_markup=keyboard)
-                else:
-                    await bot_to_use.send_document(chat_id=uid, document=draft_msg.document.file_id, caption=caption, parse_mode="HTML", reply_markup=keyboard)
-            elif draft_msg and draft_msg.video:
-                caption = draft_msg.caption_html or draft_msg.caption or ""
-                caption = re.sub(r"~([^~]+)~", r"<s>\1</s>", caption)
-                await bot_to_use.send_video(chat_id=uid, video=draft_msg.video.file_id, caption=caption, parse_mode="HTML", reply_markup=keyboard)
+            elif shared_message_id and SHARED_CHANNEL_ID:
+                # Copy from shared channel using main bot (preserves content and allows keyboard)
+                await bot_to_use.copy_message(
+                    chat_id=uid,
+                    from_chat_id=SHARED_CHANNEL_ID,
+                    message_id=shared_message_id,
+                    reply_markup=keyboard
+                )
             else:
-                # Fallback to copying via manager bot if message type not handled
-                await context.bot.copy_message(chat_id=uid, from_chat_id=draft["data"]["chat_id"], message_id=draft["data"]["message_id"], reply_markup=keyboard)
+                # Fallback for other message types - send as text
+                await bot_to_use.send_message(
+                    chat_id=uid,
+                    text="پیام همگانی",
+                    reply_markup=keyboard
+                )
             success += 1
         except Exception as e:
-            logger.warning("Broadcast send to %s failed: %s", uid, e)
+            # If formatting/parsing error occurs, try copying the original message (keeps entities as-is)
+            try:
+                from telegram.error import BadRequest
+                if isinstance(e, BadRequest) and "parse entities" in str(e).lower():
+                    # Fallback – send without HTML parsing
+                    if draft_msg and draft_msg.text:
+                        await bot_to_use.send_message(chat_id=uid, text=draft_msg.text, reply_markup=keyboard)
+                    elif shared_message_id and SHARED_CHANNEL_ID:
+                        await bot_to_use.copy_message(chat_id=uid, from_chat_id=SHARED_CHANNEL_ID, message_id=shared_message_id, reply_markup=keyboard)
+                    else:
+                        await bot_to_use.send_message(chat_id=uid, text="پیام همگانی", reply_markup=keyboard)
+                    success += 1
+                else:
+                    logger.warning("Broadcast send to %s failed: %s", uid, e)
+            except Exception as copy_err:
+                logger.warning("Broadcast fallback copy to %s failed: %s", uid, copy_err)
     await query.edit_message_text(f"✅ ارسال به پایان رسید. موفق: {success}/{len(user_ids)}")
 
     # Clear flow flags

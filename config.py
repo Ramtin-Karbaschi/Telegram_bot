@@ -25,6 +25,15 @@ logger = logging.getLogger(__name__)
 MAIN_BOT_TOKEN = os.getenv("MAIN_BOT_TOKEN")
 MANAGER_BOT_TOKEN = os.getenv("MANAGER_BOT_TOKEN")
 
+# Shared channel for cross-bot file sharing (both bots must be admin)
+SHARED_CHANNEL_ID = os.getenv("SHARED_CHANNEL_ID")
+if SHARED_CHANNEL_ID:
+    try:
+        SHARED_CHANNEL_ID = int(SHARED_CHANNEL_ID)
+    except ValueError:
+        logger.warning("SHARED_CHANNEL_ID must be a valid integer (channel ID)")
+        SHARED_CHANNEL_ID = None
+
 # Ensure tokens are set
 if not MAIN_BOT_TOKEN:
     raise ValueError("MAIN_BOT_TOKEN environment variable not set.")

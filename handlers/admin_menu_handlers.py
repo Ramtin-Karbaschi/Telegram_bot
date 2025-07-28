@@ -890,6 +890,85 @@ class AdminMenuHandler:
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
+    async def _show_stats_handler(self, query):
+        """Display general statistics."""
+        try:
+            # Get user statistics
+            total_users = DatabaseQueries.get_total_users_count()
+            active_users = DatabaseQueries.get_active_users_count()
+            
+            # Get plan statistics
+            plans = DatabaseQueries.get_all_plans()
+            plan_stats = []
+            total_sales = 0
+            total_revenue = 0
+            
+            for plan in plans:
+                if not isinstance(plan, dict):
+                    plan = dict(plan)
+                plan_id = plan.get('id')
+                plan_name = plan.get('name', 'نامشخص')
+                plan_price = plan.get('price', 0)
+                
+                # Get sales count for this plan
+                sales_count = DatabaseQueries.get_plan_sales_count(plan_id)
+                revenue = sales_count * plan_price
+                
+                plan_stats.append({
+                    'name': plan_name,
+                    'sales': sales_count,
+                    'revenue': revenue
+                })
+                
+                total_sales += sales_count
+                total_revenue += revenue
+            
+            # Get ticket statistics
+            pending_tickets = DatabaseQueries.get_pending_tickets_count()
+            total_tickets = DatabaseQueries.get_total_tickets_count()
+            
+            # Build statistics message
+            import html
+            stats_text = "<b>📊 آمار کلی سیستم</b>\n\n"
+            stats_text += "<b>👥 آمار کاربران:</b>\n"
+            stats_text += f"• کل کاربران: {total_users:,}\n"
+            stats_text += f"• کاربران فعال: {active_users:,}\n\n"
+            
+            stats_text += "<b>💰 آمار فروش:</b>\n"
+            stats_text += f"• کل فروش: {total_sales:,}\n"
+            stats_text += f"• کل درآمد: {total_revenue:,} تومان\n\n"
+            
+            stats_text += "<b>🎫 آمار تیکت‌ها:</b>\n"
+            stats_text += f"• تیکت‌های در انتظار: {pending_tickets:,}\n"
+            stats_text += f"• کل تیکت‌ها: {total_tickets:,}\n\n"
+            
+            if plan_stats:
+                stats_text += "<b>📈 آمار فروش هر پلن:</b>\n"
+                for stat in plan_stats:
+                    plan_name_safe = html.escape(stat['name'])
+                    stats_text += f"• {plan_name_safe}: {stat['sales']:,} فروش ({stat['revenue']:,} تومان)\n"
+
+            
+            keyboard = [
+                [InlineKeyboardButton("🔄 بروزرسانی", callback_data="stats")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
+            ]
+            
+            await query.edit_message_text(
+                stats_text,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+            
+        except Exception as e:
+            logger.error(f"Error showing stats: {e}")
+            await query.edit_message_text(
+                "❌ خطا در نمایش آمار. لطفاً دوباره تلاش کنید.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)]
+                ])
+            )
+
     # ---------- Broadcast with link flow helpers ----------
     async def _broadcast_wl_choose_audience(self, query):
         """Ask admin to choose target audience for broadcast with link."""
