@@ -1595,10 +1595,10 @@ class DatabaseQueries:
         if db.connect():
             try:
                 sql = f"""
-                    SELECT id, user_id, amount AS amount_rial, 'rial' AS payment_type, payment_method, plan_id, status, created_at
+                    SELECT payment_id AS id, user_id, amount AS amount_rial, 'rial' AS payment_type, payment_method, plan_id, status, created_at
                     FROM payments
                     UNION ALL
-                    SELECT id, user_id, rial_amount AS amount_rial, 'crypto' AS payment_type, 'crypto' AS payment_method, NULL as plan_id, status, created_at
+                    SELECT crypto_payment_id AS id, user_id, rial_amount AS amount_rial, 'crypto' AS payment_type, 'crypto' AS payment_method, NULL as plan_id, status, created_at
                     FROM crypto_payments
                     ORDER BY created_at DESC
                     LIMIT ?
