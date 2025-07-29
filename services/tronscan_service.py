@@ -216,6 +216,52 @@ class TronScanService:
             return 0.0
     
     @staticmethod
+    async def get_transaction_info(tx_hash: str) -> dict:
+        """دریافت اطلاعات کامل تراکنش برای تایید پیشرفته"""
+        try:
+            headers = {"TRON-PRO-API-KEY": config.TRONSCAN_API_KEY} if getattr(config, "TRONSCAN_API_KEY", None) else {}
+            
+            url = f"{TronScanService.ENDPOINT}/api/transaction-info"
+            params = {"hash": tx_hash}
+            
+            response = requests.get(url, headers=headers, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            if not data:
+                return None
+            
+            # استخراج اطلاعات مورد نیاز برای تحلیل امنیتی
+            result = {
+                'contractRet': data.get('contractRet', 'UNKNOWN'),
+                'timestamp': data.get('block_timestamp', 0),
+                'confirmations': 1 if data.get('confirmed', False) else 0,
+                'amount': 0,  # Will be filled from TRC20 transfers
+                'to_address': '',  # Will be filled from TRC20 transfers
+                'from_address': data.get('ownerAddress', ''),
+                'block_number': data.get('blockNumber', 0)
+            }
+            
+            # استخراج Transfer های USDT
+            trc20_transfers = data.get("trc20TransferInfo", [])
+            for transfer in trc20_transfers:
+                if transfer.get("contract_address") == USDT_TRC20_CONTRACT:
+                    try:
+                        raw_amount = int(transfer.get("amount_str", "0"))
+                        # Keep raw amount for precise calculations
+                        result['amount'] = raw_amount
+                        result['to_address'] = transfer.get("to_address", "")
+                        break
+                    except (ValueError, TypeError):
+                        continue
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error getting transaction info for {tx_hash}: {e}")
+            return None
+    
+    @staticmethod
     def get_transaction_status(tx_hash: str) -> dict:
         """دریافت وضعیت کامل یک تراکنش"""
         try:

@@ -333,10 +333,22 @@ class AdvancedCryptoVerification:
         
         try:
             # استخراج اطلاعات کلیدی
-            tx_amount = float(tx_info.get('amount', 0)) / 1000000  # TRC20 USDT has 6 decimals
+            raw_amount = tx_info.get('amount', 0)
+            if isinstance(raw_amount, (int, float)) and raw_amount > 0:
+                # Convert raw amount to USDT (TRC20 USDT has 6 decimals)
+                tx_amount = float(raw_amount) / (10 ** 6)
+            else:
+                logger.warning(f"Invalid or zero amount in transaction: {raw_amount}")
+                tx_amount = 0.0
+            
             tx_timestamp = tx_info.get('timestamp', 0)
-            tx_to_address = tx_info.get('to_address', '').lower()
+            tx_to_address = tx_info.get('to_address', '').lower().strip()
             tx_status = tx_info.get('contractRet', 'UNKNOWN')
+            
+            logger.info(
+                f"📊 TX Analysis: hash={tx_info.get('tx_hash', 'unknown')[:16]}..., "
+                f"amount={tx_amount:.6f} USDT, to={tx_to_address[:10]}..., status={tx_status}"
+            )
             
             analysis['actual_amount'] = tx_amount
             analysis['confirmations'] = tx_info.get('confirmations', 0)
@@ -348,11 +360,20 @@ class AdvancedCryptoVerification:
                 analysis['reason'] = f"Transaction status: {tx_status}"
                 return analysis
             
-            # بررسی آدرس مقصد
-            if tx_to_address != wallet_address.lower():
+            # بررسی آدرس مقصد با حساسیت بیشتر
+            expected_address = wallet_address.lower().strip() if wallet_address else ''
+            if not tx_to_address or not expected_address:
+                analysis['fraud_detected'] = True
+                analysis['fraud_flags'].append('missing_address')
+                analysis['reason'] = f"Missing recipient or expected address"
+                logger.error(f"Address validation failed: tx_to='{tx_to_address}', expected='{expected_address}'")
+                return analysis
+            
+            if tx_to_address != expected_address:
                 analysis['fraud_detected'] = True
                 analysis['fraud_flags'].append('wrong_recipient')
-                analysis['reason'] = f"Wrong recipient address"
+                analysis['reason'] = f"Wrong recipient address: got {tx_to_address}, expected {expected_address}"
+                logger.warning(f"Address mismatch: tx_to='{tx_to_address}' vs expected='{expected_address}'")
                 return analysis
             
             # بررسی زمان تراکنش

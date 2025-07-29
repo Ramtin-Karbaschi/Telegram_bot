@@ -1795,7 +1795,19 @@ async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("❌ پرداختی برای بررسی یافت نشد.")
         return ConversationHandler.END
 
-    payment_record = Database.get_payment_by_id(crypto_payment_id)
+    # دریافت اطلاعات پرداخت کریپتو با فالبک برای قدیمی‌ها
+    payment_record = Database.get_crypto_payment_by_payment_id(crypto_payment_id)
+    
+    if not payment_record:
+        # Fallback: برخی پرداخت‌های قدیمی ممکن است در جدول payments باشند
+        try:
+            legacy_payment = Database.get_payment_by_id(crypto_payment_id)
+            payment_record = dict(legacy_payment) if legacy_payment else None
+            if payment_record:
+                logger.warning(f"📜 Using legacy payment record for {crypto_payment_id}")
+        except Exception as e:
+            logger.error(f"Error accessing legacy payment {crypto_payment_id}: {e}")
+    
     if not payment_record:
         await update.message.reply_text("❌ اطلاعات پرداخت در پایگاه‌داده یافت نشد.")
         return ConversationHandler.END
@@ -1949,10 +1961,23 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
         )
         return VERIFY_PAYMENT
 
-    payment_record = Database.get_payment_by_id(crypto_payment_id)
+    # دریافت اطلاعات پرداخت کریپتو با فالبک
+    payment_record = Database.get_crypto_payment_by_payment_id(crypto_payment_id)
+    
+    if not payment_record:
+        # Fallback برای پرداخت‌های قدیمی
+        try:
+            legacy_payment = Database.get_payment_by_id(crypto_payment_id)
+            payment_record = dict(legacy_payment) if legacy_payment else None
+            if payment_record:
+                logger.warning(f"📜 Using legacy payment record for verification {crypto_payment_id}")
+        except Exception as e:
+            logger.error(f"Error accessing legacy payment {crypto_payment_id}: {e}")
+    
     if not payment_record:
         await safe_edit_message_text(
-            "❌ **خطای دیتابیس**\n\n"
+            query.message,
+            text="❌ **خطای دیتابیس**\n\n"
             "اطلاعات پرداخت در پایگاه‌داده یافت نشد.\n"
             "لطفاً با پشتیبانی تماس بگیرید.",
             parse_mode="Markdown"

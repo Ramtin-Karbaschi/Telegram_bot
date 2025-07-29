@@ -147,6 +147,12 @@ if not TRONGRID_API_KEY:
     TRONGRID_API_KEY = _KEY_NOT_SET_PLACEHOLDER
     logger.warning("TRONGRID_API_KEY not set in .env. Using placeholder. TronGrid communication will fail.")
 
+# TronScan API key for blockchain verification
+TRONSCAN_API_KEY = os.getenv("TRONSCAN_API_KEY")
+if not TRONSCAN_API_KEY:
+    TRONSCAN_API_KEY = _KEY_NOT_SET_PLACEHOLDER
+    logger.warning("TRONSCAN_API_KEY not set in .env. Using placeholder. Blockchain verification may fail.")
+
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "") # Default to empty string if not set
 if not COINGECKO_API_KEY:
     logger.info("COINGECKO_API_KEY not set or empty in .env. Real-time exchange rates via CoinGecko will not be used if it is required by the implementation.")

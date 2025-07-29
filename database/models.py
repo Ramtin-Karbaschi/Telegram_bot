@@ -191,14 +191,19 @@ class Database:
         """Retrieves a crypto payment by its unique payment_id."""
         query = "SELECT * FROM crypto_payments WHERE payment_id = ?"
         if self.execute(query, (payment_id,)):
-            return self.fetchone()
+            row = self.fetchone()
+            if row:
+                # Convert sqlite3.Row to dict for .get() method compatibility
+                return dict(row)
         return None
 
     def get_crypto_payment_by_transaction_id(self, transaction_id):
         """Retrieves a crypto payment by its blockchain transaction_id."""
         query = "SELECT * FROM crypto_payments WHERE transaction_id = ?"
         if self.execute(query, (transaction_id,)):
-            return self.fetchone()
+            row = self.fetchone()
+            if row:
+                return dict(row)
         return None
 
     def get_pending_crypto_payment_by_user_and_amount(self, user_id, usdt_amount_requested):
@@ -209,7 +214,9 @@ class Database:
             ORDER BY created_at DESC LIMIT 1
         """
         if self.execute(query, (user_id, usdt_amount_requested, datetime.now())):
-            return self.fetchone()
+            row = self.fetchone()
+            if row:
+                return dict(row)
         return None
 
     def get_payment_status_history(self, payment_id: str):

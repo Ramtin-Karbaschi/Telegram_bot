@@ -42,7 +42,22 @@ class EnhancedCryptoService:
             # دریافت اطلاعات پرداخت
             db = Database.get_instance()
             payment = db.get_crypto_payment_by_payment_id(payment_id)
-            
+
+            # Fallback: some legacy flows still store crypto payments in the generic `payments` table
+            if not payment:
+                try:
+                    from database.queries import DatabaseQueries as DBQ
+                    legacy_payment_row = DBQ.get_payment(payment_id)
+                    payment = dict(legacy_payment_row) if legacy_payment_row else None
+                    if payment:
+                        logger.warning(
+                            "📜 Fallback engaged – located payment %s in legacy payments table (id=%s)",
+                            payment_id,
+                            payment.get('payment_id') or payment.get('id')
+                        )
+                except Exception as fallback_exc:
+                    logger.error("Error during legacy payment lookup for %s: %s", payment_id, fallback_exc)
+
             if not payment:
                 logger.error(f"❌ Payment {payment_id} not found in database")
                 return False, "", 0.0
