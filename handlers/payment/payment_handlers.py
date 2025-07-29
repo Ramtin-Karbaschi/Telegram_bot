@@ -1029,7 +1029,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
                 }
             )
             logger.error(f"Failed to create crypto_payment_request in DB for user_db_id {user_db_id}, telegram_id {telegram_id}, plan_id {plan_id}")
-            await safe_edit_message_text("خطا: امکان ایجاد درخواست پرداخت کریپتو وجود ندارد. لطفاً با پشتیبانی تماس بگیرید.", reply_markup=get_payment_methods_keyboard())
+            await safe_edit_message_text(query.message, text="خطا: امکان ایجاد درخواست پرداخت کریپتو وجود ندارد. لطفاً با پشتیبانی تماس بگیرید.", reply_markup=get_payment_methods_keyboard())
             return SELECT_PAYMENT_METHOD
 
         context.user_data['crypto_payment_id'] = crypto_payment_request_db_id
@@ -1056,6 +1056,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard = InlineKeyboardMarkup(keyboard_buttons)
 
         await safe_edit_message_text(
+            query.message,
             text=payment_info_text,
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
