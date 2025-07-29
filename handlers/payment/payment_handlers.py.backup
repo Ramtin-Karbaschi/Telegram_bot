@@ -350,7 +350,7 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
             base_currency = 'IRR'
             base_price = selected_plan['price']
         else:
-            await safe_edit_message_text(query.message, text="خطا: قیمت پلن تعریف نشده است.")
+            await safe_edit_message_text("خطا: قیمت پلن تعریف نشده است.")
             return ConversationHandler.END
     
     # Calculate prices in both currencies
@@ -438,7 +438,7 @@ async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             base_currency = 'IRR'
             base_price = selected_plan['price']
         else:
-            await safe_edit_message_text(query.message, text="خطا: قیمت پلن تعریف نشده است.")
+            await safe_edit_message_text("خطا: قیمت پلن تعریف نشده است.")
             return ConversationHandler.END
     
     # Calculate prices in both currencies
@@ -525,7 +525,7 @@ async def handle_free_content_plan(update: Update, context: ContextTypes.DEFAULT
 
     if not success:
         logger.error(f"Failed to record free content access for user {user_id}, plan {plan_id}: {message}")
-        await safe_edit_message_text(query.message, text=f"خطا در فعال‌سازی پلن رایگان: {message}")
+        await safe_edit_message_text(f"خطا در فعال‌سازی پلن رایگان: {message}")
         return ConversationHandler.END
 
     # Send the educational videos
@@ -723,7 +723,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
     user_record = Database.get_user_details(telegram_id)
     if not user_record:
         logger.error(f"Critical: User with telegram_id {telegram_id} not found in database after update_user_activity.")
-        await safe_edit_message_text(query.message, text="خطای سیستمی: اطلاعات کاربری شما یافت نشد. لطفاً با پشتیبانی تماس بگیرید.")
+        await safe_edit_message_text("خطای سیستمی: اطلاعات کاربری شما یافت نشد. لطفاً با پشتیبانی تماس بگیرید.")
         return ConversationHandler.END
     user_db_id = user_record['user_id']
     context.user_data['user_db_id'] = user_db_id # Ensure user_db_id is in context for subsequent logs
@@ -992,7 +992,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
                 action_type='crypto_placeholder_creation_failed',
                 details={'plan_id': plan_id, 'rial_amount': rial_amount, 'user_db_id': user_db_id})
             logger.error(f"Failed to create placeholder crypto payment request for user_db_id {user_db_id}, plan {plan_id}.")
-            await safe_edit_message_text(query.message, text=PAYMENT_ERROR_MESSAGE, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
+            await safe_edit_message_text(PAYMENT_ERROR_MESSAGE, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
             return ConversationHandler.END  # Or SELECT_PAYMENT_METHOD
 
         # مبلغ USDT برابر با قیمت پایهٔ پلن (بدون آفست)
@@ -1014,7 +1014,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
                 details={'payment_request_id': crypto_payment_request_db_id, 'usdt_amount': usdt_amount_requested, 'user_db_id': user_db_id}
             )
             logger.error(f"Failed to update crypto payment request {crypto_payment_request_db_id} with USDT amount {usdt_amount_requested}. telegram_id: {telegram_id}")
-            await safe_edit_message_text(query.message, text="خطای سیستمی هنگام ثبت مبلغ تتر. لطفاً با پشتیبانی تماس بگیرید.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
+            await safe_edit_message_text("خطای سیستمی هنگام ثبت مبلغ تتر. لطفاً با پشتیبانی تماس بگیرید.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
             return ConversationHandler.END # Or SELECT_PAYMENT_METHOD
 
         if not crypto_payment_request_db_id:
@@ -1212,7 +1212,7 @@ async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TY
                 details={'payment_db_id': payment_id, 'payment_method': payment_method}
             )
             logger.error(f"Error: Unknown payment_method '{payment_method}' for user {telegram_id}, payment_id {payment_id}")
-            await safe_edit_message_text(query.message, text="خطای داخلی: روش پرداخت ناشناخته است.", reply_markup=get_main_menu_keyboard(user_id=telegram_id))
+            await safe_edit_message_text("خطای داخلی: روش پرداخت ناشناخته است.", reply_markup=get_main_menu_keyboard(user_id=telegram_id))
             return ConversationHandler.END
         
         if amount_paid is None:
@@ -1223,7 +1223,7 @@ async def verify_payment_status(update: Update, context: ContextTypes.DEFAULT_TY
                 details={'payment_db_id': payment_id, 'plan_id': plan_id, 'payment_method': payment_method}
             )
             logger.error(f"Error: Amount for plan_id {plan_id} with payment_method '{payment_method}' is None for user {telegram_id}")
-            await safe_edit_message_text(query.message, text="خطای داخلی: مبلغ طرح یافت نشد.", reply_markup=get_main_menu_keyboard(user_id=telegram_id))
+            await safe_edit_message_text("خطای داخلی: مبلغ طرح یافت نشد.", reply_markup=get_main_menu_keyboard(user_id=telegram_id))
             return ConversationHandler.END
 
         UserAction.log_user_action(
@@ -1396,7 +1396,7 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
             context.user_data['user_db_id'] = user_db_id
         else:
             logger.error(f"User DB ID not found for telegram_id {telegram_id} in payment_verify_zarinpal_handler.")
-            await safe_edit_message_text(query.message, text="خطا: اطلاعات کاربری شما یافت نشد. لطفاً مجدداً تلاش کنید یا با پشتیبانی تماس بگیرید.")
+            await safe_edit_message_text("خطا: اطلاعات کاربری شما یافت نشد. لطفاً مجدداً تلاش کنید یا با پشتیبانی تماس بگیرید.")
             return ConversationHandler.END
 
     zarinpal_authority = context.user_data.get('zarinpal_authority')
@@ -1437,7 +1437,7 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
                 return ConversationHandler.END
         if not current_payment_record or current_payment_record['user_id'] != user_db_id:
             logger.error(f"Zarinpal verification: Payment record {payment_db_id} not found or mismatch for user {user_db_id}.")
-            await safe_edit_message_text(query.message, text="خطا: رکورد پرداخت شما یافت نشد. با پشتیبانی تماس بگیرید.")
+            await safe_edit_message_text("خطا: رکورد پرداخت شما یافت نشد. با پشتیبانی تماس بگیرید.")
             return ConversationHandler.END
         
         if current_payment_record['status'] == 'completed':
@@ -1496,7 +1496,7 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
                     context.user_data.pop(key, None)
                 return ConversationHandler.END
             else:
-                await safe_edit_message_text(query.message, text="این پرداخت قبلاً تایید شده است.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
+                await safe_edit_message_text("این پرداخت قبلاً تایید شده است.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
                 return ConversationHandler.END
         else:
             error_code = verification_result.get('status', 'N/A')
@@ -1516,7 +1516,7 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
             return VERIFY_PAYMENT
     except Exception as e:
         logger.exception(f"Exception in payment_verify_zarinpal_handler for user {telegram_id}, authority {zarinpal_authority}: {e}")
-        await safe_edit_message_text(query.message, text="خطایی در هنگام بررسی پرداخت رخ داد. لطفاً با پشتیبانی تماس بگیرید.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
+        await safe_edit_message_text("خطایی در هنگام بررسی پرداخت رخ داد. لطفاً با پشتیبانی تماس بگیرید.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
         UserAction.log_user_action(telegram_id, 'zarinpal_verification_exception', {'zarinpal_authority': zarinpal_authority, 'error': str(e)})
         if payment_db_id:
             Database.update_payment_status(payment_db_id, 'error', error_code='handler_exception')
