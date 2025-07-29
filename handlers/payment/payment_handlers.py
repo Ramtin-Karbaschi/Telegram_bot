@@ -1796,7 +1796,11 @@ async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
         return ConversationHandler.END
 
     # دریافت اطلاعات پرداخت کریپتو با فالبک برای قدیمی‌ها
-    payment_record = Database.get_crypto_payment_by_payment_id(crypto_payment_id)
+    from database.models import Database as DBModel
+    
+    # ابتدا از جدول crypto_payments تلاش کنیم
+    db_instance = DBModel.get_instance()
+    payment_record = db_instance.get_crypto_payment_by_payment_id(crypto_payment_id)
     
     if not payment_record:
         # Fallback: برخی پرداخت‌های قدیمی ممکن است در جدول payments باشند
@@ -1910,9 +1914,9 @@ async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
             await update.message.reply_text(
                 failure_message,
                 reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 TX Hash جدید وارد کنید", callback_data="payment_send_tx")],
                     [InlineKeyboardButton("🔍 جستجوی خودکار", callback_data="verify_crypto_payment")],
-                    [InlineKeyboardButton("🔄 تلاش مجدد", callback_data="ask_for_tx_hash")],
-                    [get_back_to_payment_methods_button()],
+                    [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_payment_methods")],
                     [InlineKeyboardButton("💬 پشتیبانی فوری", url="https://t.me/daraeiposhtibani")]
                 ]),
                 parse_mode="Markdown"
@@ -1962,7 +1966,11 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
         return VERIFY_PAYMENT
 
     # دریافت اطلاعات پرداخت کریپتو با فالبک
-    payment_record = Database.get_crypto_payment_by_payment_id(crypto_payment_id)
+    from database.models import Database as DBModel
+    
+    # ابتدا از جدول crypto_payments تلاش کنیم
+    db_instance = DBModel.get_instance()
+    payment_record = db_instance.get_crypto_payment_by_payment_id(crypto_payment_id)
     
     if not payment_record:
         # Fallback برای پرداخت‌های قدیمی
@@ -2144,6 +2152,8 @@ payment_conversation = ConversationHandler(
         ],
         WAIT_FOR_TX_HASH: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_tx_hash_handler),
+            CallbackQueryHandler(ask_for_tx_hash_handler, pattern='^payment_send_tx$'),
+            CallbackQueryHandler(payment_verify_crypto_handler, pattern='^verify_crypto_payment$'),
             CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$'),
             CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
         ],
