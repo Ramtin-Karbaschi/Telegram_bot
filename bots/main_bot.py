@@ -430,6 +430,9 @@ class MainBot:
         
         # Add error handler
         self.application.add_error_handler(error_handler)
+        
+        # شروع سیستم تایید خودکار پرداخت‌های تتری
+        self._setup_auto_verification_system()
 
     # setup_handlers should be defined here, at the class level indentation
     def setup_handlers(self):
@@ -649,6 +652,38 @@ class MainBot:
         ))
         
         self.logger.info("All handlers have been set up")
+    
+    def _setup_auto_verification_system(self):
+        """راه‌اندازی سیستم تایید خودکار پرداخت‌های تتری"""
+        try:
+            print("🚀 Setting up auto verification system...")
+            
+            # اضافه کردن handlers پنل ادمین تایید تتری
+            from handlers.admin.admin_payment_verification import get_handlers
+            admin_handlers = get_handlers()
+            
+            for handler in admin_handlers:
+                self.application.add_handler(handler, group=5)
+            
+            print("✅ Admin payment verification handlers added")
+            
+            # راه‌اندازی task برای سیستم خودکار
+            import asyncio
+            from services.auto_verification_system import auto_verification_system
+            
+            async def start_auto_verification():
+                try:
+                    await auto_verification_system.start_auto_verification()
+                except Exception as e:
+                    print(f"❌ Error starting auto verification: {e}")
+            
+            # شروع در background
+            asyncio.create_task(start_auto_verification())
+            
+            print("✅ Auto verification system setup completed")
+            
+        except Exception as e:
+            print(f"❌ Error setting up auto verification system: {e}")
 
     async def start(self):
         """Start the bot"""

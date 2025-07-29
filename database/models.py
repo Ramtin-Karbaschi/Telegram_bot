@@ -27,6 +27,8 @@ class Database:
         global _instance
         if _instance is None:
             _instance = Database()
+            _instance.init_database()
+        _instance._run_auto_migrations()
         return _instance
 
     def __new__(cls, *args, **kwargs):
@@ -57,6 +59,7 @@ class Database:
         self.conn = None
         self.cursor = None
         self.connect()
+        self._run_auto_migrations()
         
     def connect(self):
         """Connect to the SQLite database if not already connected."""
@@ -215,6 +218,116 @@ class Database:
         if self.execute(query, (payment_id,)):
             return self.fetchall()
         return []
+
+    def _run_auto_migrations(self):
+        """اجرای خودکار migration های مورد نیاز برای سیستم تایید تتری"""
+        if not self.conn:
+            return
+        
+        try:
+            cursor = self.conn.cursor()
+            
+            # اول بررسی وجود جدول settings و در صورت نیاز ایجاد آن
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='settings'
+            """)
+            
+            if not cursor.fetchone():
+                print("🔧 Creating settings table...")
+                cursor.execute("""
+                    CREATE TABLE settings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        key TEXT UNIQUE NOT NULL,
+                        value TEXT NOT NULL,
+                        created_at TEXT DEFAULT (datetime('now')),
+                        updated_at TEXT DEFAULT (datetime('now'))
+                    )
+                """)
+                cursor.execute("CREATE INDEX idx_settings_key ON settings(key)")
+                print("✅ Settings table created")
+            
+            # بررسی وجود جدول auto_verification_logs
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='auto_verification_logs'
+            """)
+            
+            if not cursor.fetchone():
+                print("🔧 Creating auto_verification_logs table...")
+                cursor.execute("""
+                    CREATE TABLE auto_verification_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        payment_id TEXT NOT NULL,
+                        tx_hash TEXT NOT NULL,
+                        amount REAL NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        status TEXT NOT NULL CHECK (status IN ('success', 'failed', 'subscription_error')),
+                        verification_method TEXT DEFAULT 'automatic',
+                        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    )
+                """)
+                
+                # اضافه کردن ایندکس‌ها
+                cursor.execute("CREATE INDEX idx_auto_verification_logs_payment_id ON auto_verification_logs(payment_id)")
+                cursor.execute("CREATE INDEX idx_auto_verification_logs_user_id ON auto_verification_logs(user_id)")
+                cursor.execute("CREATE INDEX idx_auto_verification_logs_created_at ON auto_verification_logs(created_at)")
+                
+                print("✅ Auto verification logs table created")
+            
+            # اضافه کردن تنظیمات پیشفرض
+            default_settings = [
+                ('auto_crypto_verify', '1'),
+                ('crypto_tolerance_percent', '5.0'),
+                ('max_auto_verify_usdt', '1000.0'),
+                ('auto_approve_after_hours', '24'),
+                ('max_tx_age_hours', '24'),
+                ('tron_min_confirmations', '1')
+            ]
+            
+            for key, value in default_settings:
+                cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+            
+            self.conn.commit()
+            print("✅ Auto migration completed successfully")
+            
+        except Exception as e:
+            print(f"❌ Error in auto migration: {e}")
+            if self.conn:
+                self.conn.rollback()
+    
+    def get_pending_crypto_payments(self, limit=20):
+        """دریافت پرداخت‌های در انتظار تایید"""
+        from datetime import datetime, timedelta
+        cutoff_time = (datetime.now() - timedelta(hours=24)).isoformat()
+        
+        query = """
+            SELECT payment_id, user_id, usdt_amount_requested, wallet_address, 
+                   created_at, plan_id, transaction_id, status
+            FROM crypto_payments 
+            WHERE status IN ('pending', 'manual_review') 
+            AND created_at >= ?
+            ORDER BY created_at ASC
+            LIMIT ?
+        """
+        
+        if self.execute(query, (cutoff_time, limit)):
+            return self.fetchall()
+        return []
+
+    def get_setting(self, key: str, default_value: str = None) -> str:
+        """دریافت تنظیمات از دیتابیس"""
+        query = "SELECT value FROM settings WHERE key = ?"
+        if self.execute(query, (key,)):
+            result = self.fetchone()
+            if result:
+                return result['value']
+        return default_value
+    
+    def set_setting(self, key: str, value: str) -> bool:
+        """تنظیم مقدار در دیتابیس"""
+        query = "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)"
+        return self.execute(query, (key, value))
 
     def get_expired_pending_payments(self):
         """Retrieves all pending crypto payments that have passed their expiration time."""

@@ -83,7 +83,7 @@ class AdminMenuHandler:
             self.button_texts['products']: self._products_submenu,
             self.button_texts['tickets']: self._tickets_submenu,
             self.button_texts['payments']: self._payments_submenu,
-            self.button_texts['broadcast']: self._broadcast_submenu,
+            self.button_texts['broadcast']: self._broadcast_entry_direct,
             self.button_texts['stats']: self._show_stats_handler,
             self.button_texts['settings']: self._settings_submenu,
             self.button_texts['export_subs']: self._export_subs_entry,
@@ -140,26 +140,44 @@ class AdminMenuHandler:
         Handles showing stats, designed to be called from a reply keyboard.
         It uses query.message.reply_text instead of query.edit_message_text.
         """
-        stats = DatabaseQueries.get_subscription_stats()
-        message_text = ""
-        if stats:
-            stats = dict(stats)  # Ensure it's a dict
-            message_text = (
-                f"📊 *آمار اشتراک‌ها:*\n\n"
-                f"کل کاربران: {stats.get('total_users', 'N/A')}\n"
-                f"کاربران فعال: {stats.get('active_subscribers', 'N/A')}\n"
-                f"درآمد کل (تتر): {stats.get('total_revenue_usdt', 0):.2f} USDT\n"
-                f"درآمد کل (ریال): {int(stats.get('total_revenue_irr', 0)):,} ریال"
-            )
-        else:
-            message_text = "آماری برای نمایش وجود ندارد."
+        try:
+            stats = DatabaseQueries.get_subscription_stats()
+            if stats and stats.get('total_users', 0) > 0:
+                total_users = stats.get('total_users', 0)
+                active_subs = stats.get('active_subscribers', 0)
+                expired_subs = stats.get('expired_subscribers', 0)
+                revenue_usdt = stats.get('total_revenue_usdt', 0)
+                revenue_irr = stats.get('total_revenue_irr', 0)
+                
+                # Calculate percentages
+                active_percent = (active_subs / total_users * 100) if total_users > 0 else 0
+                
+                message_text = (
+                    f"📊 <b>آمار کلی سیستم</b>\n\n"
+                    f"👥 <b>کاربران:</b>\n"
+                    f"• کل ثبت‌نام‌شده: <code>{total_users:,}</code>\n"
+                    f"• اشتراک فعال: <code>{active_subs:,}</code> ({active_percent:.1f}%)\n"
+                    f"• منقضی/غیرفعال: <code>{expired_subs:,}</code>\n\n"
+                    f"💰 <b>درآمد کل:</b>\n"
+                    f"• تتر (USDT): <code>{revenue_usdt:,.2f}</code>\n"
+                    f"• ریال (IRR): <code>{revenue_irr:,.0f}</code>\n\n"
+                    f"📈 <b>نرخ تبدیل:</b> {active_percent:.1f}%"
+                )
+            else:
+                message_text = "❌ آماری برای نمایش وجود ندارد یا خطا در دریافت اطلاعات."
 
-        # DummyQuery has `message` attribute from the original update
-        if hasattr(query, 'message') and query.message:
-            await query.message.reply_text(message_text, parse_mode="Markdown")
-        else:
-            # Fallback, though it shouldn't be needed
-            logger.warning("Could not send stats reply, query object lacks 'message'.")
+            # DummyQuery has `message` attribute from the original update
+            if hasattr(query, 'message') and query.message:
+                await query.message.reply_text(message_text, parse_mode="HTML")
+            else:
+                # Fallback, though it shouldn't be needed
+                logger.warning("Could not send stats reply, query object lacks 'message'.")
+                
+        except Exception as e:
+            logger.error(f"Error in _show_stats_handler: {e}")
+            error_msg = "❌ خطا در دریافت آمار. لطفاً دوباره تلاش کنید."
+            if hasattr(query, 'message') and query.message:
+                await query.message.reply_text(error_msg, parse_mode="HTML")
     """Show an interactive admin panel and dispatch to feature modules."""
 
     # Callback data constants
@@ -209,7 +227,7 @@ class AdminMenuHandler:
             keyboard = [
                 [InlineKeyboardButton("🎫 مدیریت تیکت‌ها", callback_data=self.TICKETS_MENU), InlineKeyboardButton("👥 مدیریت کاربران", callback_data=self.USERS_MENU)],
                 [InlineKeyboardButton("💳 مدیریت پرداخت‌ها", callback_data=self.PAYMENTS_MENU), InlineKeyboardButton("📦 مدیریت محصولات", callback_data=self.PRODUCTS_MENU)],
-                [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data=self.BROADCAST_MENU), InlineKeyboardButton("📤 خروجی مشترکین", callback_data=self.EXPORT_SUBS_MENU)],
+                [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data="broadcast_custom"), InlineKeyboardButton("📤 خروجی مشترکین", callback_data=self.EXPORT_SUBS_MENU)],
                 [InlineKeyboardButton("⚙️ تنظیمات", callback_data=self.SETTINGS_MENU)],
             ]
         else:
@@ -324,7 +342,9 @@ class AdminMenuHandler:
             await self.ban_unban_start(update, context)
         # ----- Payments submenu actions -----
         elif data == "payments_recent":
-                await self._show_recent_payments_inline(query)
+            await self._show_recent_payments_inline(query)
+        elif data == "payments_stats":
+            await self._show_payments_stats(query)
         elif data.startswith("payment_info_"):
             pid = data.split("_", 2)[2]
             await self._show_payment_details(query, pid)
@@ -440,7 +460,9 @@ class AdminMenuHandler:
             from handlers.admin.broadcast_handler import menu_callback
             await menu_callback(update, context)
             return
-        elif context.user_data.get("bc_flow") and (data.startswith("bc_cat_") or data.startswith("bc_plan_")):
+        elif context.user_data.get("bc_flow") and (
+            data.startswith("bc_cat_") or data.startswith("bc_plan_") or data.startswith("bc_chan_")
+        ):
             logger.info(f"Routing broadcast add_select callback: {data}")
             from handlers.admin.broadcast_handler import add_select_callback
             await add_select_callback(update, context)
@@ -874,6 +896,12 @@ class AdminMenuHandler:
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
+
+    async def _broadcast_entry_direct(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Entry point for new broadcast flow without extra submenu."""
+        from handlers.admin.broadcast_handler import broadcast_start
+        context.user_data["bc_flow"] = True
+        await broadcast_start(update=update, context=context)
 
     async def _broadcast_submenu(self, query):
         """Display broadcast options (active users vs all users)."""
@@ -1543,27 +1571,77 @@ class AdminMenuHandler:
 
     async def _show_payments_stats(self, query):
         """Show per-plan sales & subscription stats for admins."""
-        from telegram.helpers import escape_markdown
+        try:
+            stats = DatabaseQueries.get_sales_stats_per_plan()
+            if not stats:
+                await query.edit_message_text(
+                    "📊 هیچ آماری برای نمایش وجود ندارد.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 بازگشت", callback_data=self.PAYMENTS_MENU)
+                    ]])
+                )
+                return
 
-        stats = DatabaseQueries.get_sales_stats_per_plan()
-        if not stats:
-            await query.edit_message_text("📊 هیچ آماری برای نمایش وجود ندارد.")
-            return
-
-        header = escape_markdown("📈 آمار فروش/اشتراک هر پلن:", version=2)
-        lines = [header + "\n"]
-        for rec in stats:
-            pid   = rec.get("plan_id")
-            name  = rec.get("plan_name")
-            active = rec.get("active_subscriptions", 0)
-            total  = rec.get("total_subscriptions", 0)
-            rev_r = rec.get("total_revenue_rial", 0) or 0
-            rev_u = rec.get("total_revenue_usdt", 0) or 0
-            name_md = escape_markdown(str(name), version=2)
-            rev_u_md = escape_markdown(str(rev_u), version=2).replace('.', '\.').replace('-', '\-')
-            lines.append(f"• {name_md}: {active}/{total} فعال \| درآمد: {rev_u_md} USDT – {int(rev_r):,} ریال")
-
-        await query.edit_message_text("\n".join(lines), parse_mode="MarkdownV2")
+            # Header
+            lines = ["📈 <b>آمار فروش و اشتراک هر پلن</b>\n"]
+            
+            total_active_all = 0
+            total_subs_all = 0
+            total_revenue_usdt_all = 0
+            total_revenue_irr_all = 0
+            
+            for rec in stats:
+                pid = rec.get("plan_id", 0)
+                name = rec.get("plan_name", "نامشخص")
+                active = rec.get("active_subscriptions", 0)
+                total = rec.get("total_subscriptions", 0)
+                rev_r = rec.get("total_revenue_rial", 0) or 0
+                rev_u = rec.get("total_revenue_usdt", 0) or 0
+                
+                # Calculate conversion rate
+                conversion_rate = (active / total * 100) if total > 0 else 0
+                
+                # Add to totals
+                total_active_all += active
+                total_subs_all += total
+                total_revenue_usdt_all += rev_u
+                total_revenue_irr_all += rev_r
+                
+                lines.append(
+                    f"🔹 <b>{name}</b> (ID: {pid})\n"
+                    f"   👥 اشتراک: <code>{active:,}</code> فعال / <code>{total:,}</code> کل\n"
+                    f"   💰 درآمد: <code>{rev_u:,.2f}</code> USDT | <code>{rev_r:,.0f}</code> ریال\n"
+                    f"   📊 نرخ فعال: <code>{conversion_rate:.1f}%</code>\n"
+                )
+            
+            # Add summary
+            lines.append(
+                f"\n📋 <b>خلاصه کل:</b>\n"
+                f"👥 کل اشتراک فعال: <code>{total_active_all:,}</code>\n"
+                f"📦 کل اشتراک ثبت‌شده: <code>{total_subs_all:,}</code>\n"
+                f"💵 کل درآمد USDT: <code>{total_revenue_usdt_all:,.2f}</code>\n"
+                f"💴 کل درآمد ریال: <code>{total_revenue_irr_all:,.0f}</code>"
+            )
+            
+            # Create back button
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 بازگشت", callback_data=self.PAYMENTS_MENU)
+            ]])
+            
+            await query.edit_message_text(
+                "\n".join(lines), 
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in _show_payments_stats: {e}")
+            await query.edit_message_text(
+                "❌ خطا در دریافت آمار پلن‌ها. لطفاً دوباره تلاش کنید.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 بازگشت", callback_data=self.PAYMENTS_MENU)
+                ]])
+            )
     async def _show_admins_settings(self, query):
         """Display list of configured admins. Use safe HTML formatting to avoid Markdown errors."""
         import html as _html
@@ -2193,6 +2271,6 @@ class AdminMenuHandler:
 
         # This is the main handler for all other admin menu callbacks
         # Note: The invite link and ban/unban callbacks are handled by their respective ConversationHandlers.
-        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|bc_cat_|bc_plan_|audience_|broadcast_continue$|broadcast_cancel$|settings_|products_|discounts_|view_discount_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_)"))
+        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|bc_cat_|bc_plan_|bc_chan_|audience_|broadcast_continue$|broadcast_cancel$|settings_|products_|discounts_|view_discount_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_)"))
 
         return handlers

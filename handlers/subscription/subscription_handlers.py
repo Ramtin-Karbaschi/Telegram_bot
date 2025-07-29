@@ -586,7 +586,13 @@ async def view_active_subscription(update: Update, context: ContextTypes.DEFAULT
 
     if query:
         try:
-            await query.message.edit_text(text=final_message, reply_markup=reply_markup, parse_mode='HTML')
+            if query.message.text:
+                await query.message.edit_text(text=final_message, reply_markup=reply_markup, parse_mode='HTML')
+            elif query.message.caption is not None:
+                await query.message.edit_caption(caption=final_message, reply_markup=reply_markup, parse_mode='HTML')
+            else:
+                # If neither text nor caption editable (e.g. pure media), send a new message
+                await query.message.reply_text(text=final_message, reply_markup=reply_markup, parse_mode='HTML')
         except BadRequest as e:
             # Ignore harmless error when the new text & markup are identical
             if 'Message is not modified' in str(e):

@@ -10,6 +10,9 @@ Flow:
 """
 from __future__ import annotations
 
+import os
+import json
+
 import logging
 from typing import List, Dict, Any
 
@@ -124,6 +127,43 @@ def _build_audience_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+# ---------- Channel helper ---------- #
+
+def _get_available_channels() -> list[dict]:
+    """Fetch available channel buttons from environment.
+
+    Priority:
+    1. `BROADCAST_CHANNELS_JSON` – expected to be a JSON list with keys
+       `id | name | url` (flexible: `title` or `link` are accepted aliases).
+    2. Fallback to legacy `TELEGRAM_CHANNELS_INFO` already present in the
+       project. Converts each dict to the canonical format.
+    Returns a list of dicts with keys: id, name, url
+    """
+    raw = os.getenv("BROADCAST_CHANNELS_JSON")
+    if not raw:
+        # Legacy fallback
+        raw = os.getenv("TELEGRAM_CHANNELS_INFO")
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+        if not isinstance(items, list):
+            raise ValueError("Channels json must be a list")
+        canonical: list[dict] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            chan_id = item.get("id") or item.get("channel_id")
+            name = item.get("name") or item.get("title")
+            url = item.get("url") or item.get("link")
+            if chan_id is None or name is None or url is None:
+                continue
+            canonical.append({"id": chan_id, "name": name, "url": url})
+        return canonical
+    except Exception as e:
+        logger.warning("Invalid channel info JSON – %s", e)
+        return []
+
 # ---------- Conversation entry ---------- #
 
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -135,7 +175,7 @@ async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Show selection UI
     await _refresh_selection_message(update, context)
-    return
+    return ADD_SELECT
     
     # Build selection message helper
 async def _refresh_selection_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -143,8 +183,22 @@ async def _refresh_selection_message(update: Update, context: ContextTypes.DEFAU
     db = _DB()
     plans = db.get_active_plans()
     categories = _flatten_categories(_DB.get_category_tree())
+    channels = _get_available_channels()
 
     keyboard: list[list[InlineKeyboardButton]] = []
+    # Channels header
+    if channels:
+        keyboard.append([InlineKeyboardButton("🔗 کانال‌ها:", callback_data="header_channels")])
+        for ch in channels:
+            selected = any(b.get("type") == "channel" and str(b.get("id")) == str(ch.get("id")) for b in context.user_data.get("broadcast_buttons", []))
+            prefix = "✅ " if selected else "🔗 "
+            keyboard.append([
+                InlineKeyboardButton(f"{prefix}{ch.get('name')}", callback_data=f"bc_chan_{ch.get('id')}")
+            ])
+    # Separator between channels and categories
+    if channels and (categories or plans):
+        keyboard.append([InlineKeyboardButton("━━━━━━━━━━━━━━━━━━━━", callback_data="sep_ch_cat")])
+
     # Categories header
     if categories:
         keyboard.append([InlineKeyboardButton("📂 دسته‌بندی‌ها:", callback_data="header_categories")])
@@ -208,9 +262,14 @@ async def handle_message_content(update: Update, context: ContextTypes.DEFAULT_T
     buttons_data = context.user_data.get("broadcast_buttons", [])
 
     # Build inline keyboard for preview (URL placeholders – they will be filled before sending)
+    from utils.text_utils import buttonize_markdown
     keyboard: list[list[InlineKeyboardButton]] = []
     for b in buttons_data:
-        keyboard.append([InlineKeyboardButton(b.get("text", "🚫"), callback_data="ignore")])
+        label = buttonize_markdown(b.get("text", "-"))
+        if b.get("type") == "channel":
+            keyboard.append([InlineKeyboardButton(label, url=b.get("url"))])
+        else:
+            keyboard.append([InlineKeyboardButton(label, callback_data="ignore")])
 
     # Send preview
     await message.reply_text(
@@ -227,6 +286,7 @@ async def handle_message_content(update: Update, context: ContextTypes.DEFAULT_T
     # Save draft for later (for actual broadcast step handled elsewhere)
     context.user_data["bc_draft_message_id"] = message.message_id
     context.user_data["bc_draft_chat_id"] = message.chat_id
+    context.user_data["bc_draft_obj"] = message
     # Store draft descriptor compatible with existing sender logic
     # Save draft details and the Message object itself for later sending via main bot
     context.user_data["bc_draft"] = {
@@ -344,12 +404,15 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         MAIN_BOT_TOKEN = None
         SHARED_CHANNEL_ID = None
     # Always send از طریق ربات اصلی؛ اگر شیء آن در bot_data موجود نباشد، با توکن مستقل ساخته می‌شود.
+    # Always enforce sending via main bot. Manager/aux bots must NOT send broadcast directly.
     if context.application.bot_data.get("main_bot_bot"):
         bot_to_use = context.application.bot_data["main_bot_bot"]
     elif MAIN_BOT_TOKEN:
         bot_to_use = Bot(token=MAIN_BOT_TOKEN)
+        # Cache for subsequent calls
+        context.application.bot_data["main_bot_bot"] = bot_to_use
     else:
-        await query.answer("توکن ربات اصلی تنظیم نشده است –‌ ارسال لغو شد", show_alert=True)
+        await query.answer("❌ ارسال لغو شد: توکن ربات اصلی (MAIN_BOT_TOKEN) پیکربندی نشده است.", show_alert=True)
         return
     # Build keyboard with deep links to the main bot if buttons exist
     if buttons_data:
@@ -360,14 +423,17 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             label = buttonize_markdown(b.get('text', '-'))
             if b.get('type') == 'plan':
                 rows.append([InlineKeyboardButton(label, callback_data=f"plan_{b.get('id')}")])
-            else:
-                rows.append([InlineKeyboardButton(label, callback_data=f"cat_{b.get('id')}")])
+            elif b.get('type') == 'category':
+                # Use products_menu_ prefix to trigger category browsing in main bot
+                rows.append([InlineKeyboardButton(label, callback_data=f"products_menu_{b.get('id')}")])
+            elif b.get('type') == 'channel':
+                rows.append([InlineKeyboardButton(label, url=b.get('url'))])
         keyboard = InlineKeyboardMarkup(rows)
     draft_msg = context.user_data.get("bc_draft_obj")
     
     # First, forward message to shared channel if it has media
     shared_message_id = None
-    if draft_msg and (draft_msg.photo or draft_msg.video or draft_msg.document or draft_msg.audio) and SHARED_CHANNEL_ID:
+    if draft_msg and (draft_msg.photo or draft_msg.video or draft_msg.document or draft_msg.audio or getattr(draft_msg, 'voice', None)) and SHARED_CHANNEL_ID:
         try:
             # Forward to shared channel using manager bot
             forwarded = await context.bot.forward_message(
@@ -381,7 +447,7 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     success = 0
     for uid in user_ids:
         try:
-            if draft_msg and draft_msg.text and not draft_msg.photo and not draft_msg.document and not draft_msg.video and not draft_msg.audio:
+            if draft_msg and draft_msg.text and not any([draft_msg.photo, draft_msg.document, draft_msg.video, draft_msg.audio, getattr(draft_msg, 'voice', None)]):
                 # Text message
                 formatted = re.sub(r"~([^~]+)~", r"<s>\1</s>", draft_msg.text)
                 await bot_to_use.send_message(chat_id=uid, text=formatted, reply_markup=keyboard, parse_mode="HTML")
@@ -434,6 +500,13 @@ async def audience_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     logger.warning("Broadcast send to %s failed: %s", uid, e)
             except Exception as copy_err:
                 logger.warning("Broadcast fallback copy to %s failed: %s", uid, copy_err)
+    # Clean up: remove temporary message from shared channel
+    if shared_message_id and SHARED_CHANNEL_ID:
+        try:
+            await bot_to_use.delete_message(chat_id=SHARED_CHANNEL_ID, message_id=shared_message_id)
+        except Exception as e:
+            logger.info("Could not delete temp shared message: %s", e)
+
     await query.edit_message_text(f"✅ ارسال به پایان رسید. موفق: {success}/{len(user_ids)}")
 
     # Clear flow flags
@@ -479,6 +552,26 @@ async def add_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             # Refresh the selection page
             await _refresh_selection_message(update, context)
             
+        elif data.startswith("bc_chan_"):
+            logger.info("Channel selection tapped: %s", data)
+            chan_id = data.split("_", 2)[2]
+            channels = _get_available_channels()
+            ch_obj = next((c for c in channels if str(c.get("id")) == chan_id), None)
+            if ch_obj:
+                existing = next((b for b in buttons if b.get("type") == "channel" and str(b.get("id")) == chan_id), None)
+                if not existing:
+                    buttons.append({
+                        "type": "channel",
+                        "id": chan_id,
+                        "text": ch_obj.get("name"),
+                        "url": ch_obj.get("url")
+                    })
+                    await query.answer(f"✅ کانال '{ch_obj.get('name')}' اضافه شد")
+                else:
+                    buttons[:] = [b for b in buttons if not (b.get("type") == "channel" and str(b.get("id")) == chan_id)]
+                    await query.answer(f"❌ کانال '{ch_obj.get('name')}' حذف شد")
+            await _refresh_selection_message(update, context)
+
         elif data.startswith("bc_plan_"):
             # Product selection - add to broadcast buttons
             plan_id = int(data.split("_")[2])

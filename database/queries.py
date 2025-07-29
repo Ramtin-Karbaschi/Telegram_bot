@@ -1124,7 +1124,7 @@ class DatabaseQueries:
                     )                                            AS total_subscriptions,
                     (
                         SELECT COUNT(*) FROM subscriptions s
-                        WHERE s.plan_id = p.id AND s.status = 'active'
+                        WHERE s.plan_id = p.id AND s.status = 'active' AND datetime(s.end_date) > datetime(?)
                     )                                            AS active_subscriptions,
                     COALESCE((
                         SELECT SUM(amount) FROM payments pay
@@ -1138,7 +1138,7 @@ class DatabaseQueries:
                 {plan_cond}
                 ORDER BY p.display_order, p.id
             """
-            db.execute(sql)
+            db.execute(sql, (now_str,))
             rows = db.fetchall()
             if rows:
                 # Convert to list of dicts for easier consumption
@@ -2043,41 +2043,124 @@ class DatabaseQueries:
     def get_subscription_stats():
         """Calculates and returns subscription statistics."""
         db = Database()
-        cursor = db.cursor
-
-        # Total registered users
-        cursor.execute("SELECT COUNT(*) FROM users")
-        total_users = cursor.fetchone()[0]
-
-        # Active subscribers
-        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM subscriptions WHERE status = 'active'")
-        active_subscribers = cursor.fetchone()[0]
-
-        # Expired subscribers
-        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM subscriptions WHERE status != 'active'")
-        expired_subscribers = cursor.fetchone()[0]
-
-        # Total revenue
-        total_revenue_usdt = 0
-        total_revenue_irr = 0
+        if not db.connect():
+            return {
+                "total_users": 0,
+                "active_subscribers": 0,
+                "expired_subscribers": 0,
+                "total_revenue_usdt": 0,
+                "total_revenue_irr": 0,
+            }
+        
         try:
-            cursor.execute("SELECT SUM(usdt_amount_received) FROM crypto_payments WHERE status = 'paid'")
-            result = cursor.fetchone()[0]
-            total_revenue_usdt = result if result is not None else 0
+            cursor = db.conn.cursor()
             
-            cursor.execute("SELECT SUM(amount) FROM payments WHERE status = 'paid' AND currency = 'IRR'")
-            result = cursor.fetchone()[0]
-            total_revenue_irr = result if result is not None else 0
-        except sqlite3.OperationalError:
-            pass
+            # Get current timestamp
+            current_time = get_current_time().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Total registered users
+            cursor.execute("SELECT COUNT(*) FROM users")
+            total_users = cursor.fetchone()[0]
 
-        return {
-            "total_users": total_users,
-            "active_subscribers": active_subscribers,
-            "expired_subscribers": expired_subscribers,
-            "total_revenue_usdt": total_revenue_usdt,
-            "total_revenue_irr": total_revenue_irr,
-        }
+            # Active subscribers (with time-based filtering)
+            cursor.execute("""
+                SELECT COUNT(DISTINCT user_id) FROM subscriptions 
+                WHERE status = 'active' AND datetime(end_date) > datetime(?)
+            """, (current_time,))
+            active_subscribers = cursor.fetchone()[0]
+
+            # Expired subscribers (includes both status and time)
+            cursor.execute("""
+                SELECT COUNT(DISTINCT user_id) FROM subscriptions 
+                WHERE status != 'active' OR datetime(end_date) <= datetime(?)
+            """, (current_time,))
+            expired_subscribers = cursor.fetchone()[0]
+
+            # Calculate total revenue properly
+            total_revenue_usdt = 0.0
+            total_revenue_irr = 0.0
+            
+            try:
+                # USDT revenue from multiple sources
+                # 1. From crypto_payments table (if exists and has data)
+                try:
+                    cursor.execute("""
+                        SELECT SUM(usdt_amount_received) FROM crypto_payments 
+                        WHERE status IN ('paid', 'completed', 'successful', 'verified')
+                        AND usdt_amount_received IS NOT NULL
+                    """)
+                    result = cursor.fetchone()[0]
+                    if result:
+                        total_revenue_usdt += float(result)
+                except sqlite3.OperationalError:
+                    logging.debug("crypto_payments table not found or no usdt_amount_received column")
+                
+                # 2. From payments table USDT amounts (crypto payments recorded here)
+                try:
+                    cursor.execute("""
+                        SELECT SUM(usdt_amount_requested) FROM payments
+                        WHERE status IN ('paid', 'completed', 'successful', 'verified')
+                        AND payment_method = 'crypto'
+                        AND usdt_amount_requested IS NOT NULL
+                    """)
+                    result = cursor.fetchone()[0]
+                    if result:
+                        total_revenue_usdt += float(result)
+                except sqlite3.OperationalError:
+                    logging.debug("payments table usdt_amount_requested column not found")
+                
+                # IRR revenue from payments table
+                # This includes both regular IRR payments and IRR equivalent of crypto payments
+                try:
+                    cursor.execute("""
+                        SELECT SUM(amount) FROM payments 
+                        WHERE status IN ('paid', 'completed', 'successful', 'verified')
+                        AND amount IS NOT NULL
+                        AND amount > 0
+                    """)
+                    result = cursor.fetchone()[0]
+                    if result:
+                        total_revenue_irr = float(result)
+                except sqlite3.OperationalError:
+                    logging.debug("payments table amount column not found")
+                    
+                # Also check crypto_payments for IRR amounts
+                try:
+                    cursor.execute("""
+                        SELECT SUM(rial_amount) FROM crypto_payments
+                        WHERE status IN ('paid', 'completed', 'successful', 'verified')
+                        AND rial_amount IS NOT NULL
+                        AND rial_amount > 0
+                    """)
+                    result = cursor.fetchone()[0]
+                    if result:
+                        total_revenue_irr += float(result)
+                except sqlite3.OperationalError:
+                    logging.debug("crypto_payments table rial_amount column not found")
+                    
+            except Exception as e:
+                logging.error(f"Error calculating revenue: {e}")
+                pass
+
+            return {
+                "total_users": total_users,
+                "active_subscribers": active_subscribers,
+                "expired_subscribers": expired_subscribers,
+                "total_revenue_usdt": total_revenue_usdt,
+                "total_revenue_irr": total_revenue_irr,
+            }
+            
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error in get_subscription_stats: {e}")
+            return {
+                "total_users": 0,
+                "active_subscribers": 0,
+                "expired_subscribers": 0,
+                "total_revenue_usdt": 0,
+                "total_revenue_irr": 0,
+            }
+        finally:
+            db.close()
 
     @staticmethod
     def get_all_registered_users():
