@@ -489,7 +489,7 @@ async def handle_free_content_plan(update: Update, context: ContextTypes.DEFAULT
 
     plan = context.user_data.get('selected_plan')
     if not plan:
-        await safe_edit_message_text("خطایی رخ داده است. لطفاً دوباره امتحان کنید.")
+        await safe_edit_message_text(query.message, text="خطایی رخ داده است. لطفاً دوباره امتحان کنید.")
         return ConversationHandler.END
 
     plan_id = plan['id']
@@ -501,7 +501,8 @@ async def handle_free_content_plan(update: Update, context: ContextTypes.DEFAULT
         # Safety check: ensure capacity is a number, not a list or other type
         if isinstance(plan['capacity'], (int, float)) and plan['capacity'] <= 0:
             await safe_edit_message_text(
-                "ظرفیت این پلن تکمیل شده است.",
+                query.message,
+                text="ظرفیت این پلن تکمیل شده است.",
                 reply_markup=get_main_menu_keyboard()
             )
             return ConversationHandler.END
@@ -613,7 +614,7 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         plan_id = int(query.data.split('_')[1])
     except (ValueError, IndexError):
         logger.error(f"[select_plan_handler] Invalid plan_id format from callback: {query.data} for user {user_id}")
-        await safe_edit_message_text("خطا: شناسه طرح نامعتبر است.")
+        await safe_edit_message_text(query.message, text="خطا: شناسه طرح نامعتبر است.")
         return SELECT_PLAN
 
     selected_plan = Database.get_plan_by_id(plan_id)
@@ -738,7 +739,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
     selected_plan = context.user_data.get('selected_plan_details')
     if not selected_plan:
         logger.warning(f"No selected_plan_details in context for telegram_id {telegram_id} in select_payment_method.")
-        await safe_edit_message_text("خطا: اطلاعات طرح یافت نشد. لطفاً از ابتدا شروع کنید.", reply_markup=get_subscription_plans_keyboard(telegram_id))
+        await safe_edit_message_text(query.message, text="خطا: اطلاعات طرح یافت نشد. لطفاً از ابتدا شروع کنید.", reply_markup=get_subscription_plans_keyboard(telegram_id))
         return SELECT_PLAN
 
     # Check if price has expired (30 minutes)
@@ -748,7 +749,8 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         expiry_time = datetime.fromisoformat(price_expiry)
         if datetime.utcnow() > expiry_time:
             await safe_edit_message_text(
-                "⚠️ قیمت محاسبه شده منقضی شده است. لطفاً دوباره پلن را انتخاب کنید.",
+                query.message,
+                text="⚠️ قیمت محاسبه شده منقضی شده است. لطفاً دوباره پلن را انتخاب کنید.",
                 reply_markup=get_subscription_plans_keyboard(telegram_id)
             )
             return SELECT_PLAN
@@ -770,7 +772,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
     
     if price_irr is None:
         await query.edit_message_text(
-            "خطا در محاسبه قیمت. لطفاً دوباره پلن را انتخاب کنید.",
+            text="خطا در محاسبه قیمت. لطفاً دوباره پلن را انتخاب کنید.",
             reply_markup=get_subscription_plans_keyboard(telegram_id)
         )
         return SELECT_PLAN
@@ -783,7 +785,10 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
     if price_irr is None:
         logger.error(f"User {telegram_id}: Could not determine numeric IRR price for selected plan.")
-        await safe_edit_message_text("خطای سیستمی: قیمت پلن انتخابی مشخص نشد. لطفاً دوباره تلاش کنید.")
+        await safe_edit_message_text(
+            query.message,
+            "خطای سیستمی: قیمت پلن انتخابی مشخص نشد. لطفاً دوباره تلاش کنید."
+        )
         return SELECT_PLAN
 
     plan_id = selected_plan['id']
@@ -800,6 +805,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         # Prevent duplicate activation of free plan (including plans discounted to zero)
         if Database.has_user_used_free_plan(user_id=telegram_id, plan_id=plan_id):
             await safe_edit_message_text(
+                query.message,
                 "شما قبلاً از این طرح رایگان استفاده کرده‌اید و امکان فعال‌سازی مجدد آن وجود ندارد.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
             )
@@ -818,9 +824,17 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             payment_table_id=None
         )
         if success:
-            await safe_edit_message_text(f"✅ پلن «{plan_name}» به صورت رایگان برای شما فعال شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
+            await safe_edit_message_text(
+                query.message,
+                f"✅ پلن «{plan_name}» به صورت رایگان برای شما فعال شد.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
+            )
         else:
-            await safe_edit_message_text(f"❌ {msg}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
+            await safe_edit_message_text(
+                query.message,
+                f"❌ {msg}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
+            )
         UserAction.log_user_action(telegram_id, 'free_plan_activated', {'plan_id': plan_id})
         return ConversationHandler.END
 
@@ -846,7 +860,11 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
         if not payment_db_id:
             logger.error(f"Failed to create initial Zarinpal payment record for user {telegram_id}, plan {plan_id}.")
-            await safe_edit_message_text(PAYMENT_ERROR_MESSAGE, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
+            await safe_edit_message_text(
+                query.message,
+                PAYMENT_ERROR_MESSAGE,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
+            )
             UserAction.log_user_action(telegram_id, 'zarinpal_payment_db_creation_failed', {'plan_id': plan_id})
             return ConversationHandler.END
 
@@ -891,6 +909,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
                 f"این لینک پرداخت تا ۳۰ دقیقه معتبر است و پس از آن منقضی می‌شود."
             )
             await safe_edit_message_text(
+                query.message,
                 text=message_text,
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("ورود به درگاه پرداخت زرین‌پال", url=payment_url)],
@@ -906,7 +925,8 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             Database.update_payment_status(payment_db_id, 'failed', error_message=f"zarinpal_req_err_{zarinpal_request.get('status')}")
             logger.error(f"Zarinpal payment request failed for user {telegram_id}. Response: {zarinpal_request}")
             await safe_edit_message_text(
-                f"متاسفانه در ایجاد لینک پرداخت مشکلی پیش آمد.\nخطا: {zarinpal_request.get('message')} (کد: {zarinpal_request.get('status')})\nلطفاً دقایقی دیگر مجدداً تلاش کنید یا روش پرداخت دیگری را انتخاب نمایید.",
+                query.message,
+                text=f"متاسفانه در ایجاد لینک پرداخت مشکلی پیش آمد.\nخطا: {zarinpal_request.get('message')} (کد: {zarinpal_request.get('status')})\nلطفاً دقایقی دیگر مجدداً تلاش کنید یا روش پرداخت دیگری را انتخاب نمایید.",
                 reply_markup=InlineKeyboardMarkup([
                     [get_back_to_payment_methods_button()],
                     [InlineKeyboardButton(TEXT_GENERAL_BACK_TO_MAIN_MENU, callback_data=CALLBACK_BACK_TO_MAIN_MENU)]
@@ -932,7 +952,8 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
                 f"Plan {plan_id} has invalid live_calculated_usdt_price {live_calculated_usdt_price} for crypto payment. telegram_id: {telegram_id}"
             )
             await safe_edit_message_text(
-                "خطا: قیمت محاسبه شده تتر برای طرح نامعتبر است یا یافت نشد. لطفاً مجدداً تلاش کنید.",
+                query.message,
+                text="خطا: قیمت محاسبه شده تتر برای طرح نامعتبر است یا یافت نشد. لطفاً مجدداً تلاش کنید.",
                 reply_markup=get_payment_methods_keyboard(),
             )
             return SELECT_PAYMENT_METHOD
