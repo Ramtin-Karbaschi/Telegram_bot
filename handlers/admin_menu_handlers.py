@@ -1713,11 +1713,34 @@ class AdminMenuHandler:
                     parse_mode="Markdown"
                 )
             except Exception as e:
-                logger.error(f"Failed to send invite links to user {target_user_id}: {e}", exc_info=True)
-                await admin_user.send_message(
-                    f"⚠️ لینک‌ها ایجاد شدند اما در ارسال به کاربر `{target_user_id}` خطا رخ داد: {e}\n\n"
-                    "لینک‌ها:\n" + "\n".join(links),
-                    parse_mode="Markdown"
+                from telegram.error import BadRequest, Forbidden
+                
+                # Specific error handling for common Telegram errors
+                if isinstance(e, BadRequest) and "Chat not found" in str(e):
+                    error_msg = (
+                        f"❌ **کاربر `{target_user_id}` یافت نشد**\n\n"
+                        "**دلایل احتمالی:**\n"
+                        "• کاربر بات را بلاک کرده\n"
+                        "• کاربر اکانت خود را حذف کرده\n"
+                        "• کاربر هنوز با بات چت شروع نکرده (/start نزده)\n\n"
+                        "**راه‌حل:** از کاربر بخواهید ابتدا `/start` را در بات بزند.\n\n"
+                        "**لینک‌های ایجاد شده:**\n" + "\n".join(links)
+                    )
+                elif isinstance(e, Forbidden):
+                    error_msg = (
+                        f"🚫 **کاربر `{target_user_id}` بات را بلاک کرده**\n\n"
+                        "از کاربر بخواهید بات را unblock کرده و `/start` بزند.\n\n"
+                        "**لینک‌های ایجاد شده:**\n" + "\n".join(links)
+                    )
+                else:
+                    error_msg = (
+                        f"⚠️ **خطا در ارسال به کاربر `{target_user_id}`**\n\n"
+                        f"**جزئیات خطا:** `{str(e)}`\n\n"
+                        "**لینک‌های ایجاد شده:**\n" + "\n".join(links)
+                    )
+                
+                logger.error(f"Failed to send invite links to user {target_user_id}: {e}")
+                await admin_user.send_message(error_msg, parse_mode="Markdown"
                 )
 
         except Exception as e:
