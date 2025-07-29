@@ -1008,21 +1008,20 @@ class AdminTicketHandler:
                 status_readable = str(status).replace('_',' ')
                 doc.add_paragraph(f"{status_emoji} وضعیت: {status_readable}")
                 doc.add_paragraph(f"📅 تاریخ ثبت: {created_at}")
-                # Find answer timestamp & admin reply
-                admin_reply = self._get_admin_reply(ticket_id)
-                admin_reply_time = None
+                # Find last admin reply message (if any) and its timestamp
+                admin_reply_msg = None
                 try:
                     msgs_all = DatabaseQueries.get_ticket_messages(ticket_id)
                     for m in reversed(msgs_all or []):
                         m = dict(m)
                         if m.get('is_admin'):
-                            admin_reply_time = m.get('timestamp')
+                            admin_reply_msg = m
                             break
                 except Exception:
                     pass
-                if admin_reply_time:
-                    # Find responder name
-                    responder_info = self._get_user_info(admin_reply.get('user_id')) if admin_reply else None
+                if admin_reply_msg:
+                    admin_reply_time = admin_reply_msg.get('timestamp')
+                    responder_info = self._get_user_info(admin_reply_msg.get('user_id'))
                     responder_display = self._format_user_info(responder_info) if responder_info else "نامشخص"
                     doc.add_paragraph(f"📨 تاریخ پاسخ: {admin_reply_time} توسط {responder_display}")
                 # User info
@@ -1042,7 +1041,7 @@ class AdminTicketHandler:
                         ts = m.get('timestamp', '')
                         doc.add_paragraph(f"[{ts}] {sender}: {m.get('message', '')}")
                 # Answer status
-                if not admin_reply:
+                if not admin_reply_msg:
                     p = doc.add_paragraph()
                     run = p.add_run("پاسخی داده نشده است")
                     run.font.color.rgb = RGBColor(255,0,0)
