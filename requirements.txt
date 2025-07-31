@@ -1,5 +1,11 @@
 python-telegram-bot[job-queue]==20.8
 zarinpal-python-sdk>=0.2
+# Crypto payment dependencies
+tronpy>=0.6.1
+coincurve>=21.0.0
+base58>=2.1.1
+eth-abi>=5.2.0
+pycryptodome>=3.23.0
 pytz==2023.3
 python-dotenv==1.0.0
 jdatetime>=2.0

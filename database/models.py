@@ -165,25 +165,26 @@ class Database:
             return True
         return False
 
-    def update_crypto_payment_on_success(self, payment_id, transaction_id, usdt_amount_received):
+    def update_crypto_payment_on_success(self, payment_id, transaction_id, usdt_amount_received, late: bool = False):
         """Updates a crypto payment record upon successful confirmation."""
         # --- Fetch current status for audit ---
         self.execute("SELECT status FROM crypto_payments WHERE payment_id = ?", (payment_id,))
         row = self.fetchone()
         old_status = row['status'] if row else None
 
+        new_status = 'paid-late' if late else 'paid'
         query = """
             UPDATE crypto_payments 
-            SET transaction_id = ?, usdt_amount_received = ?, status = 'paid', updated_at = ?
+            SET transaction_id = ?, usdt_amount_received = ?, status = ?, updated_at = ?
             WHERE payment_id = ? AND status = 'pending'
         """
-        params = (transaction_id, usdt_amount_received, datetime.now(), payment_id)
+        params = (transaction_id, usdt_amount_received, new_status, datetime.now(), payment_id)
         if self.execute(query, params):
             self.commit()
             rows = self.cursor.rowcount
             if rows:
                 # log status change
-                self.log_payment_status_change(payment_id, old_status, 'paid', note=f'Tx {transaction_id}')
+                self.log_payment_status_change(payment_id, old_status, new_status, note=f'Tx {transaction_id}')
             return rows > 0
         return False
 
@@ -281,6 +282,14 @@ class Database:
                 cursor.execute("CREATE INDEX idx_auto_verification_logs_created_at ON auto_verification_logs(created_at)")
                 
                 print("✅ Auto verification logs table created")
+
+                # ---------------- Ensure manual_checks column in crypto_payments ----------------
+                cursor.execute("PRAGMA table_info(crypto_payments)")
+                cols = [row[1] for row in cursor.fetchall()]
+                if 'manual_checks' not in cols:
+                    print("🔧 Adding manual_checks column to crypto_payments…")
+                    cursor.execute("ALTER TABLE crypto_payments ADD COLUMN manual_checks INTEGER DEFAULT 0")
+                    print("✅ manual_checks column added")
             
             # اضافه کردن تنظیمات پیشفرض
             default_settings = [

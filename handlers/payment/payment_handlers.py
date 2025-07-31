@@ -144,42 +144,66 @@ async def back_to_main_menu_from_payment_handler(update: Update, context: Contex
     context.user_data.clear()
     return await view_active_subscription(update, context)
 
-async def safe_edit_message_text(message, **kwargs):
-    """Edit a message's text or caption safely.
+async def safe_edit_message_text(target, **kwargs):
+    """Safely edit an existing Telegram message.
 
-    Falls back in the following order:
-    1. edit_text – if message had textual content originally.
-    2. edit_caption – if message is media with caption (common for broadcasted photos/videos).
-    3. send a new message – if neither edit succeeds (e.g. no editable content).
-    Silently ignores *Message is not modified* errors.
+    The helper now tolerates two calling conventions that exist in the codebase:
+    1. ``safe_edit_message_text(message, text="...", ...)`` where the first argument
+       is an instance of :class:`telegram.Message` that should be edited.
+    2. ``safe_edit_message_text("text", ...)`` where the first argument is the *text*
+       itself (legacy usage). In this case the helper simply sends a **new** message
+       instead of editing, provided that both ``bot`` and ``chat_id`` are supplied in
+       *kwargs*.
+
+    Regardless of the convention used, the function suppresses *"Message is not
+    modified"* errors so that repeated callbacks do not crash the bot.
     """
     from telegram.error import BadRequest as TGBadRequest
+    from telegram import Message
 
-    try:
-        await message.edit_text(**kwargs)
-        return
-    except TGBadRequest as e:
-        # If there is no text (media message), try editing the caption instead
-        if 'There is no text in the message to edit' in str(e):
-            try:
-                caption_kwargs = kwargs.copy()
-                # edit_caption expects 'caption' instead of 'text'
-                caption_kwargs['caption'] = caption_kwargs.pop('text', '')
-                await message.edit_caption(**caption_kwargs)
-                return
-            except TGBadRequest as e2:
-                if 'Message is not modified' in str(e2):
-                    return
-                # fall through to send a new message
-        elif 'Message is not modified' in str(e):
+    # ------------------------------------------------------------------
+    # 1) First, detect whether we received a Message instance to edit.
+    # ------------------------------------------------------------------
+    if isinstance(target, Message):
+        try:
+            # Standard attempt – edit the textual content.
+            await target.edit_text(**kwargs)
             return
-        # For other cases, try to send a standalone message to the same chat
+        except TGBadRequest as e:
+            # If the message has no text (e.g. media), attempt caption editing.
+            if 'There is no text in the message to edit' in str(e):
+                try:
+                    caption_kwargs = kwargs.copy()
+                    caption_kwargs['caption'] = caption_kwargs.pop('text', '')
+                    await target.edit_caption(**caption_kwargs)
+                    return
+                except TGBadRequest as e2:
+                    # Silently ignore *Message is not modified* errors.
+                    if 'Message is not modified' in str(e2):
+                        return
+            elif 'Message is not modified' in str(e):
+                return
+            # If editing still fails, fall back to sending a new message below.
+        # If we reach here, editing failed – fall back to sending a new message.
+        text_to_send = kwargs.pop('text', '')
+    else:
+        # ------------------------------------------------------------------
+        # 2) Legacy usage: first argument is the *text* itself.
+        # ------------------------------------------------------------------
+        text_to_send = str(target)
+
+    # ----------------------------------------------------------------------
+    # Fallback: try to send a brand-new message if we have bot & chat_id.
+    # ----------------------------------------------------------------------
+    bot = kwargs.pop('bot', None)
+    chat_id = kwargs.pop('chat_id', None)
+    # Derive bot and chat_id from Message if not provided
+    if isinstance(target, Message) and (bot is None or chat_id is None):
+        bot = bot or target.get_bot()
+        chat_id = chat_id or target.chat_id
     try:
-        chat_id = message.chat_id
-        bot = message.get_bot()
-        text = kwargs.get('text') or kwargs.get('caption', '')
-        reply_markup = kwargs.get('reply_markup')
-        await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+        if bot and chat_id and text_to_send:
+            await bot.send_message(chat_id=chat_id, text=text_to_send, **kwargs)
     except Exception:
         # As a last resort, swallow error to avoid crashing the handler
         logger.warning("safe_edit_message_text: failed to edit or send fallback message", exc_info=True)
@@ -396,31 +420,110 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
     return SELECT_PAYMENT_METHOD
 
 async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # """Asks the user if they have a discount code."""
-    # query = update.callback_query
+    """Ask the user if they have a discount code *only* when the admin has enabled the step.
+
+    If the setting `enable_discount_code_step` is disabled ("0"), we immediately
+    show the available payment methods and advance the conversation to
+    `SELECT_PAYMENT_METHOD`.
+    """
+    # Answer the callback if present to remove Telegram loading spinner
+    if update.callback_query:
+        await update.callback_query.answer()
+
+    # Check global setting controlled from admin panel
+    from database.queries import DatabaseQueries  # local import to avoid circular deps
+    discount_step_enabled = DatabaseQueries.get_setting("enable_discount_code_step", "1") == "1"
+
+    # ------------------------------------------------------------------
+    # If the discount step is disabled, directly show payment methods and exit
+    # ------------------------------------------------------------------
+    if not discount_step_enabled:
+        # Delegate to existing helper that shows payment methods UI
+        await show_payment_methods(update, context)
+        return SELECT_PAYMENT_METHOD
+
+    # ------------------------------------------------------------------
+    # Discount step is enabled – build the question message
+    # ------------------------------------------------------------------
+    # Retrieve selected plan details from context (set earlier in the flow)
+    selected_plan = (
+        context.user_data.get("selected_plan_details")
+        or context.user_data.get("selected_plan")
+    )
+    if not selected_plan:
+        # Fallback – should not normally happen
+        if update.callback_query:
+            await update.callback_query.edit_message_text("خطا: پلن انتخاب شده یافت نشد.")
+        return ConversationHandler.END
+
+    # ------------------------------------------------------------------
+    # Price caching: compute current plan price (IRR & USDT) and store an
+    # expiry timestamp so that subsequent steps (discount validation and
+    # payment method selection) do not falsely detect an expired price.
+    # ------------------------------------------------------------------
+    import math
+    from datetime import datetime, timedelta
+
+    # Latest USDT ➜ IRR rate
+    usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
+    if not usdt_rate:
+        # Proceed with 0 rate; downstream handlers will handle the error.
+        usdt_rate = 0
+
+    base_currency = selected_plan.get("base_currency", "IRR")
+    base_price = selected_plan.get("base_price")
+
+    # Backward-compatibility for legacy field names
+    if base_price is None:
+        if selected_plan.get("price_tether") is not None:
+            base_currency = "USDT"
+            base_price = selected_plan["price_tether"]
+        elif selected_plan.get("price") is not None:
+            base_currency = "IRR"
+            base_price = selected_plan["price"]
+
+    if base_price is not None:
+        if base_currency == "USDT":
+            usdt_price = math.ceil(float(base_price))
+            irr_price = int(usdt_price * usdt_rate * 10)  # Convert to Rial
+        else:
+            irr_price = int(float(base_price))
+            usdt_price = math.ceil(irr_price / (usdt_rate * 10)) if usdt_rate else 0
+
+        expiry_time = datetime.utcnow() + timedelta(minutes=30)
+        context.user_data.update({
+            "live_usdt_price": usdt_price,
+            "live_irr_price": irr_price,
+            "price_expiry": expiry_time.isoformat(),
+            "base_currency": base_currency,
+            "base_price": base_price,
+        })
+
+    from utils.text_utils import buttonize_markdown
+
+    plan_display_name = buttonize_markdown(selected_plan.get("name", "N/A"))
+    message_text = (
+        f"شما پلن «{plan_display_name}» را انتخاب کرده‌اید. آیا کد تخفیف دارید؟"
+    )
+
+    # Use safe_edit_message_text to update existing message, falling back gracefully
+    await safe_edit_message_text(
+        update.callback_query.message if update.callback_query else selected_plan,  # type: ignore[arg-type]
+        text=message_text,
+        reply_markup=get_ask_discount_keyboard(),
+    )
+
+    return ASK_DISCOUNT
+
+    """
+
     # await query.answer()
 
     # selected_plan = context.user_data.get('selected_plan_details')
     # if not selected_plan:
     #     await query.edit_message_text("خطا: پلن انتخاب شده یافت نشد.")
-    #     return ConversationHandler.END
-    
-    # # Calculate and store the live price for discount validation
-    # # Get current exchange rate
-    # usdt_rate = await get_usdt_to_irr_rate(force_refresh=True)
-    ####################################
-    """Temporarily bypass the discount question and directly show payment methods.
-    This shortcut can be reverted by restoring original implementation."""
-    # Simply delegate to show_payment_methods to keep rest of flow unchanged
-    # Works for both initial callback and potential message scenarios.
-    if update.callback_query:
-        await show_payment_methods(update, context)
-    else:
-        # create a dummy CallbackQuery-like context by re-invoking the same handler via stored message id is complex,
-        # so we skip; payment flow mainly uses callbacks.
-        pass
-    return SELECT_PAYMENT_METHOD
-    ####################################
+
+    # ----------------------------------
     if not usdt_rate:
         await query.edit_message_text("خطا در دریافت نرخ ارز. لطفاً دوباره تلاش کنید.")
         return SELECT_PLAN
@@ -470,7 +573,7 @@ async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         text=message_text,
         reply_markup=get_ask_discount_keyboard()
     )
-    return ASK_DISCOUNT
+    """
 
 async def handle_free_content_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -986,36 +1089,58 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         )
         logger.info(f"User {telegram_id} (DB ID: {user_db_id}): Crypto payment_request_db_id: {crypto_payment_request_db_id}. Result from Database.create_crypto_payment_request.")
 
+        # ---- Handle failure in placeholder creation ----
         if not crypto_payment_request_db_id:
             UserAction.log_user_action(
-                telegram_id=telegram_id, 
+                telegram_id=telegram_id,
                 action_type='crypto_placeholder_creation_failed',
-                details={'plan_id': plan_id, 'rial_amount': rial_amount, 'user_db_id': user_db_id})
+                details={'plan_id': plan_id, 'rial_amount': rial_amount, 'user_db_id': user_db_id}
+            )
             logger.error(f"Failed to create placeholder crypto payment request for user_db_id {user_db_id}, plan {plan_id}.")
-            await safe_edit_message_text(query.message, text=PAYMENT_ERROR_MESSAGE, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
-            return ConversationHandler.END  # Or SELECT_PAYMENT_METHOD
+            await safe_edit_message_text(
+                query.message,
+                text=PAYMENT_ERROR_MESSAGE,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
+            )
+            return ConversationHandler.END
 
-        # مبلغ USDT برابر با قیمت پایهٔ پلن (بدون آفست)
-        usdt_amount_requested = live_calculated_usdt_price
+        # ---- Generate UNIQUE USDT amount ----
+        from decimal import Decimal
+        from utils.payment_utils import generate_unique_crypto_amount
+        from database.queries import DatabaseQueries as DBQueries
+
+        def _is_amount_taken(candidate: Decimal) -> bool:
+            return DBQueries.crypto_payment_exists_with_amount(float(candidate))
+
+        unique_amount_decimal = generate_unique_crypto_amount(
+            base_amount=Decimal(live_calculated_usdt_price),
+            payment_id=crypto_payment_request_db_id,
+            is_amount_taken=_is_amount_taken,
+        )
+        usdt_amount_requested = float(unique_amount_decimal)
         context.user_data['usdt_amount_requested'] = usdt_amount_requested
 
-
-        # Step 3: Update the crypto payment request record with the calculated USDT amount.
-        # This requires a method like: Database.update_crypto_payment_request_with_amount(request_id, usdt_amount)
-        update_success = Database.update_crypto_payment_request_with_amount(
+        # Step 3: Update the crypto payment record with the unique amount
+        update_success = DBQueries.update_crypto_payment_request_with_amount(
             payment_request_id=crypto_payment_request_db_id,
-            usdt_amount=usdt_amount_requested
+            usdt_amount=usdt_amount_requested,
         )
 
         if not update_success:
             UserAction.log_user_action(
-                telegram_id=telegram_id, 
+                telegram_id=telegram_id,
                 action_type='crypto_usdt_amount_update_failed',
                 details={'payment_request_id': crypto_payment_request_db_id, 'usdt_amount': usdt_amount_requested, 'user_db_id': user_db_id}
             )
-            logger.error(f"Failed to update crypto payment request {crypto_payment_request_db_id} with USDT amount {usdt_amount_requested}. telegram_id: {telegram_id}")
-            await safe_edit_message_text(query.message, text="خطای سیستمی هنگام ثبت مبلغ تتر. لطفاً با پشتیبانی تماس بگیرید.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]]))
-            return ConversationHandler.END # Or SELECT_PAYMENT_METHOD
+            logger.error(
+                f"Failed to update crypto payment request {crypto_payment_request_db_id} with USDT amount {usdt_amount_requested}. telegram_id: {telegram_id}"
+            )
+            await safe_edit_message_text(
+                query.message,
+                text="خطای سیستمی هنگام ثبت مبلغ تتر. لطفاً با پشتیبانی تماس بگیرید.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
+            )
+            return ConversationHandler.END  # Or SELECT_PAYMENT_METHOD
 
         if not crypto_payment_request_db_id:
             UserAction.log_user_action(
@@ -1033,6 +1158,19 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             return SELECT_PAYMENT_METHOD
 
         context.user_data['crypto_payment_id'] = crypto_payment_request_db_id
+
+        # Schedule reminder 15 minutes before user deadline (30-minute window)
+        reminder_delay = max(0, (expires_at_dt - timedelta(minutes=15) - datetime.now()).total_seconds())
+        try:
+            context.job_queue.run_once(
+                crypto_payment_reminder_job,
+                reminder_delay,
+                chat_id=telegram_id,
+                data={'payment_id': crypto_payment_request_db_id},
+                name=f'remind_crypto_{crypto_payment_request_db_id}'
+            )
+        except Exception as e:
+            logger.error(f"Failed to schedule crypto payment reminder: {e}")
         context.user_data['usdt_amount_requested'] = usdt_amount_requested
 
         # The log for calculate_unique_usdt_amount call is now part of the try-except block below where it's actually called
@@ -1047,7 +1185,8 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
 
         keyboard_buttons = [
             [InlineKeyboardButton("📷 نمایش QR کد", callback_data=f"show_qr_code_{crypto_payment_request_db_id}")],
-            [InlineKeyboardButton("🔗 ارسال Tx Hash", callback_data="payment_send_tx")] 
+            [InlineKeyboardButton("🔗 ارسال Tx Hash", callback_data="payment_send_tx")],
+            [InlineKeyboardButton("🔄 بررسی مجدد", callback_data=f"crypto_retry:{crypto_payment_request_db_id}")] 
         ]
         # افزودن دکمه تماس با پشتیبان جهت ارسال تصویر تراکنش
         keyboard_buttons.append([InlineKeyboardButton("📨 ارتباط با پشتیبان", url="https://t.me/daraeiposhtibani")])
@@ -1533,7 +1672,8 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
     selected_plan = context.user_data.get('selected_plan_details')
     if not selected_plan:
         await safe_edit_message_text(
-            "خطا: اطلاعات طرح انتخاب شده یافت نشد. لطفاً مجدداً طرح را انتخاب کنید.",
+            query.message,
+            text="خطا: اطلاعات طرح انتخاب شده یافت نشد. لطفاً مجدداً طرح را انتخاب کنید.",
             reply_markup=get_subscription_plans_keyboard()
         )
         return SELECT_PLAN
@@ -1554,7 +1694,8 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
         expiry_time = datetime.fromisoformat(price_expiry)
         if datetime.utcnow() > expiry_time:
             await safe_edit_message_text(
-                "⚠️ قیمت محاسبه شده منقضی شده است. لطفاً دوباره پلن را انتخاب کنید.",
+                query.message,
+                text="⚠️ قیمت محاسبه شده منقضی شده است. لطفاً دوباره پلن را انتخاب کنید.",
                 reply_markup=get_subscription_plans_keyboard(user_id)
             )
             return SELECT_PLAN
@@ -1788,12 +1929,38 @@ async def ask_for_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
 async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """🎯 دریافت TX Hash از کاربر و تایید با سیستم امنیتی پیشرفته"""
     telegram_id = update.effective_user.id
+    from datetime import datetime
     tx_hash = update.message.text.strip()
     crypto_payment_id = context.user_data.get('crypto_payment_id')
     
     if not crypto_payment_id:
-        await update.message.reply_text("❌ پرداختی برای بررسی یافت نشد.")
-        return ConversationHandler.END
+        # تلاش برای یافتن آخرین پرداخت معلق کاربر در دیتابیس
+        try:
+            from database.models import Database as DBModel
+            db_instance = DBModel.get_instance()
+            recent_payment = db_instance.execute(
+                """
+                SELECT * FROM crypto_payments
+                WHERE user_id = ? AND status = 'pending' AND expires_at > ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (telegram_id, datetime.now())
+            )
+            row = db_instance.fetchone() if recent_payment else None
+            if row:
+                payment_record = dict(row)
+                crypto_payment_id = payment_record['payment_id']
+                context.user_data['crypto_payment_id'] = crypto_payment_id
+                logger.info(
+                    f"🔄 Fallback: using latest pending crypto payment {crypto_payment_id} for user {telegram_id}"
+                )
+            else:
+                await update.message.reply_text("❌ پرداختی برای بررسی یافت نشد.")
+                return ConversationHandler.END
+        except Exception as db_exc:
+            logger.error(f"Error finding fallback payment for user {telegram_id}: {db_exc}")
+            await update.message.reply_text("❌ پرداختی برای بررسی یافت نشد.")
+            return ConversationHandler.END
 
     # دریافت اطلاعات پرداخت کریپتو با فالبک برای قدیمی‌ها
     from database.models import Database as DBModel
@@ -1850,11 +2017,47 @@ async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
         
         if verified:
             # پرداخت تایید شد
-            Database.update_crypto_payment_on_success(payment_record['payment_id'], final_tx, amount)
+            from datetime import datetime, timezone
+            payment_expired = False
+            try:
+                expires_at = payment_record.get('expires_at')
+                if expires_at:
+                    exp_dt = datetime.fromisoformat(expires_at)
+                    payment_expired = exp_dt < datetime.now(exp_dt.tzinfo or timezone.utc)
+            except Exception:
+                pass
+            Database.update_crypto_payment_on_success(payment_record['payment_id'], final_tx, amount, late=payment_expired)
             plan_id = payment_record.get('plan_id')
             
             try:
-                await activate_or_extend_subscription(telegram_id, plan_id, crypto_payment_id)
+                # Gather plan details for subscription activation
+                plan_row = Database.get_plan_by_id(plan_id)
+                if plan_row and hasattr(plan_row, "keys"):
+                    plan_name = plan_row["name"]
+                elif plan_row:
+                    plan_name = dict(plan_row).get("name", "N/A")
+                else:
+                    plan_name = "N/A"
+
+                activation_success, _ = await activate_or_extend_subscription(
+                    user_id=telegram_id,
+                    telegram_id=telegram_id,
+                    plan_id=plan_id,
+                    plan_name=plan_name,
+                    payment_amount=amount,
+                    payment_method="crypto",
+                    transaction_id=final_tx,
+                    context=context,
+                    payment_table_id=payment_record["payment_id"]
+                )
+
+                # If activation succeeded and this is a one-time content plan, send the content now
+                if activation_success and plan_row and plan_row.get("plan_type") == "one_time_content":
+                    from handlers.subscription.subscription_handlers import handle_post_subscription_flow
+                    try:
+                        await handle_post_subscription_flow(telegram_id, context, dict(plan_row), plan_name)
+                    except Exception as post_exc:
+                        logger.error(f"Error delivering content for plan {plan_id} to user {telegram_id}: {post_exc}")
                 
                 success_message = (
                     "🎉 **پرداخت با موفقیت تایید شد!**\n\n"
@@ -2015,7 +2218,16 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
         
         if verified:
             # پرداخت یافت شد و تایید شد
-            Database.update_crypto_payment_on_success(payment_record['payment_id'], final_tx, amount)
+            from datetime import datetime, timezone
+            payment_expired = False
+            try:
+                expires_at = payment_record.get('expires_at')
+                if expires_at:
+                    exp_dt = datetime.fromisoformat(expires_at)
+                    payment_expired = exp_dt < datetime.now(exp_dt.tzinfo or timezone.utc)
+            except Exception:
+                pass
+            Database.update_crypto_payment_on_success(payment_record['payment_id'], final_tx, amount, late=payment_expired)
             plan_id = payment_record.get('plan_id')
             
             try:
@@ -2119,6 +2331,10 @@ payment_conversation = ConversationHandler(
     entry_points=[
         # Main menu buttons
         CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'),
+        # Retry auto verification
+        CallbackQueryHandler(payment_verify_crypto_handler, pattern='^verify_crypto_payment$'),
+        # Manual TX hash submission (after restarts/end)
+        CallbackQueryHandler(ask_for_tx_hash_handler, pattern='^payment_send_tx$'),
         CallbackQueryHandler(start_subscription_flow, pattern='^products_menu(?:_\\d+)?$'),
         CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
         # Direct plan buttons (e.g., from reminder messages)
@@ -2146,6 +2362,7 @@ payment_conversation = ConversationHandler(
         ],
         VERIFY_PAYMENT: [
             CallbackQueryHandler(verify_payment_status, pattern='^payment_verify$'),
+            CallbackQueryHandler(payment_verify_crypto_handler, pattern='^verify_crypto_payment$'),
             CallbackQueryHandler(ask_for_tx_hash_handler, pattern='^payment_send_tx$'),
             CallbackQueryHandler(payment_verify_zarinpal_handler, pattern=f'^{VERIFY_ZARINPAL_PAYMENT_CALLBACK}$'),
             CallbackQueryHandler(back_to_payment_methods_handler, pattern='^back_to_payment_methods$'),

@@ -20,13 +20,36 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
     if is_registered:
         # Free Package
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE))
+        # ------------------------------
+        # Promotional / AltSeason rows
+        # ------------------------------
+        special_buttons_row = []
+        promo_button = None
+        altseason_button = None
+
+        # Promotional category button
+        try:
+            from utils.promotional_category_utils import get_promotional_category_button
+            promo_button = get_promotional_category_button()
+        except Exception as e:
+            logger.error(f"Unable to get promotional category button: {e}")
+
         # AltSeason feature button
         try:
             from database.altseason_queries import AltSeasonQueries
             if AltSeasonQueries().is_enabled():
-                keyboard_buttons.insert(0, [KeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON)])
+                altseason_button = KeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON)
         except Exception as e:
             logger.error(f"Unable to add AltSeason button: {e}")
+
+        # Insert rows in order: promotional first, then AltSeason
+        if promo_button:
+            keyboard_buttons.insert(0, [promo_button])
+        if altseason_button:
+            keyboard_buttons.insert(1 if promo_button else 0, [altseason_button])
+        altseason_button = None
+        
+
         # Queue position conditional
         if user_id is not None:
             try:
@@ -83,13 +106,36 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
     if is_registered:
         # Free Package
         row1.append(KeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE))
+        # ------------------------------
+        # Promotional / AltSeason rows
+        # ------------------------------
+        special_buttons_row = []
+        promo_button = None
+        altseason_button = None
+
+        # Promotional category button
+        try:
+            from utils.promotional_category_utils import get_promotional_category_button
+            promo_button = get_promotional_category_button()
+        except Exception as e:
+            logger.error(f"Unable to get promotional category button: {e}")
+
         # AltSeason feature button
         try:
             from database.altseason_queries import AltSeasonQueries
             if AltSeasonQueries().is_enabled():
-                keyboard_buttons.insert(0, [KeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON)])
+                altseason_button = KeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON)
         except Exception as e:
             logger.error(f"Unable to add AltSeason button: {e}")
+
+        # Insert rows in order: promotional first, then AltSeason
+        if promo_button:
+            keyboard_buttons.insert(0, [promo_button])
+        if altseason_button:
+            keyboard_buttons.insert(1 if promo_button else 0, [altseason_button])
+        altseason_button = None
+        
+
         # Queue position conditional
         if user_id is not None:
             try:
@@ -131,7 +177,14 @@ def get_main_menu_keyboard(user_id=None, is_admin=False, is_registered=False):
             InlineKeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION, callback_data="start_subscription_flow"),
             InlineKeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow"),
             # AltSeason inline button if feature enabled
-            *( [InlineKeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON, callback_data="altseason_flow")] if __import__('database.altseason_queries', fromlist=['AltSeasonQueries']).AltSeasonQueries().is_enabled() else [] ), InlineKeyboardButton("📊 جایگاه صف رایگان", callback_data="freepkg_queue_pos")
+            *( [InlineKeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON, callback_data="altseason_flow")] if __import__('database.altseason_queries', fromlist=['AltSeasonQueries']).AltSeasonQueries().is_enabled() else [] ),
+            *( [InlineKeyboardButton(promo_text, callback_data=f"products_menu_{promo_cat}")] if (lambda: (
+                (promo_status := __import__('handlers.admin_promotional_category', fromlist=['PromotionalCategoryManager']).PromotionalCategoryManager.get_promotional_category_status()),
+                promo_text := promo_status.get('button_text'),
+                promo_cat := promo_status.get('category_id'),
+                promo_status.get('enabled') and promo_text and promo_cat
+            )[3])() else [] ),
+            InlineKeyboardButton("📊 جایگاه صف رایگان", callback_data="freepkg_queue_pos")
         ])
     else:
         keyboard_buttons.append([InlineKeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION, callback_data="start_registration_flow")])
@@ -485,7 +538,14 @@ def get_back_to_ask_discount_keyboard():
             InlineKeyboardButton(constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION, callback_data="start_subscription_flow"),
             InlineKeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow"),
             # AltSeason inline button if feature enabled
-            *( [InlineKeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON, callback_data="altseason_flow")] if __import__('database.altseason_queries', fromlist=['AltSeasonQueries']).AltSeasonQueries().is_enabled() else [] ), InlineKeyboardButton("📊 جایگاه صف رایگان", callback_data="freepkg_queue_pos")
+            *( [InlineKeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON, callback_data="altseason_flow")] if __import__('database.altseason_queries', fromlist=['AltSeasonQueries']).AltSeasonQueries().is_enabled() else [] ),
+            *( [InlineKeyboardButton(promo_text, callback_data=f"products_menu_{promo_cat}")] if (lambda: (
+                (promo_status := __import__('handlers.admin_promotional_category', fromlist=['PromotionalCategoryManager']).PromotionalCategoryManager.get_promotional_category_status()),
+                promo_text := promo_status.get('button_text'),
+                promo_cat := promo_status.get('category_id'),
+                promo_status.get('enabled') and promo_text and promo_cat
+            )[3])() else [] ),
+            InlineKeyboardButton("📊 جایگاه صف رایگان", callback_data="freepkg_queue_pos")
         ])
     else:
         keyboard_buttons.append([InlineKeyboardButton(constants.TEXT_MAIN_MENU_REGISTRATION, callback_data="start_registration_flow")])

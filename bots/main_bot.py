@@ -86,6 +86,7 @@ from telegram.ext import (
     PicklePersistence  # Added for application persistence
 )
 from telegram.request import HTTPXRequest
+from utils.text_utils import buttonize_markdown
 import config
 from database.queries import DatabaseQueries as Database
 from database.models import Database as DBConnection
@@ -102,6 +103,7 @@ from handlers.free_package.free_package_handlers import free_packages_menu, star
 from handlers.video_access_handlers import video_access_handler
 from handlers.altseason_handler import AltSeasonHandler
 from handlers.user_survey_handlers import user_survey_handler
+
 from utils.constants.all_constants import (
     CALLBACK_BACK_TO_MAIN_MENU,
     TEXT_MAIN_MENU_STATUS,
@@ -416,8 +418,18 @@ class MainBot:
         self.setup_handlers()
         # Schedule background jobs (e.g., Free Package validation)
         from tasks.free_package_tasks import schedule_tasks
+
         schedule_tasks(self.application)
+
         
+        # Schedule daily crypto report for admins
+        from tasks.crypto_reports import send_daily_crypto_report_job
+        self.application.job_queue.run_daily(
+            send_daily_crypto_report_job,
+            time=datetime.strptime("10:00", "%H:%M").time().replace(tzinfo=ZoneInfo("Asia/Tehran")),
+            name="daily_crypto_report",
+        )
+
         # Schedule expiration reminder task
         self.logger.info("Scheduling daily expiration reminder job at 10:00 Asia/Tehran")
         self.application.job_queue.run_daily(
@@ -454,6 +466,10 @@ class MainBot:
         self.altseason_handler = AltSeasonHandler()
         for h in self.altseason_handler.get_handlers():
             self.application.add_handler(h, group=0)
+        # Promotional category button handler (reply button)
+        from handlers.promotional_category_integration import get_promotional_category_handler
+        self.application.add_handler(get_promotional_category_handler(), group=0)
+
         # Free Package conversation handler
         self.application.add_handler(get_free_package_conv_handler(), group=0)
         # Queue position (inline and text)
@@ -494,6 +510,8 @@ class MainBot:
 
         # Handler for showing USDT QR code
         self.application.add_handler(CallbackQueryHandler(show_qr_code_handler, pattern=r'^show_qr_code_'))
+        from handlers.payment.crypto_retry_handler import retry_crypto_payment_check
+        self.application.add_handler(CallbackQueryHandler(retry_crypto_payment_check, pattern=r'^crypto_retry:'))
 
         # Generic handler for 'back_to_main' callback (e.g., from support menu)
         self.application.add_handler(CallbackQueryHandler(handle_back_to_main, pattern=r"^back_to_main$"))
@@ -633,6 +651,16 @@ class MainBot:
         ))
 
 
+        # Admin crypto entry command
+        from handlers.admin_crypto_entry import admin_crypto_entry_handler
+        self.application.add_handler(admin_crypto_entry_handler)
+        self.logger.info("CRITICAL_LOG: Admin crypto entry command has been set up.")
+        
+        # Admin crypto keyboard handler (high priority group 0)
+        from handlers.admin_crypto_keyboard import admin_crypto_keyboard_handler
+        self.application.add_handler(admin_crypto_keyboard_handler, group=0)
+        self.logger.info("CRITICAL_LOG: Admin crypto keyboard handler has been set up.")
+        
         self.application.add_handler(TypeHandler(Update, log_all_updates), group=100) # High group number means lower priority
         self.logger.info("CRITICAL_LOG: Generic TypeHandler (log_all_updates) has been set up in group 100.")
 
@@ -754,7 +782,7 @@ class MainBot:
                     if cat:
                         name = cat["name"] if isinstance(cat, dict) else cat[1]
                         keyboard.append([
-                            InlineKeyboardButton(f"🗂 {name}", callback_data=f"products_menu_{cat_id_int}")
+                            InlineKeyboardButton(f"🗂 {buttonize_markdown(name)}", callback_data=f"products_menu_{cat_id_int}")
                         ])
 
             # -------- Handle visible individual plans --------
@@ -767,7 +795,7 @@ class MainBot:
                 if plan and (plan.get("is_active") if isinstance(plan, dict) else plan[9]):
                     name = plan["name"] if isinstance(plan, dict) else plan[1]
                     keyboard.append([
-                        InlineKeyboardButton(name, callback_data=f"plan_{plan_id_int}")
+                        InlineKeyboardButton(buttonize_markdown(name), callback_data=f"plan_{plan_id_int}")
                     ])
 
             # Fallback – if no buttons configured, default to products menu

@@ -1014,6 +1014,22 @@ class ManagerBot:
         """Setup command, message, and callback query handlers."""
         application = self.application
 
+        # Admin crypto keyboard handler (highest priority group -1)
+        try:
+            from handlers.admin_crypto_keyboard import admin_crypto_keyboard_handler
+            application.add_handler(admin_crypto_keyboard_handler, group=-1)
+            self.logger.info("CRITICAL_LOG: Admin crypto keyboard handler added to manager bot with highest priority.")
+        except Exception as e:
+            self.logger.error(f"Failed to add crypto keyboard handler: {e}")
+
+        # Admin crypto entry handler
+        try:
+            from handlers.admin_crypto_entry import admin_crypto_entry_handler
+            application.add_handler(admin_crypto_entry_handler, group=-1)
+            self.logger.info("CRITICAL_LOG: Admin crypto entry handler added to manager bot.")
+        except Exception as e:
+            self.logger.error(f"Failed to add crypto entry handler: {e}")
+
         # Command Handlers for admin actions
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(CommandHandler("tickets", self.view_tickets_command))

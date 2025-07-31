@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 
 # States for Ban/Unban Conversation
 AWAIT_USER_ID_FOR_BAN, AWAIT_BAN_CHOICE = range(2)
+# State for awaiting new promo button text
+AWAIT_PROMO_TEXT = 1
 
 class AdminMenuHandler:
     """Show an interactive admin panel and dispatch to feature modules."""
@@ -75,10 +77,13 @@ class AdminMenuHandler:
             'stats': '📊 آمار کلی',
             'settings': '⚙️ تنظیمات',
             'export_subs': '📤 خروجی مشترکین',
+            'promo_category': '🎯 دکمه تبلیغاتی',
+            'crypto': '💰 پنل کریپتو',
             'back_to_main': '🔙 بازگشت به منوی اصلی',
         }
 
         self.admin_buttons_map = {
+            self.button_texts['crypto']: self._crypto_panel_entry,
             self.button_texts['users']: self._users_submenu,
             self.button_texts['products']: self._products_submenu,
             self.button_texts['tickets']: self._tickets_submenu,
@@ -87,6 +92,7 @@ class AdminMenuHandler:
             self.button_texts['stats']: self._show_stats_handler,
             self.button_texts['settings']: self._settings_submenu,
             self.button_texts['export_subs']: self._export_subs_entry,
+            self.button_texts['promo_category']: self._promo_category_entry,
             self.button_texts['back_to_main']: self.show_admin_menu,
         }
 
@@ -94,6 +100,10 @@ class AdminMenuHandler:
     async def route_admin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Routes admin commands from ReplyKeyboardMarkup clicks."""
         from utils.locale_utils import fa_to_en_digits  # localized digit support
+        # If crypto panel conversation is active for this user, ignore further admin menu routing
+        if context.user_data.get('crypto_active'):
+            return
+
         command_text = fa_to_en_digits(update.message.text)
         user_id = update.effective_user.id if update.effective_user else None
         is_admin_flag = user_id is not None and is_user_in_admin_list(user_id, self.admin_config)
@@ -134,6 +144,52 @@ class AdminMenuHandler:
         from types import SimpleNamespace
         dummy_update = SimpleNamespace(callback_query=query)
         await self.export_handler.entry(dummy_update, None)
+
+    async def _crypto_panel_entry(self, query):
+        """Entry point for the crypto admin keyboard panel (reply keyboard version)."""
+        from handlers.admin_crypto_keyboard import AdminCryptoKeyboard
+        from types import SimpleNamespace
+
+        # Acknowledge (dummy for ReplyKeyboard)
+        if hasattr(query, 'answer'):
+            await query.answer()
+
+        # Send welcome message and attach the keyboard
+        welcome_message = (
+            "💰 <b>پنل مدیریت کریپتو</b>\n\n"
+            "لطفاً از گزینه‌های کیبورد زیر استفاده کنید."
+        )
+        msg = await query.message.reply_text(
+            welcome_message,
+            parse_mode="HTML",
+            reply_markup=AdminCryptoKeyboard.get_main_keyboard()
+        )
+
+        # Set crypto_active flag to prevent admin menu conflicts
+        from telegram.ext import ContextTypes
+        # Get context from query
+        if hasattr(query, 'context'):
+            context = query.context
+        else:
+            # Create minimal context if not available
+            context = ContextTypes.DEFAULT_TYPE()
+            context.user_data = {}
+        
+        # Set the crypto active flag
+        context.user_data['crypto_active'] = True
+        
+        # Start the conversation handler manually by crafting a dummy update.
+        dummy_update = SimpleNamespace(message=msg, effective_user=query.message.from_user)
+        from handlers.admin_crypto_keyboard import AdminCryptoKeyboard
+        await AdminCryptoKeyboard.start_admin_panel(dummy_update, context)
+
+    async def _promo_category_entry(self, query):
+        """Entry point for promotional category management"""
+        from handlers.admin_promotional_category import show_promotional_category_admin
+        from types import SimpleNamespace
+        # Create a dummy update object with callback_query
+        dummy_update = SimpleNamespace(callback_query=query)
+        await show_promotional_category_admin(dummy_update, None)
 
     async def _show_stats_handler(self, query):
         """
@@ -227,8 +283,8 @@ class AdminMenuHandler:
             keyboard = [
                 [InlineKeyboardButton("🎫 مدیریت تیکت‌ها", callback_data=self.TICKETS_MENU), InlineKeyboardButton("👥 مدیریت کاربران", callback_data=self.USERS_MENU)],
                 [InlineKeyboardButton("💳 مدیریت پرداخت‌ها", callback_data=self.PAYMENTS_MENU), InlineKeyboardButton("📦 مدیریت محصولات", callback_data=self.PRODUCTS_MENU)],
-                [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data="broadcast_custom"), InlineKeyboardButton("📤 خروجی مشترکین", callback_data=self.EXPORT_SUBS_MENU)],
-                [InlineKeyboardButton("⚙️ تنظیمات", callback_data=self.SETTINGS_MENU)],
+                [InlineKeyboardButton("💰 پنل کریپتو", callback_data="crypto_panel"), InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data="broadcast_custom")],
+                [InlineKeyboardButton("📤 خروجی مشترکین", callback_data=self.EXPORT_SUBS_MENU), InlineKeyboardButton("⚙️ تنظیمات", callback_data=self.SETTINGS_MENU)],
             ]
         else:
             keyboard = [
@@ -276,6 +332,8 @@ class AdminMenuHandler:
             await self.export_handler.entry(update, context)
         elif data.startswith("exp_prod_"):
             await self.export_handler.handle_product(update, context)
+        elif data == "crypto_panel":
+            await self._crypto_panel_entry(query, context)
 
         elif data == self.BROADCAST_MENU:
             await self._broadcast_submenu(query)
@@ -429,6 +487,12 @@ class AdminMenuHandler:
              context.user_data["awaiting_support_user_id"] = True
         elif data == self.SUPPORT_LIST:
             await self._show_support_users(query)
+        elif data == "settings_toggle_discount_step":
+            current = DatabaseQueries.get_setting("enable_discount_code_step", "1")
+            new_value = "0" if current == "1" else "1"
+            DatabaseQueries.set_setting("enable_discount_code_step", new_value)
+            await query.answer("به‌روزرسانی شد")
+            await self._settings_submenu(query)
         elif data == "settings_misc":
             await self._settings_misc_submenu(query)
         elif data == "settings_toggle_maintenance":
@@ -749,9 +813,14 @@ class AdminMenuHandler:
             await query.answer("خطا در حذف", show_alert=True)
 
     async def _settings_submenu(self, query):
+        # Determine current status of discount code step
+        discount_step_enabled = DatabaseQueries.get_setting("enable_discount_code_step", "1") == "1"
+        discount_toggle_text = ("🏷️ مرحله کد تخفیف : ✅" if discount_step_enabled else "🏷️ مرحله کد تخفیف : ❌")
+
         keyboard = [
             [InlineKeyboardButton("🔐 مدیران", callback_data="settings_admins"), InlineKeyboardButton("👥 مدیریت پشتیبان‌ها", callback_data=self.SUPPORT_MENU)],
             [InlineKeyboardButton("🔘 دکمه‌های تمدید", callback_data="settings_renew_buttons"), InlineKeyboardButton("💸 مدیریت کدهای تخفیف", callback_data="discounts_menu")],
+            [InlineKeyboardButton(discount_toggle_text, callback_data="settings_toggle_discount_step"), InlineKeyboardButton("🎯 دکمه تبلیغاتی", callback_data="promo_category_admin")],
             [InlineKeyboardButton("💾 بکاپ JSON دیتابیس", callback_data=self.BACKUP_CALLBACK), InlineKeyboardButton("📊 بکاپ Excel دیتابیس", callback_data=self.BACKUP_XLSX_CALLBACK)],
             [InlineKeyboardButton("⚙️ سایر تنظیمات", callback_data="settings_misc")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
@@ -1236,6 +1305,11 @@ class AdminMenuHandler:
     @admin_only
     async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle dynamic admin inputs based on flow flags (broadcast, user search)."""
+        # If crypto panel conversation is active for this user, ignore further admin menu handling
+        if context.user_data.get('crypto_active'):
+            logger.info("Admin message_handler: crypto_active=True, ignoring message")
+            return
+
         # Short-circuit if admin is replying to a ticket (set by AdminTicketHandler.manual_answer_callback or edit_answer_callback)
         if context.user_data.get("editing_ticket_id") is not None:
             from .admin_ticket_handlers import AdminTicketHandler  # Local import to avoid circular deps
@@ -2237,21 +2311,6 @@ class AdminMenuHandler:
             per_chat=True,
         )
         handlers.append(check_sub_conv_handler)
-
-        ban_unban_handler = ConversationHandler(
-            entry_points=[CallbackQueryHandler(self.ban_unban_start, pattern=f'^{self.BAN_UNBAN_USER}$')],
-            states={
-                AWAIT_USER_ID_FOR_BAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ban_unban_receive_user_id)],
-                AWAIT_BAN_CHOICE: [CallbackQueryHandler(self.ban_unban_set_status, pattern=r'^(ban|unban)_user_')]
-            },
-            fallbacks=[
-                CallbackQueryHandler(self.ban_unban_cancel, pattern='^cancel_ban_unban$'),
-                CommandHandler('cancel', self.ban_unban_cancel)
-                ],
-            map_to_parent={
-                ConversationHandler.END: self.MAIN_MENU_CALLBACK
-            }
-        )
         ban_unban_handler = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.ban_unban_start, pattern=f'^{self.BAN_UNBAN_USER}$')],
             states={
@@ -2285,15 +2344,139 @@ class AdminMenuHandler:
         )
         handlers.append(extend_all_conv_handler)
 
+    async def _crypto_panel_entry(self, query, context):
+        """Handle crypto panel entry from admin menu"""
+        await query.answer()
+        
+        # Import crypto keyboard
+        from handlers.admin_crypto_keyboard import AdminCryptoKeyboard
+        
+        # Create a proper update object for the conversation
+        # Send a message first that will be used for the keyboard
+        message = await query.edit_message_text(
+            "💰 **پنل مدیریت کریپتو**\n\n"
+            "خوش آمدید! لطفاً از دکمه‌های زیر استفاده کنید:",
+            parse_mode="Markdown"
+        )
+        
+        # Create a message update object 
+        fake_update = type('Update', (), {
+            'message': message,
+            'effective_user': query.from_user,
+            'callback_query': None
+        })
+        
+        # Start the crypto keyboard directly
+        return await AdminCryptoKeyboard.start_admin_panel(fake_update, context)
+
+    def get_handlers(self):
+        """Return telegram.ext handlers to register in the dispatcher."""
+        handlers = [
+            CommandHandler("admin", self.show_admin_menu),
+        ]
+
+        # Conversation handler for creating invite links
+        invite_link_conv_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.start_invite_link_creation, pattern=f"^{self.CREATE_INVITE_LINK}$")],
+            states={
+                self.GET_INVITE_LINK_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.create_and_send_invite_link)],
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel_invite_link_creation)],
+            per_user=True,
+            per_chat=True,
+        )
+        handlers.append(invite_link_conv_handler)
+
+        # Conversation handler for extending subscription duration
+        extend_sub_conv_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.start_extend_subscription, pattern=f'^{self.EXTEND_SUB_CALLBACK}$')],
+            states={
+                self.AWAIT_EXTEND_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_extend_user_id)],
+                self.AWAIT_EXTEND_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_extend_days)],
+            },
+            fallbacks=[CommandHandler('cancel', self.cancel_extend_subscription)],
+            per_user=True,
+            per_chat=True,
+        )
+        handlers.append(extend_sub_conv_handler)
+
+        # Conversation handler for checking subscription status
+        check_sub_conv_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.start_check_subscription, pattern=f'^{self.CHECK_SUB_STATUS}$')],
+            states={
+                self.AWAIT_CHECK_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_check_user_id)],
+            },
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)],
+            per_user=True,
+            per_chat=True,
+        )
+        handlers.append(check_sub_conv_handler)
+
+        # Conversation handler for ban/unban user
+        ban_unban_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.ban_unban_start, pattern=f'^{self.BAN_UNBAN_USER}$')],
+            states={
+                self.AWAIT_USER_ID_FOR_BAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ban_unban_receive_user_id)],
+                self.AWAIT_BAN_CHOICE: [CallbackQueryHandler(self.ban_unban_set_status, pattern=r'^(ban|unban)_user_')]
+            },
+            fallbacks=[
+                CallbackQueryHandler(self.ban_unban_cancel, pattern='^cancel_ban_unban$'),
+                CommandHandler('cancel', self.ban_unban_cancel)
+            ],
+        )
+        handlers.append(ban_unban_handler)
+
+        # Conversation handler for extend all subscriptions
+        extend_all_conv_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.start_extend_subscription_all, pattern=f'^{self.EXTEND_SUB_ALL_CALLBACK}$')],
+            states={
+                self.AWAIT_EXTEND_ALL_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_extend_all_days)],
+            },
+            fallbacks=[CommandHandler('cancel', self.cancel_extend_subscription_all)],
+        )
+        handlers.append(extend_all_conv_handler)
+
+        # Channel multi-select picker for broadcast with link
+        handlers.append(CallbackQueryHandler(self._broadcast_wl_picker_callback, pattern=r"^(chpick_.*|chpick_all|chpick_done)$"))
+
+        # ---- Renew buttons settings handlers ----
+        handlers.append(CallbackQueryHandler(self._settings_renew_buttons_submenu, pattern='^settings_renew_buttons$'))
+        handlers.append(CallbackQueryHandler(self._settings_renew_toggle_callback, pattern=r'^toggle_renew_(free|products)$'))
+        handlers.append(CallbackQueryHandler(self._settings_renew_toggle_callback, pattern=r'^toggle_renew_(cat|plan)_-?\d+$'))
+
         # ---- Support user management handlers ----
         handlers.extend(self.support_manager.get_handlers())
-
+        
         # ---- Export subscribers handlers ----
         handlers.append(CallbackQueryHandler(self.export_handler.entry, pattern=f'^{self.EXPORT_SUBS_MENU}$'))
         handlers.append(CallbackQueryHandler(self.export_handler.handle_product, pattern=r'^exp_prod_\d+$'))
 
         # This is the main handler for all other admin menu callbacks
         # Note: The invite link and ban/unban callbacks are handled by their respective ConversationHandlers.
-        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|bc_cat_|bc_plan_|bc_chan_|audience_|broadcast_continue$|broadcast_cancel$|settings_|products_|discounts_|view_discount_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_)"))
+        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|bc_cat_|bc_plan_|bc_chan_|audience_|broadcast_continue$|broadcast_cancel$|settings_|products_|discounts_|view_discount_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_|crypto_panel)"))
+
+        # ---- Promotional category handlers ----
+        from handlers.admin_promotional_category import (
+            show_promotional_category_admin, show_category_selection,
+            set_promotional_category_handler, toggle_promotional_category_handler,
+            prompt_promotional_change_text_handler, receive_new_promo_text_message
+        )
+        handlers.append(CallbackQueryHandler(show_promotional_category_admin, pattern="^promo_category_admin$"))
+        handlers.append(CallbackQueryHandler(show_category_selection, pattern="^promo_select_category$"))
+        handlers.append(CallbackQueryHandler(set_promotional_category_handler, pattern="^promo_set_category_\d+$"))
+        handlers.append(CallbackQueryHandler(toggle_promotional_category_handler, pattern="^promo_toggle$"))
+
+        # Conversation handler for changing promotional button text
+        promo_text_conv_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(prompt_promotional_change_text_handler, pattern="^promo_change_text$")],
+            states={
+                AWAIT_PROMO_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_promo_text_message)],
+            },
+            fallbacks=[CallbackQueryHandler(show_promotional_category_admin, pattern="^promo_category_admin$")],
+            per_user=True,
+            per_chat=True,
+        )
+        handlers.append(promo_text_conv_handler)
 
         return handlers
+

@@ -18,12 +18,12 @@ from datetime import datetime, timedelta
 from typing import Tuple, Optional, Dict
 from decimal import Decimal
 
-# Import our comprehensive payment system
-from services.comprehensive_payment_system import (
-    get_payment_system,
+# Import our new advanced TRON service
+from services.advanced_tron_service import (
+    get_tron_service, 
     verify_payment_by_tx_hash,
     search_automatic_payments,
-    PaymentStatus as VerificationStatus
+    VerificationStatus
 )
 from database.models import Database
 import config
@@ -264,7 +264,7 @@ class EnhancedCryptoService:
             }
 
     @staticmethod
-    async def get_payment_statistics(days: int = 30) -> Dict:
+    def get_payment_statistics(days: int = 30) -> Dict:
         """
         📊 Get payment statistics for the last N days (enhanced with tronpy data)
         """
@@ -274,16 +274,9 @@ class EnhancedCryptoService:
             db = Database.get_instance()
             cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
             
-            # Get comprehensive payment system stats
-            payment_system = get_payment_system()
-            system_health = await payment_system.get_system_health()
-            security_stats = payment_system.get_security_stats()
-            
-            # Combine stats
-            tron_stats = {
-                **system_health,
-                **security_stats
-            }
+            # Get tronpy service stats
+            tron_service = get_tron_service()
+            tron_stats = tron_service.get_verification_stats()
             
             # Base statistics structure
             stats = {
@@ -345,9 +338,9 @@ class EnhancedCryptoService:
             return {"error": str(e)}
 
     @staticmethod
-    async def create_payment_report(days: int = 30) -> str:
+    def create_payment_report(days: int = 30) -> str:
         """📋 Create comprehensive payment report for admins"""
-        stats = await EnhancedCryptoService.get_payment_statistics(days)
+        stats = EnhancedCryptoService.get_payment_statistics(days)
         
         if "error" in stats:
             return f"❌ Error generating report: {stats['error']}"
@@ -394,18 +387,21 @@ class EnhancedCryptoService:
 
     @staticmethod
     async def health_check() -> Dict:
-        """🏥 System health check for comprehensive payment system"""
+        """🏥 System health check for tronpy service"""
         try:
-            payment_system = get_payment_system()
+            tron_service = get_tron_service()
             
-            # Get system health
-            health_data = await payment_system.get_system_health()
-            security_stats = payment_system.get_security_stats()
+            # Test basic connectivity
+            wallet_balance = await tron_service.get_wallet_balance()
+            service_stats = tron_service.get_verification_stats()
             
-            health_data['security_stats'] = security_stats
-            health_data['tronpy_connected'] = health_data['status'] == 'healthy'
-            
-            return health_data
+            return {
+                'status': 'healthy',
+                'tronpy_connected': True,
+                'wallet_balance': float(wallet_balance),
+                'service_stats': service_stats,
+                'timestamp': datetime.now().isoformat()
+            }
             
         except Exception as e:
             logger.error(f"💥 Health check failed: {e}", exc_info=True)

@@ -1838,67 +1838,104 @@ class DatabaseQueries:
         return False
 
     @staticmethod
-    def create_crypto_payment_request(user_id: int, rial_amount: float, usdt_amount_requested: float = None, wallet_address: str = None, expires_at: datetime = None, description: str = "Crypto payment"):
-        """Creates a preliminary crypto payment request.
+    def create_crypto_payment_request(
+        user_id: int,
+        rial_amount: float,
+        usdt_amount_requested: float | None = None,
+        wallet_address: str | None = None,
+        expires_at: datetime | None = None,
+        description: str = "Crypto payment",
+    ):
+        """Create a new *pending* crypto payment request in `crypto_payments` table.
 
-        Args:
-            user_id: The ID of the user making the payment
-            rial_amount: Amount in Rials
-            usdt_amount_requested: Optional amount in USDT
-            wallet_address: Wallet address for the crypto payment
-            expires_at: When this payment request expires
-            description: Optional payment description
-
-        Returns:
-            Integer payment_id if successful, None otherwise
+        This wrapper keeps old callers intact while migrating the implementation
+        to the dedicated `crypto_payments` table managed by the `database.models`
+        module.  A UUID *payment_id* (TEXT) is generated and returned so the
+        calling code can later use it for look-ups and verifications.
         """
-        db = Database()
-        if db.connect():
-            now_iso = datetime.now().isoformat()
-            # Set default expiration to 24 hours if not provided
-            expires_at_iso = expires_at.isoformat() if expires_at else (datetime.now() + timedelta(hours=24)).isoformat()
-            
-            try:
-                # The multi-line string should not have extra indentation
-                db.execute(
-                    """INSERT INTO payments (user_id, amount, usdt_amount_requested, payment_method, status, description, wallet_address, expires_at, created_at, updated_at)
-                       VALUES (?, ?, ?, 'crypto', 'pending', ?, ?, ?, ?, ?)""",
-                    (user_id, rial_amount, usdt_amount_requested, description, wallet_address, expires_at_iso, now_iso, now_iso)
-                )
-                payment_id = db.cursor.lastrowid
-                db.commit()
-                return payment_id
-            except sqlite3.Error as e:
-                # Use the configured logger
-                config.logger.error(f"SQLite error in create_crypto_payment_request: {e}")
-                return None
-            finally:
-                db.close()
-        return None
-    
+        # We delegate the heavy-lifting to the Database singleton from
+        # `database.models` to avoid duplicating SQL and make sure that the record
+        # is created in **crypto_payments** (not in the legacy `payments` table).
+        try:
+            from database.models import Database as DBModel
+
+            db_instance = DBModel.get_instance()
+
+            if expires_at is None:
+                # fall back to 24 hours from now if no explicit expiry provided
+                expires_at = datetime.now() + timedelta(hours=24)
+
+            payment_id = db_instance.create_crypto_payment_request(
+                user_id=user_id,
+                rial_amount=rial_amount,
+                usdt_amount_requested=usdt_amount_requested or 0,
+                wallet_address=wallet_address or "",
+                expires_at=expires_at,
+            )
+            return payment_id
+        except Exception as exc:
+            logging.error(
+                "create_crypto_payment_request wrapper failure: %s", exc, exc_info=True
+            )
+            return None
+
     @staticmethod
-    def update_crypto_payment_request_with_amount(payment_request_id: int, usdt_amount: float):
+    def update_crypto_payment_request_with_amount(payment_request_id: str, usdt_amount: float) -> bool:
+        """Update requested USDT amount for a pending crypto payment."""
+        """Update the *requested* USDT amount for a pending crypto payment.
+
+        Works on the `crypto_payments` table. Returns *True* when exactly one row
+        was updated, otherwise *False*.
         """
-        Updates an existing crypto payment request with the calculated USDT amount.
-        Assumes 'payments' table has: usdt_amount_requested, updated_at, payment_id, payment_method.
-        """
-        db = Database()
-        if db.connect():
-            now_iso = datetime.now().isoformat()
-            try:
-                db.execute(
-                    "UPDATE payments SET usdt_amount_requested = ?, updated_at = ? WHERE payment_id = ? AND payment_method = 'crypto' AND status = 'pending'",
-                    (usdt_amount, now_iso, payment_request_id)
-                )
+        from database.models import Database as DBModel
+
+        db = DBModel.get_instance()
+        try:
+            query = (
+                "UPDATE crypto_payments "
+                "SET usdt_amount_requested = ?, updated_at = ? "
+                "WHERE payment_id = ? AND status = 'pending'"
+            )
+            params = (usdt_amount, datetime.now(), payment_request_id)
+            if db.execute(query, params):
                 db.commit()
-                # Check if any row was actually updated; rowcount might be 0 if no matching record or value is the same
-                return db.cursor.rowcount > 0 
-            except sqlite3.Error as e:
-                config.logger.error(f"SQLite error in update_crypto_payment_request_with_amount: {e}") # Use logger
-                return False
-            finally:
-                db.close()
+                return db.cursor.rowcount == 1
+        except Exception as exc:
+            logging.error(
+                "SQLite error in update_crypto_payment_request_with_amount: %s", exc
+            )
         return False
+
+    # -----------------------------------------------------------------------
+    #  Helper: detect duplicate unique amount
+    # -----------------------------------------------------------------------
+    @staticmethod
+    def crypto_payment_exists_with_amount(usdt_amount: float) -> bool:
+        """Check if a *pending* crypto payment already uses *usdt_amount*."""
+        from database.models import Database as DBModel
+        db = DBModel.get_instance()
+        try:
+            query = (
+                "SELECT 1 FROM crypto_payments "
+                "WHERE status = 'pending' AND ABS(usdt_amount_requested - ?) < 0.000001 "
+                "LIMIT 1"
+            )
+            if db.execute(query, (usdt_amount,)):
+                return db.fetchone() is not None
+        except Exception as exc:
+            logging.error("SQLite error in crypto_payment_exists_with_amount: %s", exc)
+        return False
+
+    @staticmethod
+    def update_crypto_payment_on_success(payment_id: str, transaction_id: str, usdt_amount_received: float, late: bool = False) -> bool:
+        """Wrapper delegating to the singleton Database implementation for compatibility."""
+        try:
+            from database.models import Database as DBModel
+            db_instance = DBModel.get_instance()
+            return db_instance.update_crypto_payment_on_success(payment_id, transaction_id, usdt_amount_received, late=late)
+        except Exception as exc:
+            logging.error("Error in update_crypto_payment_on_success wrapper: %s", exc, exc_info=True)
+            return False
 
     @staticmethod
     def update_payment_transaction_id(payment_id: int, transaction_id: str, status: str = "pending_verification"):
