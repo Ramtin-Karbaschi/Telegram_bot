@@ -3557,7 +3557,7 @@ class DatabaseQueries:
         db = Database()
         if db.connect():
             try:
-                query = "UPDATE discounts SET uses_count = uses_count + 1 WHERE id = ?"
+                query = "UPDATE discounts SET uses_count = COALESCE(uses_count, 0) + 1 WHERE id = ?"
                 if db.execute(query, (discount_id,)):
                     db.commit()
                     return True
