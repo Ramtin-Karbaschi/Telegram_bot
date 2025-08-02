@@ -1976,7 +1976,7 @@ class DatabaseQueries:
                 # Assuming 'transaction_id' stores the Zarinpal Authority and 'plan_id' column exists.
                 # Also assuming 'payments' table has 'payment_method' to distinguish zarinpal payments
                 db.execute(
-                    """SELECT p.payment_id, p.user_id, p.plan_id, p.amount, p.status
+                    """SELECT p.payment_id, p.user_id, p.plan_id, p.amount, p.status, p.discount_id
                        FROM payments p
                        WHERE p.transaction_id = ? AND p.payment_method = 'zarinpal'""",
                     (authority,)
@@ -2907,7 +2907,7 @@ class DatabaseQueries:
     
     # Payment-related queries
     @staticmethod
-    def add_payment(user_id, amount, payment_method, description=None, transaction_id=None, status="pending", plan_id=None, *, expires_at: datetime | None = None):
+    def add_payment(user_id, amount, payment_method, description=None, transaction_id=None, status="pending", plan_id=None, discount_id: int | None = None, *, expires_at: datetime | None = None):
         """Add a new payment record.
 
         Args:
@@ -2929,12 +2929,13 @@ class DatabaseQueries:
             # Use explicit column list for forward-compatibility.
             db.execute(
                 """INSERT INTO payments 
-                    (user_id, plan_id, amount, payment_date, payment_method, transaction_id, description, status, expires_at, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (user_id, plan_id, amount, discount_id, payment_date, payment_method, transaction_id, description, status, expires_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     user_id,
                     plan_id,
                     amount,
+                    discount_id,
                     now_iso,            # payment_date
                     payment_method,
                     transaction_id,

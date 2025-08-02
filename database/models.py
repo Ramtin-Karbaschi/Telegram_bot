@@ -283,13 +283,21 @@ class Database:
                 
                 print("✅ Auto verification logs table created")
 
-                # ---------------- Ensure manual_checks column in crypto_payments ----------------
-                cursor.execute("PRAGMA table_info(crypto_payments)")
-                cols = [row[1] for row in cursor.fetchall()]
-                if 'manual_checks' not in cols:
-                    print("🔧 Adding manual_checks column to crypto_payments…")
-                    cursor.execute("ALTER TABLE crypto_payments ADD COLUMN manual_checks INTEGER DEFAULT 0")
-                    print("✅ manual_checks column added")
+                # ---------------- Ensure discount_id column in payments ----------------
+            cursor.execute("PRAGMA table_info(payments)")
+            payment_cols = [row[1] for row in cursor.fetchall()]
+            if 'discount_id' not in payment_cols:
+                print("🔧 Adding discount_id column to payments…")
+                cursor.execute("ALTER TABLE payments ADD COLUMN discount_id INTEGER")
+                print("✅ discount_id column added")
+
+            # ---------------- Ensure manual_checks column in crypto_payments ----------------
+            cursor.execute("PRAGMA table_info(crypto_payments)")
+            cols = [row[1] for row in cursor.fetchall()]
+            if 'manual_checks' not in cols:
+                print("🔧 Adding manual_checks column to crypto_payments…")
+                cursor.execute("ALTER TABLE crypto_payments ADD COLUMN manual_checks INTEGER DEFAULT 0")
+                print("✅ manual_checks column added")
             
             # اضافه کردن تنظیمات پیشفرض
             default_settings = [

@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS payments (
     user_id INTEGER,
     plan_id INTEGER,            -- Added to link payment to a specific plan
     amount REAL,
+    discount_id INTEGER,
     payment_date TEXT,          -- Should be populated when payment is initiated or confirmed
     payment_method TEXT,        -- e.g., 'zarinpal', 'crypto_usdt_trc20'
     transaction_id TEXT,        -- Stores Zarinpal Authority or initial Crypto Tx Hash provided by user

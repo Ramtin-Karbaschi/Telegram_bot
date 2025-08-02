@@ -89,6 +89,10 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     payment_method='zarinpal'
                                 )
                                 if subscription_id:
+                                    # Increment discount usage count if a discount was applied
+                                    did = context.user_data.get('discount_id') if 'discount_id' in context.user_data else payment_details.get('discount_id')
+                                    if did:
+                                        DatabaseQueries.increment_discount_usage(did)
                                     await update.message.reply_text(ZARINPAL_PAYMENT_VERIFIED_SUCCESS_AND_SUB_ACTIVATED_MESSAGE_USER.format(ref_id=ref_id, plan_name=plan_info['name']))
                                 else:
                                     await update.message.reply_text(ZARINPAL_PAYMENT_VERIFIED_SUCCESS_SUB_ACTIVATION_FAILED_MESSAGE_USER.format(ref_id=ref_id))

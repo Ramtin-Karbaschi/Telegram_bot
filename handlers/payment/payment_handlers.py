@@ -949,16 +949,21 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         plan_price_irr = price_irr
 
         # Create a detailed description for the payment record in the database
+        discount_id_for_payment = context.user_data.get('discount_id')
         db_description = f"خرید محصولات {plan_name} (Plan ID: {plan_id}) توسط کاربر ID: {user_db_id}"
+        if discount_id_for_payment:
+            db_description += f" | discount_id:{discount_id_for_payment}"
 
+        # Record initial payment in database including any discount applied
         payment_db_id = Database.add_payment(
             user_id=user_db_id,
             plan_id=plan_id,  # Associate payment with the plan
             amount=plan_price_irr,  # Amount for the plan in IRR
-            payment_method='zarinpal', # Payment gateway used
-            description=db_description, # Detailed description for the payment
-            status='pending', # Initially pending
-            transaction_id=None # Will be updated later with Zarinpal's authority/ref_id
+            payment_method='zarinpal', 
+            description=db_description, 
+            status='pending', 
+            transaction_id=None,
+             discount_id=discount_id_for_payment 
         )
 
         if not payment_db_id:
@@ -1602,6 +1607,11 @@ async def payment_verify_zarinpal_handler(update: Update, context: ContextTypes.
                 context=context,
                 payment_table_id=payment_db_id
             )
+            # Increment discount usage via context or payment record fallback
+            did = context.user_data.get('discount_id') if 'discount_id' in context.user_data else current_payment_record.get('discount_id')
+            if did:
+                logger.info(f"[payment_verify_zarinpal_handler] Incrementing usage for discount ID {did} (source: {'context' if 'discount_id' in context.user_data else 'payment_record'}).")
+                Database.increment_discount_usage(did)
             success_message = PAYMENT_SUCCESS_MESSAGE.format(
                 plan_name=selected_plan_name,
                 expiry_date=activation_details.get('new_expiry_date_jalali', 'N/A')
@@ -2071,6 +2081,12 @@ async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
                     payment_table_id=payment_record["payment_id"]
                 )
 
+                # Increment discount usage if applicable
+                if activation_success and 'discount_id' in context.user_data:
+                    did = context.user_data.get('discount_id')
+                    logger.info(f"[receive_tx_hash_handler] Incrementing usage for discount ID {did}.")
+                    Database.increment_discount_usage(did)
+
                 # If activation succeeded and this is a one-time content plan, send the content now
                 if activation_success and plan_row and plan_row.get("plan_type") == "one_time_content":
                     from handlers.subscription.subscription_handlers import handle_post_subscription_flow
@@ -2252,7 +2268,23 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
             
             try:
                 # فعال‌سازی اشتراک
-                await activate_or_extend_subscription(telegram_id, plan_id, crypto_payment_id)
+                activation_success, _ = await activate_or_extend_subscription(
+                    user_id=telegram_id,
+                    telegram_id=telegram_id,
+                    plan_id=plan_id,
+                    plan_name=plan_row.get('name', 'N/A') if plan_row else 'N/A',
+                    payment_amount=amount,
+                    payment_method="crypto_auto",
+                    transaction_id=final_tx,
+                    context=context,
+                    payment_table_id=payment_record["payment_id"]
+                )
+
+                # Increment discount usage if applicable
+                if 'discount_id' in context.user_data:
+                    did = context.user_data.get('discount_id')
+                    logger.info(f"[payment_verify_crypto_handler] Incrementing usage for discount ID {did}.")
+                    Database.increment_discount_usage(did)
                 
                 success_message = (
                     "🎉 **پرداخت خودکار تایید شد!**\n\n"
