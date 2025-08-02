@@ -12,6 +12,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import logging
+import re
 from telegram.ext import MessageHandler, filters
 import html
 import json
@@ -583,22 +584,22 @@ class MainBot:
         
         # Text message handlers for menu items
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_SUPPORT}$"), support_message_handler
+            filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_SUPPORT)), support_message_handler
         ))
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_RULES}$"), rules_handler # Using constant
+            filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_RULES)), rules_handler # Using constant
         ))
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_EDIT_PROFILE}$"), start_profile_edit_conversation # Handler for Edit Profile button
+            filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_EDIT_PROFILE)), start_profile_edit_conversation # Handler for Edit Profile button
         ))
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_HELP}$"), help_handler # Handler for Help button
+            filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_HELP)), help_handler # Handler for Help button
         ))
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_FREE_PACKAGE}$"), start_free_package_flow_text
+            filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_FREE_PACKAGE)), start_free_package_flow_text
         ))
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_STATUS}$"), subscription_status_handler
+            filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_STATUS)), subscription_status_handler
         ))
         
         # Callback query handlers for subscription and support
