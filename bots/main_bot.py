@@ -584,23 +584,23 @@ class MainBot:
         
         # Text message handlers for menu items
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_SUPPORT)), support_message_handler
-        ))
+             filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_SUPPORT)), support_message_handler
+         ), group=-1)
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_RULES)), rules_handler # Using constant
-        ))
+             filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_RULES)), rules_handler # Using constant
+         ), group=-1)
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_EDIT_PROFILE)), start_profile_edit_conversation # Handler for Edit Profile button
-        ))
+             filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_EDIT_PROFILE)), start_profile_edit_conversation # Handler for Edit Profile button
+         ), group=-1)
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_HELP)), help_handler # Handler for Help button
-        ))
+             filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_HELP)), help_handler # Handler for Help button
+         ), group=-1)
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_FREE_PACKAGE)), start_free_package_flow_text
-        ))
+             filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_FREE_PACKAGE)), start_free_package_flow_text
+         ), group=-1)
         self.application.add_handler(MessageHandler(
-            filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_STATUS)), subscription_status_handler
-        ))
+             filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_STATUS)), subscription_status_handler
+         ), group=-1)
         
         # Callback query handlers for subscription and support
         self.application.add_handler(CallbackQueryHandler(
