@@ -596,7 +596,7 @@ class MainBot:
              filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_HELP)), help_handler # Handler for Help button
          ), group=-1)
         self.application.add_handler(MessageHandler(
-             filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_FREE_PACKAGE)), start_free_package_flow_text
+             filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_FREE_PACKAGE)), free_packages_menu
          ), group=-1)
         self.application.add_handler(MessageHandler(
              filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_STATUS)), subscription_status_handler
