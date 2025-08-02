@@ -1837,8 +1837,28 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
     elif discount_dict['type'] == 'fixed_amount':
         final_price -= discount_dict['value']
     
-    final_price = int(max(0, final_price)) # Ensure price doesn't go below zero and is an integer
+    final_price = int(max(0, final_price))  # Ensure price is non-negative integer
+
+    # ------------------------------------------------------------------
+    # Cache discounted price for later stages (payment selection, crypto)
+    # ------------------------------------------------------------------
     context.user_data['final_price'] = final_price
+    context.user_data['dynamic_irr_price'] = final_price  # IRR equivalent for crypto / logs
+
+    # Calculate and cache discounted USDT price so that the crypto flow
+    # shows the correct (discounted) amount instead of the original.
+    try:
+        rate = await get_usdt_to_irr_rate()
+    except Exception:
+        rate = None
+    if rate:
+        import math
+        discounted_usdt = math.ceil(final_price / (rate * 10))  # Rial→USDT
+        context.user_data['live_usdt_price'] = discounted_usdt
+    else:
+        # Fallback: clear previous cache to avoid stale value
+        context.user_data.pop('live_usdt_price', None)
+
     context.user_data['discount_id'] = discount_dict['id']
 
     # If price is zero after discount, activate subscription directly
