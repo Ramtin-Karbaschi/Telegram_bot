@@ -299,7 +299,7 @@ class AltSeasonHandler:
         if db.connect():
             try:
                 cur = db.conn.cursor()
-                # Fetch all active sub-categories under "🛒 VIP"
+                # Fetch all active sub-categories under "🛒 خدمات VIP"
                 cur.execute(
                     """
                     SELECT id, name FROM categories
@@ -321,7 +321,7 @@ class AltSeasonHandler:
                 if show_main_products or enabled_subcats:
                     if show_main_products:
                         keyboard.append([
-                            InlineKeyboardButton("🛒 VIP", callback_data="products_menu")
+                            InlineKeyboardButton("🛒 خدمات VIP", callback_data="products_menu")
                         ])
                     
                     # Add enabled subcategory buttons (max 2 per row)
@@ -338,7 +338,7 @@ class AltSeasonHandler:
                 # Fallback: show main products button if enabled
                 if settings.get('show_products_menu') == '1':
                     keyboard.append([
-                        InlineKeyboardButton("🛒 VIP", callback_data="products_menu")
+                        InlineKeyboardButton("🛒 خدمات VIP", callback_data="products_menu")
                     ])
             finally:
                 db.close()

@@ -58,7 +58,7 @@ TEXT_MAIN_MENU_HELP = "💡 راهنما"
 TEXT_MAIN_MENU_SUPPORT = "🤝🏻 پشتیبانی"
 TEXT_MAIN_MENU_RULES = "⚠ قوانین"
 TEXT_MAIN_MENU_EDIT_PROFILE = "👤 ویرایش پروفایل"
-TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🛒 VIP"
+TEXT_MAIN_MENU_BUY_SUBSCRIPTION = "🛒 خدمات VIP"
 TEXT_MAIN_MENU_FREE_PACKAGE = "🎁 خدمات رایگان"
 TEXT_MAIN_MENU_STATUS = "👤 پروفایل کاربری"
 TEXT_BACK_TO_MAIN_MENU = " بازگشت به منوی اصلی"

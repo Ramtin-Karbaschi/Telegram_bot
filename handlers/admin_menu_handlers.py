@@ -1307,8 +1307,8 @@ class AdminMenuHandler:
         """Handle dynamic admin inputs based on flow flags (broadcast, user search)."""
         # If crypto panel conversation is active for this user, ignore further admin menu handling
         if context.user_data.get('crypto_active'):
-            logger.info("Admin message_handler: crypto_active=True, ignoring message")
-            return
+            logger.info("Admin message_handler: crypto_active=True, passing to next handler")
+            return False
 
         # Short-circuit if admin is replying to a ticket (set by AdminTicketHandler.manual_answer_callback or edit_answer_callback)
         if context.user_data.get("editing_ticket_id") is not None:

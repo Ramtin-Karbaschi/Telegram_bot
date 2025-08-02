@@ -8,8 +8,8 @@ No commands required - all features accessible via keyboard buttons.
 
 import logging
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler, CommandHandler
 from telegram.constants import ParseMode
 
 from utils.admin_utils import admin_required
@@ -139,7 +139,7 @@ class AdminCryptoKeyboard:
             await update.message.reply_text(
                 "👋 از پنل ادمین خارج شدید.\n\n"
                 "برای بازگشت مجدد از دستور /admin_crypto استفاده کنید.",
-                reply_markup=None
+                reply_markup=ReplyKeyboardRemove()
             )
             return ConversationHandler.END
             
@@ -601,9 +601,9 @@ class AdminCryptoKeyboard:
     async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Cancel the conversation"""
         await update.message.reply_text(
-            "❌ عملیات لغو شد. پنل ادمین بسته شد.",
-            reply_markup=None
-        )
+             "❌ عملیات لغو شد. پنل ادمین بسته شد.",
+             reply_markup=ReplyKeyboardRemove()
+         )
         return ConversationHandler.END
 
 
@@ -616,6 +616,7 @@ async def start_crypto_panel_from_admin(update, context):
 admin_crypto_conversation = ConversationHandler(
     entry_points=[
         # Entry points for crypto keyboard panel
+        CallbackQueryHandler(AdminCryptoKeyboard.start_admin_panel, pattern=r"^crypto_panel$"),
         MessageHandler(filters.Regex("^/start_crypto_panel$") & filters.TEXT, AdminCryptoKeyboard.start_admin_panel),
         MessageHandler(filters.Regex("^🏥 وضعیت سیستم$") & filters.TEXT, AdminCryptoKeyboard.start_admin_panel),
         MessageHandler(filters.Regex("^📊 آمار پرداخت‌ها$") & filters.TEXT, AdminCryptoKeyboard.start_admin_panel),
@@ -639,8 +640,9 @@ admin_crypto_conversation = ConversationHandler(
         ]
     },
     fallbacks=[
-        MessageHandler(filters.Regex("^/cancel$"), AdminCryptoKeyboard.cancel_conversation)
-    ],
+         MessageHandler(filters.Regex("^/cancel$"), AdminCryptoKeyboard.cancel_conversation),
+         CommandHandler("start", AdminCryptoKeyboard.cancel_conversation)
+     ],
     per_message=False
 )
 
