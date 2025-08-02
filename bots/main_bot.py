@@ -91,11 +91,13 @@ import config
 from database.queries import DatabaseQueries as Database
 from database.models import Database as DBConnection
 from handlers.core import (
-    start_handler as core_start_handler, help_handler, menu_handler, rules_handler,
-    unknown_message_handler, handle_back_to_main,
-    registration_message_handler, # subscription_status_message_handler removed
-    support_message_handler
+     start_handler as core_start_handler, help_handler, menu_handler, rules_handler,
+     unknown_message_handler, handle_back_to_main,
+     registration_message_handler, # subscription_status_message_handler removed
+     support_message_handler
 )
+from handlers.profile_handlers import start_profile_edit_conversation
+from handlers.subscription.subscription_handlers import subscription_status_handler
 from services.zarinpal_service import ZarinpalPaymentService
 from database.queries import DatabaseQueries
 from handlers.subscription.subscription_handlers import activate_or_extend_subscription
@@ -109,9 +111,14 @@ from utils.constants.all_constants import (
     TEXT_MAIN_MENU_STATUS,
     ZARINPAL_PAYMENT_VERIFIED_SUCCESS_AND_SUB_ACTIVATED_MESSAGE_USER,
     ZARINPAL_PAYMENT_VERIFIED_SUCCESS_SUB_ACTIVATION_FAILED_MESSAGE_USER,
-    ZARINPAL_PAYMENT_VERIFIED_SUCCESS_PLAN_NOT_FOUND_MESSAGE_USER
+    ZARINPAL_PAYMENT_VERIFIED_SUCCESS_PLAN_NOT_FOUND_MESSAGE_USER,
+    TEXT_MAIN_MENU_SUPPORT,
+    TEXT_MAIN_MENU_HELP,
+    TEXT_MAIN_MENU_RULES,
+    TEXT_MAIN_MENU_EDIT_PROFILE,
+    TEXT_MAIN_MENU_FREE_PACKAGE,
+    ZARINPAL_VERIFY_SUCCESS_STATUS, ZARINPAL_ALREADY_VERIFIED_STATUS
 )
-from utils.constants.all_constants import ZARINPAL_VERIFY_SUCCESS_STATUS, ZARINPAL_ALREADY_VERIFIED_STATUS
 
 from telegram.ext import CommandHandler
 from telegram.constants import ParseMode
@@ -320,7 +327,7 @@ from utils.constants import (
     TEXT_MAIN_MENU_BUY_SUBSCRIPTION, # Added constant for buy subscription button
     # Assuming these constants exist or will be added for other menu items for consistency
     TEXT_MAIN_MENU_REGISTRATION,
-    TEXT_MAIN_MENU_SUPPORT, TEXT_MAIN_MENU_RULES, TEXT_MAIN_MENU_HELP
+    TEXT_MAIN_MENU_SUPPORT, TEXT_MAIN_MENU_RULES, TEXT_MAIN_MENU_HELP, TEXT_MAIN_MENU_FREE_PACKAGE
 )
 
 # Global function for logging all updates
@@ -586,6 +593,9 @@ class MainBot:
         ))
         self.application.add_handler(MessageHandler(
             filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_HELP}$"), help_handler # Handler for Help button
+        ))
+        self.application.add_handler(MessageHandler(
+            filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_FREE_PACKAGE}$"), start_free_package_flow_text
         ))
         self.application.add_handler(MessageHandler(
             filters.TEXT & filters.Regex(f"^{TEXT_MAIN_MENU_STATUS}$"), subscription_status_handler
