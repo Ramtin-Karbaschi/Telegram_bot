@@ -506,7 +506,7 @@ class MainBot:
 
         # ---------------- Payment conversation AFTER free package ----------------
         # Add the 'products' text button as an entry point to the conversation
-        payment_conversation.entry_points.append(MessageHandler(filters.TEXT & filters.Regex(r"^🛒 (?:محصولات|VIP)$"), start_subscription_flow))
+        payment_conversation.entry_points.append(MessageHandler(filters.TEXT & filters.Regex(r"^🛒 (?:محصولات|خدمات VIP)$"), start_subscription_flow))
         self.application.add_handler(payment_conversation, group=1)
 
         # Handler for back button from payment method selection to plan selection
