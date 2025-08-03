@@ -436,13 +436,17 @@ class MainBot:
         schedule_tasks(self.application)
 
         
-        # Schedule daily crypto report for admins
-        from tasks.crypto_reports import send_daily_crypto_report_job
-        self.application.job_queue.run_daily(
-            send_daily_crypto_report_job,
-            time=datetime.strptime("10:00", "%H:%M").time().replace(tzinfo=ZoneInfo("Asia/Tehran")),
-            name="daily_crypto_report",
-        )
+        # Schedule daily crypto report for admins only if explicitly enabled in config
+        if getattr(config, "ENABLE_DAILY_CRYPTO_REPORT", False):
+            from tasks.crypto_reports import send_daily_crypto_report_job
+            self.application.job_queue.run_daily(
+                send_daily_crypto_report_job,
+                time=datetime.strptime("10:00", "%H:%M").time().replace(tzinfo=ZoneInfo("Asia/Tehran")),
+                name="daily_crypto_report",
+            )
+            self.logger.info("Daily crypto report job scheduled at 10:00 Asia/Tehran")
+        else:
+            self.logger.info("Daily crypto report job NOT scheduled (disabled via config)")
 
         # Schedule expiration reminder task
         self.logger.info("Scheduling daily expiration reminder job at 10:00 Asia/Tehran")

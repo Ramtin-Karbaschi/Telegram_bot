@@ -168,15 +168,15 @@ if not USDT_TRC20_CONTRACT_ADDRESS:
     USDT_TRC20_CONTRACT_ADDRESS = "USDT_CONTRACT_NOT_SET_IN_ENV" 
     logger.error("CRITICAL: USDT_TRC20_CONTRACT_ADDRESS not set in .env. USDT payment processing will fail. Using placeholder: '%s'", USDT_TRC20_CONTRACT_ADDRESS)
 
-CRYPTO_PAYMENT_TIMEOUT_MINUTES_STR = os.getenv("CRYPTO_PAYMENT_TIMEOUT_MINUTES", "30")
+CRYPTO_PAYMENT_TIMEOUT_MINUTES_STR = os.getenv("CRYPTO_PAYMENT_TIMEOUT_MINUTES", "180")
 try:
     CRYPTO_PAYMENT_TIMEOUT_MINUTES = int(CRYPTO_PAYMENT_TIMEOUT_MINUTES_STR)
 except ValueError:
     logger.warning(
         f"Invalid value for CRYPTO_PAYMENT_TIMEOUT_MINUTES in .env: '{CRYPTO_PAYMENT_TIMEOUT_MINUTES_STR}'. "
-        f"Using default value: 30."
+        f"Using default value: 180."
     )
-    CRYPTO_PAYMENT_TIMEOUT_MINUTES = 30
+    CRYPTO_PAYMENT_TIMEOUT_MINUTES = 180
 
 
 # --- Conversation Timeouts ---

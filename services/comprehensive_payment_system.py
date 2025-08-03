@@ -618,7 +618,7 @@ class ComprehensivePaymentSystem:
             
             # محاسبه بازه زمانی
             payment_created = datetime.fromisoformat(payment_data.get('created_at', ''))
-            search_start = payment_created - timedelta(minutes=30)
+            search_start = payment_created - timedelta(minutes=config.CRYPTO_PAYMENT_TIMEOUT_MINUTES)
             search_end = payment_created + timedelta(hours=time_window_hours)
             
             # جستجوی تراکنش‌ها

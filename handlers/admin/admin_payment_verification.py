@@ -93,7 +93,13 @@ class AdminPaymentVerifier:
         # بررسی خودکار tx hash اگر وجود دارد
         auto_verify_result = ""
         if tx_hash and tx_hash != 'ندارد':
-            verified, actual_amount = CryptoPaymentService.verify_payment_by_hash(tx_hash, amount, wallet)
+            # Use new verification wrapper (async)
+            from services.comprehensive_payment_system import verify_payment_by_tx_hash
+            try:
+                verified, _verified_tx, actual_amount, _meta = await verify_payment_by_tx_hash(tx_hash, payment)
+            except Exception as verify_exc:
+                logger.error("Error during on-chain verification for %s: %s", payment_id, verify_exc, exc_info=True)
+                verified, actual_amount = False, 0.0
             if verified:
                 auto_verify_result = f"\n✅ **تایید خودکار:** تراکنش معتبر ({actual_amount:.6f} USDT)"
             else:

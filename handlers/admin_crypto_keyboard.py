@@ -31,7 +31,7 @@ class AdminCryptoKeyboard:
             [KeyboardButton("🏥 وضعیت سیستم"), KeyboardButton("📊 آمار پرداخت‌ها")],
             [KeyboardButton("🔒 امنیت سیستم"), KeyboardButton("📈 گزارش‌ها")],
             [KeyboardButton("💰 اطلاعات کیف پول"), KeyboardButton("🔍 تست TX دستی")],
-            [KeyboardButton("🚫 خروج از پنل ادمین")]
+            [KeyboardButton("✅ تایید پرداخت‌ها"), KeyboardButton("🚫 خروج از پنل ادمین")]
         ]
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
     
@@ -63,10 +63,28 @@ class AdminCryptoKeyboard:
         user = update.effective_user
         logger.info(f"👑 Admin {user.id} ({user.first_name}) started crypto admin panel")
         
+        # If a crypto admin conversation is already active, simply forward this
+        # update to the main-menu handler instead of restarting the panel.
+        if context.user_data.get('crypto_active'):
+            if getattr(update, 'message', None):
+                return await AdminCryptoKeyboard.handle_main_menu(update, context)
+            # For duplicate callback queries just acknowledge and stay in current state
+            if getattr(update, 'callback_query', None):
+                await update.callback_query.answer()
+                return MAIN_MENU
+        
         # Mark conversation active so admin menu handler ignores further messages
         context.user_data['crypto_active'] = True
 
-        await update.message.reply_text(
+        # Determine the correct target (either via CallbackQuery or Message)
+        query = getattr(update, "callback_query", None)
+        if query is not None:
+            await query.answer()
+            target_message = query.message
+        else:
+            target_message = update.message
+
+        await target_message.reply_text(
             "👑 **پنل مدیریت کریپتو** 👑\n\n"
             "به پنل مدیریت سیستم پرداخت USDT خوش آمدید!\n\n"
             "🔧 **امکانات در دسترس:**\n"
@@ -114,6 +132,12 @@ class AdminCryptoKeyboard:
             
         elif text == "💰 اطلاعات کیف پول":
             return await AdminCryptoKeyboard.show_wallet_info(update, context)
+            
+        elif text == "✅ تایید پرداخت‌ها":
+            # Show pending crypto payment list via AdminPaymentVerifier
+            from handlers.admin.admin_payment_verification import AdminPaymentVerifier
+            await AdminPaymentVerifier.show_pending_payments_menu(update, context)
+            return MAIN_MENU
             
         elif text == "🔍 تست TX دستی":
             await update.message.reply_text(
@@ -616,7 +640,7 @@ async def start_crypto_panel_from_admin(update, context):
 admin_crypto_conversation = ConversationHandler(
     entry_points=[
         # Entry points for crypto keyboard panel
-        CallbackQueryHandler(AdminCryptoKeyboard.start_admin_panel, pattern=r"^crypto_panel$"),
+
         MessageHandler(filters.Regex("^/start_crypto_panel$") & filters.TEXT, AdminCryptoKeyboard.start_admin_panel),
         MessageHandler(filters.Regex("^🏥 وضعیت سیستم$") & filters.TEXT, AdminCryptoKeyboard.start_admin_panel),
         MessageHandler(filters.Regex("^📊 آمار پرداخت‌ها$") & filters.TEXT, AdminCryptoKeyboard.start_admin_panel),

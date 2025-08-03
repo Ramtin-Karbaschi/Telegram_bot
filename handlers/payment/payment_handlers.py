@@ -385,9 +385,9 @@ async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYP
         irr_price = int(float(base_price))
         usdt_price = math.ceil(irr_price / (usdt_rate * 10))  # Convert to USDT and round up
     
-    # Store calculated prices with expiry time (30 minutes)
+    # Store calculated prices with expiry time (internal timeout)
     from datetime import datetime, timedelta
-    expiry_time = datetime.utcnow() + timedelta(minutes=30)
+    expiry_time = datetime.utcnow() + timedelta(minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES)
     context.user_data.update({
         'live_usdt_price': usdt_price,
         'live_irr_price': irr_price,
@@ -490,7 +490,7 @@ async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             irr_price = int(float(base_price))
             usdt_price = math.ceil(irr_price / (usdt_rate * 10)) if usdt_rate else 0
 
-        expiry_time = datetime.utcnow() + timedelta(minutes=30)
+        expiry_time = datetime.utcnow() + timedelta(minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES)
         context.user_data.update({
             "live_usdt_price": usdt_price,
             "live_irr_price": irr_price,
@@ -552,9 +552,9 @@ async def ask_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         irr_price = int(float(base_price))
         usdt_price = math.ceil(irr_price / (usdt_rate * 10))  # Convert to USDT and round up
     
-    # Store calculated prices with expiry time (30 minutes)
+    # Store calculated prices with expiry time (internal timeout)
     from datetime import datetime, timedelta
-    expiry_time = datetime.utcnow() + timedelta(minutes=30)
+    expiry_time = datetime.utcnow() + timedelta(minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES)
     context.user_data.update({
         'live_usdt_price': usdt_price,
         'live_irr_price': irr_price,
@@ -996,7 +996,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             payment_url = zarinpal_request.get('payment_url')
 
             # Set 30-minute expiry for this payment link
-            expires_at_dt = datetime.now() + timedelta(minutes=30)
+            expires_at_dt = datetime.now() + timedelta(minutes=CRYPTO_PAYMENT_TIMEOUT_MINUTES)
             Database.update_payment_expires_at(payment_db_id, expires_at_dt)
 
             # Immediately update the database with the authority code

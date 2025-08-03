@@ -1030,6 +1030,15 @@ class ManagerBot:
         except Exception as e:
             self.logger.error(f"Failed to add crypto entry handler: {e}")
 
+        # Admin manual crypto payment verification handlers
+        try:
+            from handlers.admin.admin_payment_verification import get_handlers as get_crypto_verification_handlers
+            for _h in get_crypto_verification_handlers():
+                application.add_handler(_h, group=5)  # group 5 similar to main bot
+            self.logger.info("CRITICAL_LOG: Admin crypto payment verification handlers added to manager bot.")
+        except Exception as e:
+            self.logger.error(f"Failed to add admin payment verification handlers: {e}")
+
         # Command Handlers for admin actions
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(CommandHandler("tickets", self.view_tickets_command))

@@ -424,7 +424,7 @@ class AdvancedTronService:
             
             # Calculate time window
             payment_created = datetime.fromisoformat(payment_request.get('created_at', '').replace('Z', '+00:00'))
-            search_start = payment_created - timedelta(minutes=30)  # 30 minutes before
+            search_start = payment_created - timedelta(minutes=config.CRYPTO_PAYMENT_TIMEOUT_MINUTES)
             search_end = payment_created + timedelta(hours=time_window_hours)
             
             # Get recent USDT transfers to our wallet

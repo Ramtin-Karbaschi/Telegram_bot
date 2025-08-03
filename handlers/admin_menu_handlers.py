@@ -154,34 +154,21 @@ class AdminMenuHandler:
         if hasattr(query, 'answer'):
             await query.answer()
 
-        # Send welcome message and attach the keyboard
-        welcome_message = (
-            "💰 <b>پنل مدیریت کریپتو</b>\n\n"
-            "لطفاً از گزینه‌های کیبورد زیر استفاده کنید."
-        )
-        msg = await query.message.reply_text(
-            welcome_message,
-            parse_mode="HTML",
-            reply_markup=AdminCryptoKeyboard.get_main_keyboard()
-        )
-
-        # Set crypto_active flag to prevent admin menu conflicts
+        # Ensure crypto_active flag so other admin handlers ignore messages
         from telegram.ext import ContextTypes
-        # Get context from query
         if hasattr(query, 'context'):
             context = query.context
         else:
-            # Create minimal context if not available
             context = ContextTypes.DEFAULT_TYPE()
             context.user_data = {}
-        
-        # Set the crypto active flag
         context.user_data['crypto_active'] = True
-        
-        # Start the conversation handler manually by crafting a dummy update.
-        dummy_update = SimpleNamespace(message=msg, effective_user=query.message.from_user)
+
+        # ارسال پیام خوش‌آمد و آغاز گفت‌وگو
+        from types import SimpleNamespace
         from handlers.admin_crypto_keyboard import AdminCryptoKeyboard
+        dummy_update = SimpleNamespace(callback_query=query)
         await AdminCryptoKeyboard.start_admin_panel(dummy_update, context)
+        return
 
     async def _promo_category_entry(self, query):
         """Entry point for promotional category management"""
