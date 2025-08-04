@@ -2242,8 +2242,10 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         await update.message.reply_text(f"⏳ در حال ایجاد لینک برای کاربر `{target_user_id}`...", parse_mode="Markdown")
 
         try:
-            # We need to use the new method name from the manager
+            # We need to use the new method name from the manager  
+            logger.info(f"DEBUG: Creating invite links for user {target_user_id}")
             links = await InviteLinkManager.ensure_one_time_links(context.bot, target_user_id)
+            logger.info(f"DEBUG: Links created successfully: {len(links) if links else 0} links")
 
             if not links:
                 await admin_user.send_message(
@@ -2256,7 +2258,8 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             # Send links to the target user
             link_message = "سلام! لینک‌های دعوت شما برای عضویت در کانال‌ها آماده شد:\n\n" + "\n".join(links)
             try:
-                await context.bot.send_message(chat_id=target_user_id, text=link_message)
+                # Send without parse_mode to avoid entity parsing issues
+                await context.bot.send_message(chat_id=target_user_id, text=link_message, parse_mode=None)
 
                 # Confirm to admin
                 await admin_user.send_message(
@@ -2264,35 +2267,61 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
                     parse_mode="Markdown"
                 )
             except Exception as e:
-                from telegram.error import BadRequest, Forbidden
+                from telegram.error import BadRequest, Forbidden, TelegramError
                 
-                # Specific error handling for common Telegram errors
-                if isinstance(e, BadRequest) and "Chat not found" in str(e):
-                    error_msg = (
-                        f"❌ **کاربر `{target_user_id}` یافت نشد**\n\n"
-                        "**دلایل احتمالی:**\n"
-                        "• کاربر بات را بلاک کرده\n"
-                        "• کاربر اکانت خود را حذف کرده\n"
-                        "• کاربر هنوز با بات چت شروع نکرده (/start نزده)\n\n"
-                        "**راه‌حل:** از کاربر بخواهید ابتدا `/start` را در بات بزند.\n\n"
-                        "**لینک‌های ایجاد شده:**\n" + "\n".join(links)
-                    )
-                elif isinstance(e, Forbidden):
-                    error_msg = (
-                        f"🚫 **کاربر `{target_user_id}` بات را بلاک کرده**\n\n"
-                        "از کاربر بخواهید بات را unblock کرده و `/start` بزند.\n\n"
-                        "**لینک‌های ایجاد شده:**\n" + "\n".join(links)
-                    )
+                # More specific error handling for Telegram errors
+                error_str = str(e).lower()
+                
+                if isinstance(e, Forbidden):
+                    if "bot was blocked by the user" in error_str:
+                        error_msg = (
+                            f"🚫 **کاربر `{target_user_id}` بات را بلاک کرده**\n\n"
+                            "از کاربر بخواهید بات را unblock کرده و `/start` بزند.\n\n"
+                            "**لینک‌های ایجاد شده:**\n" + "\n".join(links)
+                        )
+                    else:
+                        error_msg = (
+                            f"🚫 **دسترسی محدود به کاربر `{target_user_id}`**\n\n"
+                            f"**دلیل:** {str(e)}\n\n"
+                            "**لینک‌های ایجاد شده:**\n" + "\n".join(links)
+                        )
+                elif isinstance(e, BadRequest):
+                    if "chat not found" in error_str:
+                        error_msg = (
+                            f"❌ **کاربر `{target_user_id}` یافت نشد**\n\n"
+                            "**دلایل احتمالی:**\n"
+                            "• کاربر اکانت خود را حذف کرده\n"
+                            "• کاربر هنوز با بات چت شروع نکرده (/start نزده)\n\n"
+                            "**راه‌حل:** از کاربر بخواهید ابتدا `/start` را در بات بزند.\n\n"
+                            "**لینک‌های ایجاد شده:**\n" + "\n".join(links)
+                        )
+                    elif "can't parse entities" in error_str:
+                        error_msg = (
+                            f"⚠️ **خطای قالب‌بندی پیام برای کاربر `{target_user_id}`**\n\n"
+                            "مشکل در قالب‌بندی متن پیام وجود دارد.\n\n"
+                            "**لینک‌های ایجاد شده:**\n" + "\n".join(links)
+                        )
+                    else:
+                        error_msg = (
+                            f"❌ **درخواست نامعتبر برای کاربر `{target_user_id}`**\n\n"
+                            f"**جزئیات:** {str(e)}\n\n"
+                            "**لینک‌های ایجاد شده:**\n" + "\n".join(links)
+                        )
                 else:
                     error_msg = (
-                        f"⚠️ **خطا در ارسال به کاربر `{target_user_id}`**\n\n"
-                        f"**جزئیات خطا:** `{str(e)}`\n\n"
+                        f"⚠️ **خطای غیرمنتظره در ارسال به کاربر `{target_user_id}`**\n\n"
+                        f"**نوع خطا:** {type(e).__name__}\n"
+                        f"**جزئیات:** {str(e)}\n\n"
                         "**لینک‌های ایجاد شده:**\n" + "\n".join(links)
                     )
                 
                 logger.error(f"Failed to send invite links to user {target_user_id}: {e}")
-                await admin_user.send_message(error_msg, parse_mode="Markdown"
-                )
+                try:
+                    await admin_user.send_message(error_msg, parse_mode="Markdown")
+                except Exception as parse_error:
+                    # Fallback: send without markdown if parse fails
+                    logger.warning(f"Markdown parse failed, sending plain text: {parse_error}")
+                    await admin_user.send_message(error_msg.replace("**", "").replace("*", ""))
 
         except Exception as e:
             logger.error(f"Error in ensure_one_time_links for user {target_user_id}: {e}", exc_info=True)
