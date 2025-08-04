@@ -537,8 +537,8 @@ class MainBot:
         
 
 
-        # Profile edit conversation handler
-        self.application.add_handler(get_profile_edit_conv_handler())
+        # Profile edit conversation handler (highest priority to avoid any conflicts)
+        self.application.add_handler(get_profile_edit_conv_handler(), group=-3)
         
         # Support conversation handler
         self.application.add_handler(ticket_conversation)
@@ -599,9 +599,10 @@ class MainBot:
         self.application.add_handler(MessageHandler(
              filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_RULES)), rules_handler # Using constant
          ), group=-1)
-        self.application.add_handler(MessageHandler(
-             filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_EDIT_PROFILE)), start_profile_edit_conversation # Handler for Edit Profile button
-         ), group=-1)
+        # Profile edit is handled by ConversationHandler, not a separate MessageHandler
+        # self.application.add_handler(MessageHandler(
+        #      filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_EDIT_PROFILE)), start_profile_edit_conversation
+        # ), group=-1)
         self.application.add_handler(MessageHandler(
              filters.TEXT & filters.Regex(re.escape(TEXT_MAIN_MENU_HELP)), help_handler # Handler for Help button
          ), group=-1)

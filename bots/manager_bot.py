@@ -626,6 +626,65 @@ class ManagerBot:
         await self.application.shutdown()
         self.logger.info("Manager Bot stopped")
 
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /start and /admin commands - show admin menu with proper keyboard update."""
+        user_id = update.effective_user.id
+        
+        # Check if user has any level of access
+        from utils.admin_utils import is_admin_user, is_mid_level_user, is_support_user
+        
+        if not (is_admin_user(user_id) or is_mid_level_user(user_id) or is_support_user(user_id)):
+            await update.message.reply_text(
+                "❌ شما دسترسی به پنل مدیریت ندارید.", 
+                parse_mode="Markdown"
+            )
+            return
+        
+        # Update the reply keyboard for all authorized users
+        from telegram import ReplyKeyboardMarkup, KeyboardButton
+        
+        # Create reply keyboard based on user permissions
+        keyboard_buttons = []
+        
+        # Add buttons based on user access level
+        if is_admin_user(user_id):
+            # Full admin gets all buttons
+            keyboard_buttons = [
+                [KeyboardButton("👥 مدیریت کاربران"), KeyboardButton("📦 مدیریت محصولات")],
+                [KeyboardButton("🎫 مدیریت تیکت‌ها"), KeyboardButton("💳 مدیریت پرداخت‌ها")],
+                [KeyboardButton("📢 ارسال پیام همگانی"), KeyboardButton("💰 پنل کریپتو")],
+                [KeyboardButton("📊 آمار کلی"), KeyboardButton("⚙️ تنظیمات")],
+                [KeyboardButton("📤 خروجی مشترکین"), KeyboardButton("🎯 دکمه تبلیغاتی")]
+            ]
+        elif is_mid_level_user(user_id):
+            # Mid-level users get limited access
+            keyboard_buttons = [
+                [KeyboardButton("🎫 مدیریت تیکت‌ها"), KeyboardButton("💳 مدیریت پرداخت‌ها")],
+                [KeyboardButton("📢 ارسال پیام همگانی")]
+            ]
+        elif is_support_user(user_id):
+            # Support users get minimal access
+            keyboard_buttons = [
+                [KeyboardButton("🎫 مدیریت تیکت‌ها"), KeyboardButton("💳 مدیریت پرداخت‌ها")]
+            ]
+        
+        # Create the reply keyboard
+        reply_keyboard = ReplyKeyboardMarkup(
+            keyboard_buttons, 
+            resize_keyboard=True, 
+            one_time_keyboard=False,
+            is_persistent=True
+        )
+        
+        # Send the admin menu message with updated keyboard
+        await self.menu_handler.show_admin_menu(update, context)
+        
+        # Also send a separate message to update the reply keyboard
+        await update.message.reply_text(
+            "🔄 کیبورد بروزرسانی شد.",
+            reply_markup=reply_keyboard
+        )
+
 
 
     # --- Command Handlers ---
@@ -1052,6 +1111,7 @@ class ManagerBot:
 
         # Command Handlers for admin actions
         application.add_handler(CommandHandler("start", self.start_command))
+        application.add_handler(CommandHandler("admin", self.start_command))  # Alias for start
         application.add_handler(CommandHandler("tickets", self.view_tickets_command))
         application.add_handler(CommandHandler("validate_now", self.validate_memberships_now_command))
         application.add_handler(CommandHandler("help", self.help_command))
@@ -1254,6 +1314,7 @@ def setup_handlers(self):
 
     # Command Handlers for admin actions
     application.add_handler(CommandHandler("start", self.start_command))
+    application.add_handler(CommandHandler("admin", self.start_command))  # Alias for start
     application.add_handler(CommandHandler("tickets", self.view_tickets_command))
     application.add_handler(CommandHandler("validate_now", self.validate_memberships_now_command))
     application.add_handler(CommandHandler("help", self.help_command))

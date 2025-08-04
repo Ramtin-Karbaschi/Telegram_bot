@@ -188,22 +188,27 @@ async def _handle_text_or_contact_input(update: Update, context: ContextTypes.DE
             new_value = transformed
 
     if is_valid_value_func and not is_valid_value_func(new_value):
+        logger.debug(f"Validation failed for field {field_key}, value: {new_value}")
         current_state_reply_markup = keyboards.get_edit_field_action_keyboard()
         if field_key == constants.EDIT_PHONE:
-            current_state_reply_markup, _ = keyboards.get_phone_edit_keyboard()
+            current_state_reply_markup = keyboards.get_phone_edit_keyboard()
 
         await message.reply_text(
             error_message or "مقدار وارد شده معتبر نیست. لطفاً دوباره تلاش کنید.",
             reply_markup=current_state_reply_markup
         )
+        logger.debug(f"Returning to same state {field_key} after validation failure")
         return field_key
 
+    logger.debug(f"Attempting to update field {field_key} with value: {new_value}")
     if await _update_profile_field(user_id, field_key, new_value, context):
+        logger.debug(f"Successfully updated field {field_key}")
         await message.reply_text(
             constants.PROFILE_EDIT_FIELD_SUCCESS.format(field_name=success_field_name_override or field_readable_name),
             reply_markup=ReplyKeyboardRemove()
         )
     else:
+        logger.error(f"Failed to update field {field_key}")
         await message.reply_text(f"خطایی در به‌روزرسانی {success_field_name_override or field_readable_name} رخ داد.", reply_markup=ReplyKeyboardRemove())
 
     await message.reply_text(
@@ -212,6 +217,7 @@ async def _handle_text_or_contact_input(update: Update, context: ContextTypes.DE
     )
     context.user_data.pop('editing_field_key', None)
     context.user_data.pop('editing_field_readable_name', None)
+    logger.debug(f"Returning to SELECT_FIELD_TO_EDIT state after processing {field_key}")
     return constants.SELECT_FIELD_TO_EDIT
 
 async def handle_fullname_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
