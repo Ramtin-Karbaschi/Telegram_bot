@@ -1598,7 +1598,7 @@ class DatabaseQueries:
                     SELECT payment_id AS id, user_id, amount AS amount_rial, 'rial' AS payment_type, payment_method, plan_id, status, created_at
                     FROM payments
                     UNION ALL
-                    SELECT crypto_payment_id AS id, user_id, rial_amount AS amount_rial, 'crypto' AS payment_type, 'crypto' AS payment_method, NULL as plan_id, status, created_at
+                    SELECT id AS id, user_id, rial_amount AS amount_rial, 'crypto' AS payment_type, 'crypto' AS payment_method, NULL as plan_id, status, created_at
                     FROM crypto_payments
                     ORDER BY created_at DESC
                     LIMIT ?
@@ -3869,6 +3869,234 @@ class DatabaseQueries:
             return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logging.error(f"Error getting videos for plan {plan_id}: {e}")
+            return []
+        finally:
+            db.close()
+
+    # ====================================================================
+    # Product Sales Report Methods
+    # ====================================================================
+    
+    @staticmethod
+    def get_plan_sales_count(plan_id=None, days=None):
+        """Get sales count for a specific plan within a time period.
+        
+        Args:
+            plan_id: The plan ID to filter by (if None, includes all plans)
+            days: Number of days back to look (if None, returns all time)
+            
+        Returns:
+            dict with sales data including count and revenue
+        """
+        db = Database()
+        if not db.connect():
+            return {'count': 0, 'revenue_irr': 0, 'revenue_usdt': 0}
+            
+        try:
+            cursor = db.conn.cursor()
+            
+            # Build the base query
+            base_query = """
+                SELECT COUNT(*) as count,
+                       SUM(COALESCE(p.amount, 0)) as revenue_irr,
+                       SUM(COALESCE(p.usdt_amount_requested, 0)) as revenue_usdt
+                FROM payments p
+                WHERE p.status IN ('paid', 'completed', 'successful', 'verified')
+            """
+            
+            params = []
+            
+            # Add plan filter if specified
+            if plan_id is not None:
+                base_query += " AND p.plan_id = ?"
+                params.append(plan_id)
+                
+            # Add time filter if specified
+            if days is not None:
+                base_query += " AND p.created_at >= datetime('now', '-{} days')".format(int(days))
+                
+            cursor.execute(base_query, params)
+            result = cursor.fetchone()
+            
+            if result:
+                return {
+                    'count': result[0] or 0,
+                    'revenue_irr': float(result[1] or 0),
+                    'revenue_usdt': float(result[2] or 0)
+                }
+            else:
+                return {'count': 0, 'revenue_irr': 0, 'revenue_usdt': 0}
+                
+        except Exception as e:
+            logging.error(f"Error getting plan sales count: {e}")
+            return {'count': 0, 'revenue_irr': 0, 'revenue_usdt': 0}
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_recent_plan_sales(plan_id=None, limit=10):
+        """Get recent sales for a specific plan.
+        
+        Args:
+            plan_id: The plan ID to filter by (if None, includes all plans)
+            limit: Maximum number of recent sales to return
+            
+        Returns:
+            list of recent sales with user info and timestamps
+        """
+        db = Database()
+        if not db.connect():
+            return []
+            
+        try:
+            cursor = db.conn.cursor()
+            
+            query = """
+                SELECT p.payment_id, p.user_id, p.amount, p.usdt_amount_requested,
+                       p.payment_method, p.created_at, u.full_name, u.username,
+                       pl.name as plan_name
+                FROM payments p
+                LEFT JOIN users u ON p.user_id = u.user_id
+                LEFT JOIN plans pl ON p.plan_id = pl.id
+                WHERE p.status IN ('paid', 'completed', 'successful', 'verified')
+            """
+            
+            params = []
+            
+            # Add plan filter if specified
+            if plan_id is not None:
+                query += " AND p.plan_id = ?"
+                params.append(plan_id)
+                
+            query += " ORDER BY p.created_at DESC LIMIT ?"
+            params.append(limit)
+            
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            
+            # Convert to list of dictionaries
+            sales = []
+            for row in results:
+                sales.append({
+                    'payment_id': row[0],
+                    'user_id': row[1],
+                    'amount_irr': float(row[2] or 0),
+                    'amount_usdt': float(row[3] or 0),
+                    'payment_method': row[4],
+                    'created_at': row[5],
+                    'user_name': row[6] or 'نامشخص',
+                    'username': row[7] or '',
+                    'plan_name': row[8] or 'نامشخص'
+                })
+                
+            return sales
+            
+        except Exception as e:
+            logging.error(f"Error getting recent plan sales: {e}")
+            return []
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_payment_method_breakdown(plan_id=None, days=None):
+        """Get breakdown of payment methods for plan sales.
+        
+        Args:
+            plan_id: The plan ID to filter by (if None, includes all plans)
+            days: Number of days back to look (if None, returns all time)
+            
+        Returns:
+            dict with payment method breakdown
+        """
+        db = Database()
+        if not db.connect():
+            return {'rial': 0, 'crypto': 0}
+            
+        try:
+            cursor = db.conn.cursor()
+            
+            query = """
+                SELECT p.payment_method, COUNT(*) as count
+                FROM payments p
+                WHERE p.status IN ('paid', 'completed', 'successful', 'verified')
+            """
+            
+            params = []
+            
+            # Add plan filter if specified
+            if plan_id is not None:
+                query += " AND p.plan_id = ?"
+                params.append(plan_id)
+                
+            # Add time filter if specified
+            if days is not None:
+                query += " AND p.created_at >= datetime('now', '-{} days')".format(int(days))
+                
+            query += " GROUP BY p.payment_method"
+            
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            
+            breakdown = {'rial': 0, 'crypto': 0}
+            for row in results:
+                method = row[0]
+                count = row[1]
+                if method in ['zarinpal', 'rial']:
+                    breakdown['rial'] += count
+                elif method in ['crypto', 'tether', 'usdt']:
+                    breakdown['crypto'] += count
+                    
+            return breakdown
+            
+        except Exception as e:
+            logging.error(f"Error getting payment method breakdown: {e}")
+            return {'rial': 0, 'crypto': 0}
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_all_plans_with_sales_data():
+        """Get all plans with basic sales data for product selection.
+        
+        Returns:
+            list of plans with sales count
+        """
+        db = Database()
+        if not db.connect():
+            return []
+            
+        try:
+            cursor = db.conn.cursor()
+            
+            query = """
+                SELECT p.id, p.name, p.description, p.price, p.price_tether,
+                       COUNT(pay.payment_id) as total_sales
+                FROM plans p
+                LEFT JOIN payments pay ON p.id = pay.plan_id 
+                    AND pay.status IN ('paid', 'completed', 'successful', 'verified')
+                WHERE p.is_active = 1
+                GROUP BY p.id, p.name, p.description, p.price, p.price_tether
+                ORDER BY p.display_order, p.name
+            """
+            
+            cursor.execute(query)
+            results = cursor.fetchall()
+            
+            plans = []
+            for row in results:
+                plans.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'description': row[2] or '',
+                    'price_irr': float(row[3] or 0),
+                    'price_usdt': float(row[4] or 0),
+                    'total_sales': row[5] or 0
+                })
+                
+            return plans
+            
+        except Exception as e:
+            logging.error(f"Error getting plans with sales data: {e}")
             return []
         finally:
             db.close()

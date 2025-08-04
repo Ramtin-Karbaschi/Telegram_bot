@@ -41,20 +41,35 @@ async def error_handler(update: object, context: "telegram.ext.CallbackContext")
     """Log Errors caused by Updates."""
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
 
-    # Collect traceback
-    tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
-    tb_string = "".join(tb_list)
+    # Handle JobLookupError gracefully (common ConversationHandler timeout issue)
+    if isinstance(context.error, Exception) and 'JobLookupError' in str(type(context.error)):
+        logger.warning(f"JobLookupError handled gracefully: {context.error}")
+        return  # Don't spam admins with these common timeout issues
 
-    # Prepare the message for the admin
-    update_str = update.to_dict() if isinstance(update, Update) else str(update)
+    # Collect essential error info (truncated to avoid message too long)
+    error_type = type(context.error).__name__
+    error_msg = str(context.error)[:500]  # Limit error message
+    
+    # Get limited traceback (last 5 lines)
+    tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+    tb_string = "\n".join(tb_list[-5:])  # Only last 5 lines
+    
+    # Prepare concise message for admin
+    user_id = getattr(update, 'effective_user', {}).id if hasattr(update, 'effective_user') and update.effective_user else 'Unknown'
+    chat_id = getattr(update, 'effective_chat', {}).id if hasattr(update, 'effective_chat') and update.effective_chat else 'Unknown'
+    
     message = (
-        f"An exception was raised while handling an update\n"
-        f"<pre>update = {html.escape(json.dumps(update_str, indent=2, ensure_ascii=False))}"
-        f"</pre>\n\n"
-        f"<pre>context.chat_data = {html.escape(str(context.chat_data))}</pre>\n\n"
-        f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n\n"
+        f"🚨 Bot Error Alert\n\n"
+        f"Error Type: {error_type}\n"
+        f"User ID: {user_id}\n"
+        f"Chat ID: {chat_id}\n\n"
+        f"Error: {html.escape(error_msg)}\n\n"
         f"<pre>{html.escape(tb_string)}</pre>"
     )
+    
+    # Ensure message is not too long (Telegram limit is 4096 chars)
+    if len(message) > 4000:
+        message = message[:3900] + "\n\n... (truncated)"
 
     # Send error message to all configured admin contacts for the main bot
     admin_contact_ids = getattr(config, 'MAIN_BOT_ERROR_CONTACT_IDS', [])

@@ -154,6 +154,9 @@ class ManagerBot:
         self.product_handler = AdminProductHandler(self.db_queries, admin_config=self.admin_config)
         self.menu_handler = AdminMenuHandler(self.db_queries, InviteLinkManager, admin_config=self.admin_config, main_bot_app=self.main_bot_app)
         
+        # Map reply keyboard buttons to their handler methods
+        self.admin_buttons_map = self.menu_handler.admin_buttons_map
+        
         # Add poll handler for survey creation
         from telegram.ext import MessageHandler, filters, CallbackQueryHandler
         self.application.add_handler(MessageHandler(

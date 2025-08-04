@@ -31,7 +31,7 @@ class AdminCryptoKeyboard:
             [KeyboardButton("🏥 وضعیت سیستم"), KeyboardButton("📊 آمار پرداخت‌ها")],
             [KeyboardButton("🔒 امنیت سیستم"), KeyboardButton("📈 گزارش‌ها")],
             [KeyboardButton("💰 اطلاعات کیف پول"), KeyboardButton("🔍 تست TX دستی")],
-            [KeyboardButton("✅ تایید پرداخت‌ها"), KeyboardButton("🚫 خروج از پنل ادمین")]
+            [KeyboardButton("✅ تایید پرداخت‌ها"), KeyboardButton("🔙 بازگشت")]
         ]
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
     
@@ -156,15 +156,25 @@ class AdminCryptoKeyboard:
             )
             return MANUAL_TX_INPUT
             
-        elif text == "🚫 خروج از پنل ادمین":
-            # Clear active flag
+        elif text == "🔙 بازگشت":
+            # Return to previous (Payments) menu
+            # Clear crypto_active flag so admin_menu_handlers no longer routes messages here
             context.user_data.pop('crypto_active', None)
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 
+            # Show payments submenu as inline keyboard
             await update.message.reply_text(
-                "👋 از پنل ادمین خارج شدید.\n\n"
-                "برای بازگشت مجدد از دستور /admin_crypto استفاده کنید.",
-                reply_markup=ReplyKeyboardRemove()
+                "💳 *مدیریت پرداخت‌ها*:\nچه کاری می‌خواهید انجام دهید؟",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💰 تراکنش‌های اخیر", callback_data="payments_recent"), InlineKeyboardButton("🔍 جستجوی پرداخت", callback_data="payments_search")],
+                    [InlineKeyboardButton("📤 خروجی مشترکین", callback_data="admin_export_subs"), InlineKeyboardButton("📈 آمار اشتراک‌ها", callback_data="payments_stats")],
+                    [InlineKeyboardButton("💰 پنل کریپتو", callback_data="crypto_panel")],
+                    [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back_main")],
+                ])
             )
+            # Remove reply keyboard (crypto panel)
+            await update.message.reply_text("↩️ بازگشت به منوی پرداخت‌ها.", reply_markup=ReplyKeyboardRemove())
             return ConversationHandler.END
             
         else:

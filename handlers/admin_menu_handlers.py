@@ -27,7 +27,8 @@ from utils.db_backup import export_database, export_database_excel
 
 from .admin_product_handlers import AdminProductHandler
 from .admin_support_handlers import SupportUserManager
-
+from .crypto_panel_methods import CryptoPanelMethods
+from .crypto_additional_methods import CryptoAdditionalMethods
 
 from database.queries import DatabaseQueries
 
@@ -38,7 +39,7 @@ AWAIT_USER_ID_FOR_BAN, AWAIT_BAN_CHOICE = range(2)
 # State for awaiting new promo button text
 AWAIT_PROMO_TEXT = 1
 
-class AdminMenuHandler:
+class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
     """Show an interactive admin panel and dispatch to feature modules."""
 
     def __init__(self, db_queries: DatabaseQueries, invite_link_manager=None, admin_config=None, main_bot_app=None):
@@ -199,47 +200,210 @@ class AdminMenuHandler:
 
     async def _show_stats_handler(self, query):
         """
-        Handles showing stats, designed to be called from a reply keyboard.
-        It uses query.message.reply_text instead of query.edit_message_text.
+        Display comprehensive and useful system statistics.
+        Designed to be called from a reply keyboard.
         """
         try:
-            stats = DatabaseQueries.get_subscription_stats()
-            if stats and stats.get('total_users', 0) > 0:
-                total_users = stats.get('total_users', 0)
-                active_subs = stats.get('active_subscribers', 0)
-                expired_subs = stats.get('expired_subscribers', 0)
-                revenue_usdt = stats.get('total_revenue_usdt', 0)
-                revenue_irr = stats.get('total_revenue_irr', 0)
+            from datetime import datetime, timedelta
+            import sqlite3
+            
+            # Get current datetime for calculations
+            now = datetime.now()
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            week_start = today_start - timedelta(days=7)
+            month_start = today_start - timedelta(days=30)
+            
+            # Gather comprehensive statistics
+            message_text = "📊 <b>آمار جامع سیستم</b>\n\n"
+            
+            # === User Statistics ===
+            try:
+                total_users = DatabaseQueries.get_total_users_count() or 0
+                active_users = DatabaseQueries.get_active_users_count() or 0
                 
-                # Calculate percentages
-                active_percent = (active_subs / total_users * 100) if total_users > 0 else 0
+                # Get today's new users (if method exists)
+                try:
+                    today_users = DatabaseQueries.get_users_count_since(today_start.isoformat()) or 0
+                except:
+                    today_users = 0
+                    
+                message_text += "👥 <b>آمار کاربران:</b>\n"
+                message_text += f"• کل کاربران: <code>{total_users:,}</code>\n"
+                message_text += f"• کاربران فعال: <code>{active_users:,}</code>\n"
+                if today_users > 0:
+                    message_text += f"• عضویت امروز: <code>{today_users:,}</code>\n"
+                if total_users > 0:
+                    activity_rate = (active_users / total_users * 100)
+                    message_text += f"• نرخ فعالیت: <code>{activity_rate:.1f}%</code>\n"
+                message_text += "\n"
+            except Exception as e:
+                logger.error(f"Error getting user stats: {e}")
+                message_text += "👥 <b>آمار کاربران:</b> خطا در دریافت اطلاعات\n\n"
+            
+            # === Subscription Statistics ===
+            try:
+                # Get all plans and their subscription counts
+                plans = DatabaseQueries.get_all_plans() or []
+                total_active_subs = 0
+                total_expired_subs = 0
+                plan_details = []
                 
-                message_text = (
-                    f"📊 <b>آمار کلی سیستم</b>\n\n"
-                    f"👥 <b>کاربران:</b>\n"
-                    f"• کل ثبت‌نام‌شده: <code>{total_users:,}</code>\n"
-                    f"• اشتراک فعال: <code>{active_subs:,}</code> ({active_percent:.1f}%)\n"
-                    f"• منقضی/غیرفعال: <code>{expired_subs:,}</code>\n\n"
-                    f"💰 <b>درآمد کل:</b>\n"
-                    f"• تتر (USDT): <code>{revenue_usdt:,.2f}</code>\n"
-                    f"• ریال (IRR): <code>{revenue_irr:,.0f}</code>\n\n"
-                    f"📈 <b>نرخ تبدیل:</b> {active_percent:.1f}%"
-                )
-            else:
-                message_text = "❌ آماری برای نمایش وجود ندارد یا خطا در دریافت اطلاعات."
-
-            # DummyQuery has `message` attribute from the original update
+                for plan in plans:
+                    if isinstance(plan, dict):
+                        plan_id = plan.get('id')
+                        plan_name = plan.get('name', 'نامشخص')
+                    else:
+                        plan_id = plan[0] if len(plan) > 0 else None
+                        plan_name = plan[1] if len(plan) > 1 else 'نامشخص'
+                    
+                    if plan_id:
+                        try:
+                            active_count = DatabaseQueries.get_active_subscriptions_count_for_plan(plan_id) or 0
+                            total_count = DatabaseQueries.get_total_subscriptions_count_for_plan(plan_id) or 0
+                            expired_count = total_count - active_count
+                            
+                            total_active_subs += active_count
+                            total_expired_subs += expired_count
+                            
+                            if total_count > 0:
+                                plan_details.append({
+                                    'name': plan_name,
+                                    'active': active_count,
+                                    'total': total_count
+                                })
+                        except:
+                            continue
+                
+                message_text += "📋 <b>آمار اشتراک‌ها:</b>\n"
+                message_text += f"• اشتراک‌های فعال: <code>{total_active_subs:,}</code>\n"
+                message_text += f"• اشتراک‌های منقضی: <code>{total_expired_subs:,}</code>\n"
+                
+                # Show top plans
+                if plan_details:
+                    plan_details.sort(key=lambda x: x['active'], reverse=True)
+                    message_text += "\n<b>محبوب‌ترین پلان‌ها:</b>\n"
+                    for i, plan in enumerate(plan_details[:3], 1):
+                        message_text += f"{i}. {plan['name']}: <code>{plan['active']}</code> فعال\n"
+                
+                message_text += "\n"
+            except Exception as e:
+                logger.error(f"Error getting subscription stats: {e}")
+                message_text += "📋 <b>آمار اشتراک‌ها:</b> خطا در دریافت اطلاعات\n\n"
+            
+            # === Payment Statistics ===
+            try:
+                # Get payment statistics
+                total_payments = 0
+                successful_payments = 0
+                total_revenue = 0
+                
+                # Try to get payment data (methods may not exist)
+                try:
+                    payments_data = DatabaseQueries.get_payment_statistics() or {}
+                    total_payments = payments_data.get('total', 0)
+                    successful_payments = payments_data.get('successful', 0)
+                    total_revenue = payments_data.get('revenue', 0)
+                except:
+                    # Fallback: try to count from plans sales
+                    for plan in plans:
+                        if isinstance(plan, dict):
+                            plan_id = plan.get('id')
+                            plan_price = plan.get('price', 0)
+                        else:
+                            plan_id = plan[0] if len(plan) > 0 else None
+                            plan_price = plan[3] if len(plan) > 3 else 0
+                        
+                        if plan_id:
+                            try:
+                                sales_count = DatabaseQueries.get_plan_sales_count(plan_id) or 0
+                                total_payments += sales_count
+                                successful_payments += sales_count
+                                total_revenue += (sales_count * plan_price)
+                            except:
+                                continue
+                
+                message_text += "💰 <b>آمار مالی:</b>\n"
+                message_text += f"• کل پرداخت‌ها: <code>{total_payments:,}</code>\n"
+                if total_payments > 0:
+                    success_rate = (successful_payments / total_payments * 100)
+                    message_text += f"• نرخ موفقیت: <code>{success_rate:.1f}%</code>\n"
+                message_text += f"• کل درآمد: <code>{total_revenue:,.0f}</code> تومان\n"
+                
+                if total_payments > 0:
+                    avg_payment = total_revenue / total_payments
+                    message_text += f"• میانگین پرداخت: <code>{avg_payment:,.0f}</code> تومان\n"
+                
+                message_text += "\n"
+            except Exception as e:
+                logger.error(f"Error getting payment stats: {e}")
+                message_text += "💰 <b>آمار مالی:</b> خطا در دریافت اطلاعات\n\n"
+            
+            # === Ticket Statistics ===
+            try:
+                pending_tickets = DatabaseQueries.get_pending_tickets_count() or 0
+                total_tickets = DatabaseQueries.get_total_tickets_count() or 0
+                closed_tickets = total_tickets - pending_tickets
+                
+                message_text += "🎫 <b>آمار تیکت‌ها:</b>\n"
+                message_text += f"• در انتظار پاسخ: <code>{pending_tickets:,}</code>\n"
+                message_text += f"• بسته شده: <code>{closed_tickets:,}</code>\n"
+                message_text += f"• کل تیکت‌ها: <code>{total_tickets:,}</code>\n"
+                
+                if total_tickets > 0:
+                    resolution_rate = (closed_tickets / total_tickets * 100)
+                    message_text += f"• نرخ حل شده: <code>{resolution_rate:.1f}%</code>\n"
+                
+                message_text += "\n"
+            except Exception as e:
+                logger.error(f"Error getting ticket stats: {e}")
+                message_text += "🎫 <b>آمار تیکت‌ها:</b> خطا در دریافت اطلاعات\n\n"
+            
+            # === System Health ===
+            try:
+                import os
+                import psutil
+                
+                # Get system info if available
+                try:
+                    cpu_percent = psutil.cpu_percent(interval=1)
+                    memory = psutil.virtual_memory()
+                    disk = psutil.disk_usage('/')
+                    
+                    message_text += "⚡ <b>وضعیت سیستم:</b>\n"
+                    message_text += f"• CPU: <code>{cpu_percent:.1f}%</code>\n"
+                    message_text += f"• RAM: <code>{memory.percent:.1f}%</code> استفاده\n"
+                    message_text += f"• دیسک: <code>{disk.percent:.1f}%</code> استفاده\n"
+                    message_text += "\n"
+                except ImportError:
+                    # psutil not available
+                    message_text += "⚡ <b>وضعیت سیستم:</b> 🟢 آنلاین\n\n"
+                except:
+                    message_text += "⚡ <b>وضعیت سیستم:</b> 🟢 آنلاین\n\n"
+                    
+            except Exception as e:
+                logger.error(f"Error getting system stats: {e}")
+                message_text += "⚡ <b>وضعیت سیستم:</b> 🟢 آنلاین\n\n"
+            
+            # === Footer ===
+            message_text += f"🕐 <b>آخرین بروزرسانی:</b> {now.strftime('%H:%M:%S')}\n"
+            message_text += "📱 <b>وضعیت بات:</b> 🟢 فعال"
+            
+            # Send the comprehensive stats
             if hasattr(query, 'message') and query.message:
                 await query.message.reply_text(message_text, parse_mode="HTML")
             else:
-                # Fallback, though it shouldn't be needed
                 logger.warning("Could not send stats reply, query object lacks 'message'.")
                 
         except Exception as e:
             logger.error(f"Error in _show_stats_handler: {e}")
-            error_msg = "❌ خطا در دریافت آمار. لطفاً دوباره تلاش کنید."
+            error_msg = (
+                "❌ <b>خطا در دریافت آمار</b>\n\n"
+                "ممکن است برخی از داده‌ها در دسترس نباشند.\n"
+                "لطفاً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید."
+            )
             if hasattr(query, 'message') and query.message:
                 await query.message.reply_text(error_msg, parse_mode="HTML")
+
     """Show an interactive admin panel and dispatch to feature modules."""
 
     # Callback data constants
@@ -350,10 +514,14 @@ class AdminMenuHandler:
             self.TICKETS_MENU, self.PAYMENTS_MENU,
             "tickets_open", "tickets_all",
             "payments_recent", "payments_stats",
+            "product_sales_reports", "product_sales_list",
             self.TICKETS_HISTORY,
             self.BACK_MAIN
         }
-        if not is_admin_flag and data not in support_allowed_callbacks:
+        # Check if user has access to this callback
+        has_access = is_admin_flag or data in support_allowed_callbacks or data.startswith("product_sales_")
+        logging.info(f"DEBUG: user_id={user_id}, is_admin={is_admin_flag}, data={data}, has_access={has_access}")
+        if not has_access:
             await query.answer("دسترسی محدود است.", show_alert=True)
             return
 
@@ -419,6 +587,15 @@ class AdminMenuHandler:
         elif data.startswith("confirm_delete_plan_"):
             plan_id = int(data.rsplit("_", 1)[1])
             await self.product_handler.delete_plan(query, plan_id)
+        # ----- Product sales report actions -----
+        elif data == "products_sales_reports":
+            await self._show_products_sales_reports(query)
+        elif data.startswith("sales_report_"):
+            plan_id = int(data.split("_", 2)[2])
+            await self._show_product_sales_report(query, plan_id)
+        elif data.startswith("sales_details_"):
+            plan_id = int(data.split("_", 2)[2])
+            await self._show_product_sales_details(query, plan_id)
         elif data == self.BACK_MAIN:
             await self.show_admin_menu(update, context)
         # ----- Ticket submenu actions -----
@@ -444,6 +621,14 @@ class AdminMenuHandler:
             await self._show_recent_payments_inline(query)
         elif data == "payments_stats":
             await self._show_payments_stats(query)
+        elif data == "product_sales_reports":
+            logging.info("DEBUG: product_sales_reports callback received")
+            await self._show_product_sales_reports_menu(query)
+        elif data == "product_sales_list":
+            await self._show_product_sales_list(query)
+        elif data.startswith("product_sales_detail_"):
+            plan_id = int(data.split("_", 3)[3])
+            await self._show_product_sales_detail(query, plan_id)
         elif data.startswith("payment_info_"):
             pid = data.split("_", 2)[2]
             await self._show_payment_details(query, pid)
@@ -453,6 +638,44 @@ class AdminMenuHandler:
             await self._show_recent_payments(query)
         elif data == "payments_stats":
             await self._show_payments_stats(query)
+        # ----- Crypto panel actions -----
+        elif data == "crypto_system_status":
+            await self._show_crypto_system_status(query)
+        elif data == "crypto_payment_stats":
+            await self._show_crypto_payment_stats(query)
+        elif data == "crypto_security":
+            await self._show_crypto_security(query)
+        elif data == "crypto_reports":
+            await self._show_crypto_reports(query)
+        elif data == "crypto_wallet_info":
+            await self._show_crypto_wallet_info(query)
+        elif data == "crypto_manual_tx":
+            await self._show_crypto_manual_tx(query)
+        elif data == "crypto_verify_payments":
+            await self._show_crypto_verify_payments(query)
+        # ----- Crypto sub-menu actions -----
+        elif data == "crypto_report_daily":
+            await self._show_crypto_report_daily(query)
+        elif data == "crypto_report_weekly":
+            await self._show_crypto_report_weekly(query)
+        elif data == "crypto_report_monthly":
+            await self._show_crypto_report_monthly(query)
+        elif data == "crypto_payment_details":
+            await self._show_crypto_payment_details(query)
+        elif data == "crypto_security_logs":
+            await self._show_crypto_security_logs(query)
+        elif data == "crypto_wallet_history":
+            await self._show_crypto_wallet_history(query)
+        elif data == "crypto_verify_history":
+            await self._show_crypto_verify_history(query)
+        elif data == "crypto_check_txid":
+            await self._show_crypto_check_txid(query)
+        elif data == "crypto_test_connection":
+            await self._show_crypto_test_connection(query)
+        elif data == "crypto_simulate_payment":
+            await self._show_crypto_simulate_payment(query)
+        elif data == "crypto_validate_address":
+            await self._show_crypto_validate_address(query)
         # ----- Discounts submenu actions -----
         elif data == "discounts_menu":
             await self._discounts_submenu(query)
@@ -500,6 +723,15 @@ class AdminMenuHandler:
             did = int(data.split("_")[3])
             await self._delete_discount(query, did)
             await self._list_discounts(query)
+        elif data == "discount_edit_skip":
+            # Skip edit and return to discount details
+            df = context.user_data.get("discount_flow")
+            if df and df.get("mode") == "edit":
+                did = df.get("discount_id")
+                context.user_data.pop("discount_flow", None)
+                await self._show_single_discount(query, did)
+            else:
+                await query.answer("❌ عملیات نامعتبر", show_alert=True)
         # ----- Settings submenu actions -----
         elif data == "settings_admins":
             await self._show_admins_settings(query)
@@ -632,10 +864,12 @@ class AdminMenuHandler:
 
     async def _payments_submenu(self, query):
         keyboard = [
-             [InlineKeyboardButton("💰 تراکنش‌های اخیر", callback_data="payments_recent"), InlineKeyboardButton("🔍 جستجوی پرداخت", callback_data="payments_search")],
-             [InlineKeyboardButton("📤 خروجی مشترکین", callback_data=self.EXPORT_SUBS_MENU), InlineKeyboardButton("📈 آمار اشتراک‌ها", callback_data="payments_stats")],
-             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
-         ]
+            [InlineKeyboardButton("💰 تراکنش‌های اخیر", callback_data="payments_recent"), InlineKeyboardButton("🔍 جستجوی پرداخت", callback_data="payments_search")],
+            [InlineKeyboardButton("📊 گزارش فروش محصولات", callback_data="product_sales_reports")],
+            [InlineKeyboardButton("📤 خروجی مشترکین", callback_data=self.EXPORT_SUBS_MENU), InlineKeyboardButton("📈 آمار اشتراک‌ها", callback_data="payments_stats")],
+            [InlineKeyboardButton("💰 پنل کریپتو", callback_data="crypto_panel")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
+        ]
         await query.edit_message_text("💳 *مدیریت پرداخت‌ها*:\nچه کاری می‌خواهید انجام دهید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _broadcast_submenu(self, query):
@@ -682,7 +916,8 @@ class AdminMenuHandler:
                 d_dict = dict(d)
             
             status = "🟢 فعال" if d_dict.get("is_active") else "🔴 غیرفعال"
-            text += f"\n• {d_dict.get('code')} ({status})"
+            uses_count = d_dict.get('uses_count', 0)
+            text += f"\n• {d_dict.get('code')} ({status}) - {uses_count} استفاده"
             # add button
             row.append(InlineKeyboardButton(d_dict.get('code'), callback_data=f"view_discount_{d_dict.get('id')}") )
             if len(row) == 3:
@@ -1028,82 +1263,240 @@ class AdminMenuHandler:
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
-    async def _show_stats_handler(self, query):
-        """Display general statistics."""
+    # This method is handled by the comprehensive stats handler above
+    # Redirect to avoid duplication
+    async def _show_general_stats(self, query):
+        """Legacy method - redirects to comprehensive stats handler."""
+        # Use the updated comprehensive stats handler
+        await self._show_stats_handler(query)
+
+    async def _products_submenu(self, query):
+        """Display products management submenu."""
+        keyboard = [
+            [InlineKeyboardButton("📋 لیست محصولات", callback_data="products_list")],
+            [InlineKeyboardButton("📈 گزارش فروش محصولات", callback_data="products_sales_reports")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
+        ]
+        await query.edit_message_text(
+            "📦 <b>مدیریت محصولات:</b>\n\nچه کاری می‌خواهید انجام دهید؟",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    async def _show_products_sales_reports(self, query):
+        """Show products sales reports menu."""
         try:
-            # Get user statistics
-            total_users = DatabaseQueries.get_total_users_count()
-            active_users = DatabaseQueries.get_active_users_count()
-            
-            # Get plan statistics
-            plans = DatabaseQueries.get_all_plans()
-            plan_stats = []
-            total_sales = 0
-            total_revenue = 0
-            
+            # Get all plans
+            plans = DatabaseQueries.get_all_plans() or []
+            if not plans:
+                await query.edit_message_text(
+                    "❌ هیچ محصولی یافت نشد.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 بازگشت", callback_data=self.PRODUCTS_MENU)]
+                    ])
+                )
+                return
+
+            keyboard = []
             for plan in plans:
-                if not isinstance(plan, dict):
-                    plan = dict(plan)
-                plan_id = plan.get('id')
+                if isinstance(plan, dict):
+                    plan_id = plan.get('id')
+                    plan_name = plan.get('name', 'نامشخص')
+                else:
+                    plan_id = plan[0] if len(plan) > 0 else None
+                    plan_name = plan[1] if len(plan) > 1 else 'نامشخص'
+                
+                if plan_id:
+                    # Truncate long names for better display
+                    display_name = plan_name[:25] + "..." if len(plan_name) > 25 else plan_name
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            f"📊 {display_name}", 
+                            callback_data=f"sales_report_{plan_id}"
+                        )
+                    ])
+            
+            keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data=self.PRODUCTS_MENU)])
+            
+            await query.edit_message_text(
+                "📈 <b>گزارش فروش محصولات:</b>\n\nیک محصول را برای مشاهده گزارش فروش انتخاب کنید:",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        except Exception as e:
+            logger.error(f"Error in _show_products_sales_reports: {e}")
+            await query.edit_message_text(
+                "❌ خطا در دریافت لیست محصولات.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 بازگشت", callback_data=self.PRODUCTS_MENU)]
+                ])
+            )
+
+    async def _show_product_sales_report(self, query, plan_id):
+        """Show detailed sales report for a specific product."""
+        try:
+            from datetime import datetime, timedelta
+            
+            # Get plan details
+            plan = DatabaseQueries.get_plan_by_id(plan_id)
+            if not plan:
+                await query.edit_message_text(
+                    "❌ محصول یافت نشد.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 بازگشت", callback_data="products_sales_reports")]
+                    ])
+                )
+                return
+            
+            if isinstance(plan, dict):
                 plan_name = plan.get('name', 'نامشخص')
                 plan_price = plan.get('price', 0)
-                
-                # Get sales count for this plan
-                sales_count = DatabaseQueries.get_plan_sales_count(plan_id)
-                revenue = sales_count * plan_price
-                
-                plan_stats.append({
-                    'name': plan_name,
-                    'sales': sales_count,
-                    'revenue': revenue
-                })
-                
-                total_sales += sales_count
-                total_revenue += revenue
+            else:
+                plan_name = plan[1] if len(plan) > 1 else 'نامشخص'
+                plan_price = plan[3] if len(plan) > 3 else 0
             
-            # Get ticket statistics
-            pending_tickets = DatabaseQueries.get_pending_tickets_count()
-            total_tickets = DatabaseQueries.get_total_tickets_count()
+            # Calculate time periods
+            now = datetime.now()
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            week_start = today_start - timedelta(days=7)
+            month_start = today_start - timedelta(days=30)
             
-            # Build statistics message
-            import html
-            stats_text = "<b>📊 آمار کلی سیستم</b>\n\n"
-            stats_text += "<b>👥 آمار کاربران:</b>\n"
-            stats_text += f"• کل کاربران: {total_users:,}\n"
-            stats_text += f"• کاربران فعال: {active_users:,}\n\n"
+            # Get sales data for different periods
+            today_sales = DatabaseQueries.get_plan_sales_count_since(plan_id, today_start.isoformat()) or 0
+            week_sales = DatabaseQueries.get_plan_sales_count_since(plan_id, week_start.isoformat()) or 0
+            month_sales = DatabaseQueries.get_plan_sales_count_since(plan_id, month_start.isoformat()) or 0
+            total_sales = DatabaseQueries.get_plan_sales_count(plan_id) or 0
             
-            stats_text += "<b>💰 آمار فروش:</b>\n"
-            stats_text += f"• کل فروش: {total_sales:,}\n"
-            stats_text += f"• کل درآمد: {total_revenue:,} تومان\n\n"
+            # Calculate revenues
+            today_revenue = today_sales * plan_price
+            week_revenue = week_sales * plan_price
+            month_revenue = month_sales * plan_price
+            total_revenue = total_sales * plan_price
             
-            stats_text += "<b>🎫 آمار تیکت‌ها:</b>\n"
-            stats_text += f"• تیکت‌های در انتظار: {pending_tickets:,}\n"
-            stats_text += f"• کل تیکت‌ها: {total_tickets:,}\n\n"
+            message_text = f"📊 <b>گزارش فروش: {plan_name}</b>\n\n"
+            message_text += f"💰 <b>قیمت واحد:</b> {plan_price:,} تومان\n\n"
             
-            if plan_stats:
-                stats_text += "<b>📈 آمار فروش هر پلن:</b>\n"
-                for stat in plan_stats:
-                    plan_name_safe = html.escape(stat['name'])
-                    stats_text += f"• {plan_name_safe}: {stat['sales']:,} فروش ({stat['revenue']:,} تومان)\n"
-
+            message_text += "📈 <b>آمار فروش:</b>\n"
+            message_text += f"• امروز: <code>{today_sales:,}</code> عدد (<code>{today_revenue:,}</code> تومان)\n"
+            message_text += f"• هفته گذشته: <code>{week_sales:,}</code> عدد (<code>{week_revenue:,}</code> تومان)\n"
+            message_text += f"• ماه گذشته: <code>{month_sales:,}</code> عدد (<code>{month_revenue:,}</code> تومان)\n"
+            message_text += f"• کل فروش: <code>{total_sales:,}</code> عدد (<code>{total_revenue:,}</code> تومان)\n\n"
+            
+            # Calculate averages
+            if week_sales > 0:
+                daily_avg = week_sales / 7
+                message_text += f"📊 <b>میانگین روزانه (هفته):</b> {daily_avg:.1f} عدد\n"
+            
+            if month_sales > 0:
+                monthly_avg = month_sales / 30
+                message_text += f"📊 <b>میانگین روزانه (ماه):</b> {monthly_avg:.1f} عدد\n"
+            
+            message_text += f"\n🕐 <b>آخرین بروزرسانی:</b> {now.strftime('%H:%M:%S')}"
             
             keyboard = [
-                [InlineKeyboardButton("🔄 بروزرسانی", callback_data="stats")],
-                [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
+                [InlineKeyboardButton("🔄 بروزرسانی", callback_data=f"sales_report_{plan_id}")],
+                [InlineKeyboardButton("📋 جزئیات بیشتر", callback_data=f"sales_details_{plan_id}")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="products_sales_reports")],
             ]
             
             await query.edit_message_text(
-                stats_text,
+                message_text,
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(keyboard),
             )
             
         except Exception as e:
-            logger.error(f"Error showing stats: {e}")
+            logger.error(f"Error in _show_product_sales_report: {e}")
             await query.edit_message_text(
-                "❌ خطا در نمایش آمار. لطفاً دوباره تلاش کنید.",
+                "❌ خطا در دریافت گزارش فروش.",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)]
+                    [InlineKeyboardButton("🔙 بازگشت", callback_data="products_sales_reports")]
+                ])
+            )
+
+    async def _show_product_sales_details(self, query, plan_id):
+        """Show detailed sales breakdown for a specific product."""
+        try:
+            from datetime import datetime, timedelta
+            
+            # Get plan details
+            plan = DatabaseQueries.get_plan_by_id(plan_id)
+            if not plan:
+                await query.edit_message_text(
+                    "❌ محصول یافت نشد.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 بازگشت", callback_data=f"sales_report_{plan_id}")]
+                    ])
+                )
+                return
+            
+            if isinstance(plan, dict):
+                plan_name = plan.get('name', 'نامشخص')
+                plan_price = plan.get('price', 0)
+            else:
+                plan_name = plan[1] if len(plan) > 1 else 'نامشخص'
+                plan_price = plan[3] if len(plan) > 3 else 0
+            
+            # Get recent sales (last 10)
+            recent_sales = DatabaseQueries.get_recent_plan_sales(plan_id, limit=10) or []
+            
+            message_text = f"📋 <b>جزئیات فروش: {plan_name}</b>\n\n"
+            
+            if recent_sales:
+                message_text += "🛒 <b>آخرین فروش‌ها:</b>\n"
+                for i, sale in enumerate(recent_sales, 1):
+                    if isinstance(sale, dict):
+                        user_id = sale.get('user_id', 'نامشخص')
+                        created_at = sale.get('created_at', '')
+                        amount = sale.get('amount', plan_price)
+                    else:
+                        user_id = sale[1] if len(sale) > 1 else 'نامشخص'
+                        created_at = sale[6] if len(sale) > 6 else ''
+                        amount = sale[2] if len(sale) > 2 else plan_price
+                    
+                    # Format date
+                    try:
+                        if created_at:
+                            dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                            date_str = dt.strftime('%Y/%m/%d %H:%M')
+                        else:
+                            date_str = 'نامشخص'
+                    except:
+                        date_str = 'نامشخص'
+                    
+                    message_text += f"{i}. کاربر {user_id} - {date_str} - {amount:,} تومان\n"
+            else:
+                message_text += "📝 هیچ فروشی ثبت نشده است.\n"
+            
+            # Get sales by payment method if available
+            try:
+                rial_sales = DatabaseQueries.get_plan_rial_sales_count(plan_id) or 0
+                crypto_sales = DatabaseQueries.get_plan_crypto_sales_count(plan_id) or 0
+                
+                if rial_sales > 0 or crypto_sales > 0:
+                    message_text += "\n💳 <b>روش پرداخت:</b>\n"
+                    message_text += f"• ریالی: {rial_sales:,} عدد\n"
+                    message_text += f"• کریپتو: {crypto_sales:,} عدد\n"
+            except:
+                pass  # Methods might not exist
+            
+            keyboard = [
+                [InlineKeyboardButton("🔄 بروزرسانی", callback_data=f"sales_details_{plan_id}")],
+                [InlineKeyboardButton("🔙 بازگشت به گزارش", callback_data=f"sales_report_{plan_id}")],
+            ]
+            
+            await query.edit_message_text(
+                message_text,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in _show_product_sales_details: {e}")
+            await query.edit_message_text(
+                "❌ خطا در دریافت جزئیات فروش.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 بازگشت", callback_data=f"sales_report_{plan_id}")]
                 ])
             )
 
@@ -1680,10 +2073,10 @@ class AdminMenuHandler:
             return
         keyboard = []
         for p in payments:
-            pid = p[0] if isinstance(p, (list, tuple)) else p.get('id')
-            amount = p[2] if isinstance(p, (list, tuple)) else p.get('amount_rial')
-            status = p[6] if isinstance(p, (list, tuple)) else p.get('status')
-            created_at = p[7] if isinstance(p, (list, tuple)) else p.get('created_at')
+            pid = p[0] if isinstance(p, (list, tuple)) else p['id']
+            amount = p[2] if isinstance(p, (list, tuple)) else p['amount_rial']
+            status = p[6] if isinstance(p, (list, tuple)) else p['status']
+            created_at = p[7] if isinstance(p, (list, tuple)) else p['created_at']
             text = f"#{pid} | {amount:,} | {status} | {str(created_at)[:10]}"
             keyboard.append([InlineKeyboardButton(text, callback_data=f"payment_info_{pid}")])
         keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data=self.PAYMENTS_MENU)])
@@ -1716,11 +2109,11 @@ class AdminMenuHandler:
         lines = [escape_markdown("💰 ۲۰ تراکنش اخیر:", version=2) + "\n"]
         for p in payments:
             try:
-                payment_id = p[0] if isinstance(p, (list, tuple)) else p.get('id')
-                user_id = p[1] if isinstance(p, (list, tuple)) else p.get('user_id')
-                amount = p[2] if isinstance(p, (list, tuple)) else p.get('amount')
-                status = p[5] if isinstance(p, (list, tuple)) else p.get('status')
-                created_at = p[6] if isinstance(p, (list, tuple)) else p.get('created_at')
+                payment_id = p[0] if isinstance(p, (list, tuple)) else p['id']
+                user_id = p[1] if isinstance(p, (list, tuple)) else p['user_id']
+                amount = p[2] if isinstance(p, (list, tuple)) else p['amount']
+                status = p[5] if isinstance(p, (list, tuple)) else p['status']
+                created_at = p[6] if isinstance(p, (list, tuple)) else p['created_at']
                 escaped_status = escape_markdown(str(status), version=2)
                 lines.append(escape_markdown(f"• #{payment_id} – {amount} ریال – {escaped_status} – {created_at} – UID:{user_id}", version=2))
             except Exception:
@@ -2432,26 +2825,27 @@ class AdminMenuHandler:
         """Handle crypto panel entry from admin menu"""
         await query.answer()
         
-        # Import crypto keyboard
-        from handlers.admin_crypto_keyboard import AdminCryptoKeyboard
+        # Create inline keyboard with crypto panel options
+        keyboard = [
+            [InlineKeyboardButton("🏥 وضعیت سیستم", callback_data="crypto_system_status"), InlineKeyboardButton("📊 آمار پرداخت‌ها", callback_data="crypto_payment_stats")],
+            [InlineKeyboardButton("🔒 امنیت سیستم", callback_data="crypto_security"), InlineKeyboardButton("📈 گزارش‌ها", callback_data="crypto_reports")],
+            [InlineKeyboardButton("💰 اطلاعات کیف پول", callback_data="crypto_wallet_info"), InlineKeyboardButton("🔍 تست TX دستی", callback_data="crypto_manual_tx")],
+            [InlineKeyboardButton("✅ تایید پرداخت‌ها", callback_data="crypto_verify_payments")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data=self.PAYMENTS_MENU)]
+        ]
         
-        # Create a proper update object for the conversation
-        # Send a message first that will be used for the keyboard
-        message = await query.edit_message_text(
-            "💰 **پنل مدیریت کریپتو**\n\n"
-            "خوش آمدید! لطفاً از دکمه‌های زیر استفاده کنید:",
-            parse_mode="Markdown"
+        await query.edit_message_text(
+            "👑 **پنل مدیریت کریپتو** 👑\n\n"
+            "به پنل مدیریت سیستم پرداخت USDT خوش آمدید!\n\n"
+            "🔧 **امکانات در دسترس:**\n"
+            "• نظارت بر وضعیت سیستم\n"
+            "• مشاهده آمار و گزارش‌ها\n"
+            "• مدیریت امنیت\n"
+            "• تست دستی تراکنش‌ها\n\n"
+            "برای شروع، یکی از گزینه‌های زیر را انتخاب کنید:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        
-        # Create a message update object 
-        fake_update = type('Update', (), {
-            'message': message,
-            'effective_user': query.from_user,
-            'callback_query': None
-        })
-        
-        # Start the crypto keyboard directly
-        return await AdminCryptoKeyboard.start_admin_panel(fake_update, context)
 
     def get_handlers(self):
         """Return telegram.ext handlers to register in the dispatcher."""
@@ -2537,7 +2931,7 @@ class AdminMenuHandler:
 
         # This is the main handler for all other admin menu callbacks
         # Note: The invite link and ban/unban callbacks are handled by their respective ConversationHandlers.
-        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|bc_cat_|bc_plan_|bc_chan_|audience_|broadcast_continue$|broadcast_cancel$|settings_(?!mid_level)|products_|discounts_|view_discount_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_|crypto_panel)"))
+        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|bc_cat_|bc_plan_|bc_chan_|audience_|broadcast_continue$|broadcast_cancel$|settings_(?!mid_level)|products_|discounts_|view_discount_|edit_discount_|discount_edit_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_|crypto_panel|crypto_|product_sales_)"))
 
         # ---- Promotional category handlers ----
         from handlers.admin_promotional_category import (
@@ -2667,3 +3061,147 @@ class AdminMenuHandler:
         
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
+    # ========================================
+    # Product Sales Report Methods
+    # ========================================
+    
+    async def _show_product_sales_reports_menu(self, query):
+        """Show main menu for product sales reports."""
+        keyboard = [
+            [InlineKeyboardButton("📊 لیست محصولات", callback_data="product_sales_list")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data=self.PAYMENTS_MENU)],
+        ]
+        text = "📊 *گزارش فروش محصولات*\n\nلطفاً یکی از گزینه‌ها را انتخاب کنید:"
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    async def _show_product_sales_list(self, query):
+        """Show list of products with sales data for selection."""
+        try:
+            plans = self.db_queries.get_all_plans_with_sales_data()
+            
+            if not plans:
+                text = "😔 *هیچ محصولی یافت نشد*\n\nهنوز هیچ محصولی تعریف نشده است."
+                keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="product_sales_reports")]]
+                await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+                return
+            
+            text = "📊 *لیست محصولات*\n\n"
+            keyboard = []
+            
+            for plan in plans:
+                plan_id = plan['id']
+                plan_name = plan['name']
+                total_sales = plan['total_sales']
+                price_irr = plan['price_irr']
+                price_usdt = plan['price_usdt']
+                
+                # Format price display
+                price_text = ""
+                if price_irr > 0:
+                    price_text += f"{price_irr:,.0f} ریال"
+                if price_usdt > 0:
+                    if price_text:
+                        price_text += " / "
+                    price_text += f"{price_usdt} USDT"
+                
+                text += f"📾 **{plan_name}**\n"
+                text += f"• قیمت: {price_text}\n"
+                text += f"• کل فروش: {total_sales} عدد\n\n"
+                
+                keyboard.append([InlineKeyboardButton(
+                    f"📈 گزارش {plan_name}", 
+                    callback_data=f"product_sales_detail_{plan_id}"
+                )])
+            
+            keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="product_sales_reports")])
+            
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            
+        except Exception as e:
+            logging.error(f"Error showing product sales list: {e}")
+            text = "❌ خطا در نمایش لیست محصولات."
+            keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="product_sales_reports")]]
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def _show_product_sales_detail(self, query, plan_id):
+        """Show detailed sales report for a specific product."""
+        try:
+            # Get plan info
+            plan = self.db_queries.get_plan_by_id(plan_id)
+            if not plan:
+                text = "❌ محصول یافت نشد."
+                keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="product_sales_list")]]
+                await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+                return
+            
+            plan_name = plan['name']
+            
+            # Get sales data for different periods
+            today_sales = self.db_queries.get_plan_sales_count(plan_id=plan_id, days=1)
+            week_sales = self.db_queries.get_plan_sales_count(plan_id=plan_id, days=7)
+            month_sales = self.db_queries.get_plan_sales_count(plan_id=plan_id, days=30)
+            total_sales = self.db_queries.get_plan_sales_count(plan_id=plan_id)
+            
+            # Get recent sales
+            recent_sales = self.db_queries.get_recent_plan_sales(plan_id=plan_id, limit=5)
+            
+            # Get payment method breakdown
+            payment_breakdown = self.db_queries.get_payment_method_breakdown(plan_id=plan_id)
+            
+            # Build the report
+            text = f"📈 *گزارش تفصیلی فروش*\n📾 **{plan_name}**\n\n"
+            
+            # Sales summary
+            text += "📊 *خلاصه فروش:*\n"
+            text += f"• امروز: {today_sales['count']} عدد\n"
+            text += f"• هفته گذشته: {week_sales['count']} عدد\n"
+            text += f"• ماه گذشته: {month_sales['count']} عدد\n"
+            text += f"• کل فروش: {total_sales['count']} عدد\n\n"
+            
+            # Revenue summary
+            text += "💰 *خلاصه درآمد:*\n"
+            if total_sales['revenue_irr'] > 0:
+                text += f"• درآمد ریالی: {total_sales['revenue_irr']:,.0f} ریال\n"
+            if total_sales['revenue_usdt'] > 0:
+                text += f"• درآمد تتری: {total_sales['revenue_usdt']:.2f} USDT\n"
+            text += "\n"
+            
+            # Payment method breakdown
+            text += "💳 *تفکیک روش پرداخت:*\n"
+            text += f"• پرداخت ریالی: {payment_breakdown['rial']} عدد\n"
+            text += f"• پرداخت کریپتو: {payment_breakdown['crypto']} عدد\n\n"
+            
+            # Recent sales
+            if recent_sales:
+                text += "🕐 *فروش‌های اخیر:*\n"
+                for sale in recent_sales[:3]:  # Show only first 3
+                    user_name = sale['user_name']
+                    created_at = sale['created_at'][:16] if sale['created_at'] else 'نامشخص'
+                    amount = sale['amount_irr'] if sale['amount_irr'] > 0 else sale['amount_usdt']
+                    currency = 'ریال' if sale['amount_irr'] > 0 else 'USDT'
+                    text += f"• {user_name} - {amount:,.0f} {currency} ({created_at})\n"
+                text += "\n"
+            else:
+                text += "😔 هیچ فروشی ثبت نشده.\n\n"
+            
+            # Average calculations
+            if week_sales['count'] > 0:
+                daily_avg_week = week_sales['count'] / 7
+                text += f"📉 میانگین روزانه (هفته): {daily_avg_week:.1f} عدد\n"
+            
+            if month_sales['count'] > 0:
+                daily_avg_month = month_sales['count'] / 30
+                text += f"📉 میانگین روزانه (ماه): {daily_avg_month:.1f} عدد\n"
+            
+            keyboard = [
+                [InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="product_sales_list")],
+                [InlineKeyboardButton("🔙 منوی اصلی", callback_data="product_sales_reports")]
+            ]
+            
+            await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            
+        except Exception as e:
+            logging.error(f"Error showing product sales detail: {e}")
+            text = "❌ خطا در نمایش گزارش فروش."
+            keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="product_sales_list")]]
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
