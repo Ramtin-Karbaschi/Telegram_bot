@@ -180,7 +180,7 @@ except ValueError:
 
 
 # --- Conversation Timeouts ---
-PAYMENT_CONVERSATION_TIMEOUT_STR = os.getenv("PAYMENT_CONVERSATION_TIMEOUT", "1800") # 30 minutes in seconds
+PAYMENT_CONVERSATION_TIMEOUT_STR = os.getenv("PAYMENT_CONVERSATION_TIMEOUT", "10800") # 3 hours in seconds
 try:
     PAYMENT_CONVERSATION_TIMEOUT = int(PAYMENT_CONVERSATION_TIMEOUT_STR)
 except ValueError:

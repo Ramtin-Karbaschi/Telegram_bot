@@ -13,7 +13,7 @@ TRON_MIN_CONFIRMATIONS = 1  # Minimum block confirmations required (0 to disable
 MAX_TX_AGE_HOURS = 24  # Maximum age of transaction to accept (prevents old hash reuse)
 
 # Payment Timeout
-CRYPTO_PAYMENT_TIMEOUT_MINUTES = 30  # How long payment requests stay valid
+CRYPTO_PAYMENT_TIMEOUT_MINUTES = 180  # How long payment requests stay valid (3 hours)
 
 # Audit and Logging
 ENABLE_PAYMENT_AUDIT_LOG = True  # Enable detailed audit logging
