@@ -2069,8 +2069,23 @@ async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
                 else:
                     plan_name = "N/A"
 
+                # ---------------- Determine correct DB user_id ----------------
+                user_row = Database.get_user_by_telegram_id(telegram_id)
+                user_db_id = telegram_id  # fallback – schema often uses telegram_id as PK
+                try:
+                    if user_row:
+                        if hasattr(user_row, "keys") and "user_id" in user_row.keys():
+                            user_db_id = user_row["user_id"]
+                        elif hasattr(user_row, "keys") and "id" in user_row.keys():
+                            user_db_id = user_row["id"]
+                except Exception as _uid_exc:
+                    logger.warning(
+                        f"[receive_tx_hash_handler] Could not derive user_db_id for tg {telegram_id}: {_uid_exc}"
+                    )
+
+                # ---------------- Activate / extend subscription ----------------
                 activation_success, _ = await activate_or_extend_subscription(
-                    user_id=telegram_id,
+                    user_id=user_db_id,
                     telegram_id=telegram_id,
                     plan_id=plan_id,
                     plan_name=plan_name,

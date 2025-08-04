@@ -15,8 +15,12 @@ from telegram.ext import (
 from handlers.admin.broadcast_handler import broadcast_start
 
 from utils.helpers import admin_only_decorator as admin_only
-from utils.helpers import staff_only_decorator as staff_only
 from utils.helpers import is_user_in_admin_list
+from utils.admin_utils import (
+    is_admin_user, is_mid_level_user, is_support_user,
+    has_ticket_access, has_payment_access, has_broadcast_access, has_settings_access,
+    staff_required
+)
 from utils.invite_link_manager import InviteLinkManager
 from database.free_plan_helper import ensure_free_plan
 from utils.db_backup import export_database, export_database_excel
@@ -96,7 +100,7 @@ class AdminMenuHandler:
             self.button_texts['back_to_main']: self.show_admin_menu,
         }
 
-    @staff_only
+    @staff_required
     async def route_admin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Routes admin commands from ReplyKeyboardMarkup clicks."""
         from utils.locale_utils import fa_to_en_digits  # localized digit support
@@ -106,11 +110,26 @@ class AdminMenuHandler:
 
         command_text = fa_to_en_digits(update.message.text)
         user_id = update.effective_user.id if update.effective_user else None
-        is_admin_flag = user_id is not None and is_user_in_admin_list(user_id, self.admin_config)
-        support_allowed_labels = {self.button_texts['tickets'], self.button_texts['payments'], self.button_texts['back_to_main']}
-        if not is_admin_flag and command_text not in support_allowed_labels:
+        
+        # Check access for different commands
+        if command_text == self.button_texts['tickets'] and not has_ticket_access(user_id):
+            logger.info(f"DEBUG: User {user_id} denied ticket access - admin:{is_admin_user(user_id)}, mid:{is_mid_level_user(user_id)}, support:{is_support_user(user_id)}")
             await update.message.reply_text("دسترسی محدود است.")
             return
+        elif command_text == self.button_texts['payments'] and not has_payment_access(user_id):
+            logger.info(f"DEBUG: User {user_id} denied payment access - admin:{is_admin_user(user_id)}, mid:{is_mid_level_user(user_id)}, support:{is_support_user(user_id)}")
+            await update.message.reply_text("دسترسی محدود است.")
+            return
+        elif command_text == self.button_texts['broadcast'] and not has_broadcast_access(user_id):
+            logger.info(f"DEBUG: User {user_id} denied broadcast access - admin:{is_admin_user(user_id)}, mid:{is_mid_level_user(user_id)}, support:{is_support_user(user_id)}")
+            await update.message.reply_text("دسترسی محدود است.")
+            return
+        elif command_text in {self.button_texts['users'], self.button_texts['products'], self.button_texts['stats'], self.button_texts['settings'], self.button_texts['export_subs'], self.button_texts['promo_category'], self.button_texts['crypto']} and not is_admin_user(user_id):
+            await update.message.reply_text("دسترسی محدود است.")
+            return
+        elif command_text not in self.admin_buttons_map and command_text != self.button_texts['back_to_main']:
+            # Unknown command, but allow it to pass through for potential future expansion
+            pass
         function_to_call = self.admin_buttons_map.get(command_text)
 
         if not function_to_call:
@@ -261,22 +280,57 @@ class AdminMenuHandler:
     (AWAIT_CHECK_USER_ID,) = range(108, 109)
     (AWAIT_EXTEND_ALL_DAYS,) = range(109, 110)
 
-    @staff_only
+    @staff_required
     async def show_admin_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Entry command `/admin` – show main panel."""
         user_id = update.effective_user.id if update.effective_user else None
-        is_admin = user_id is not None and is_user_in_admin_list(user_id, self.admin_config)
-        if is_admin:
-            keyboard = [
-                [InlineKeyboardButton("🎫 مدیریت تیکت‌ها", callback_data=self.TICKETS_MENU), InlineKeyboardButton("👥 مدیریت کاربران", callback_data=self.USERS_MENU)],
-                [InlineKeyboardButton("💳 مدیریت پرداخت‌ها", callback_data=self.PAYMENTS_MENU), InlineKeyboardButton("📦 مدیریت محصولات", callback_data=self.PRODUCTS_MENU)],
-                [InlineKeyboardButton("💰 پنل کریپتو", callback_data="crypto_panel"), InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data="broadcast_custom")],
-                [InlineKeyboardButton("📤 خروجی مشترکین", callback_data=self.EXPORT_SUBS_MENU), InlineKeyboardButton("⚙️ تنظیمات", callback_data=self.SETTINGS_MENU)],
-            ]
-        else:
-            keyboard = [
-                [InlineKeyboardButton("🎫 مدیریت تیکت‌ها", callback_data=self.TICKETS_MENU), InlineKeyboardButton("💳 مدیریت پرداخت‌ها", callback_data=self.PAYMENTS_MENU)],
-            ]
+        
+        # Build keyboard based on user access level
+        keyboard = []
+        
+        # First row: Always include tickets for all staff
+        first_row = []
+        if has_ticket_access(user_id):
+            first_row.append(InlineKeyboardButton("🎫 مدیریت تیکت‌ها", callback_data=self.TICKETS_MENU))
+        
+        # Admin-only buttons in first row
+        if is_admin_user(user_id):
+            first_row.append(InlineKeyboardButton("👥 مدیریت کاربران", callback_data=self.USERS_MENU))
+        
+        if first_row:
+            keyboard.append(first_row)
+        
+        # Second row: Payments and Products
+        second_row = []
+        if has_payment_access(user_id):
+            second_row.append(InlineKeyboardButton("💳 مدیریت پرداخت‌ها", callback_data=self.PAYMENTS_MENU))
+        
+        if is_admin_user(user_id):
+            second_row.append(InlineKeyboardButton("📦 مدیریت محصولات", callback_data=self.PRODUCTS_MENU))
+        
+        if second_row:
+            keyboard.append(second_row)
+        
+        # Third row: Crypto panel and Broadcast (admin + mid-level)
+        third_row = []
+        if is_admin_user(user_id):
+            third_row.append(InlineKeyboardButton("💰 پنل کریپتو", callback_data="crypto_panel"))
+        
+        if has_broadcast_access(user_id):
+            third_row.append(InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data="broadcast_custom"))
+        
+        if third_row:
+            keyboard.append(third_row)
+        
+        # Fourth row: Export and Settings (admin only)
+        fourth_row = []
+        if is_admin_user(user_id):
+            fourth_row.append(InlineKeyboardButton("📤 خروجی مشترکین", callback_data=self.EXPORT_SUBS_MENU))
+            fourth_row.append(InlineKeyboardButton("⚙️ تنظیمات", callback_data=self.SETTINGS_MENU))
+        
+        if fourth_row:
+            keyboard.append(fourth_row)
+        
         reply_markup = InlineKeyboardMarkup(keyboard)
         # Check if we are editing a message (from a callback) or sending a new one
         if update.callback_query:
@@ -285,7 +339,7 @@ class AdminMenuHandler:
             await update.message.reply_text("⚡️ *پنل مدیریت*\nیکی از گزینه‌های زیر را انتخاب کنید:", parse_mode="Markdown", reply_markup=reply_markup)
 
     # ---------- Menu callbacks ----------
-    @staff_only
+    @staff_required
     async def admin_menu_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
@@ -806,10 +860,10 @@ class AdminMenuHandler:
 
         keyboard = [
             [InlineKeyboardButton("🔐 مدیران", callback_data="settings_admins"), InlineKeyboardButton("👥 مدیریت پشتیبان‌ها", callback_data=self.SUPPORT_MENU)],
-            [InlineKeyboardButton("🔘 دکمه‌های تمدید", callback_data="settings_renew_buttons"), InlineKeyboardButton("💸 مدیریت کدهای تخفیف", callback_data="discounts_menu")],
-            [InlineKeyboardButton(discount_toggle_text, callback_data="settings_toggle_discount_step"), InlineKeyboardButton("🎯 دکمه تبلیغاتی", callback_data="promo_category_admin")],
-            [InlineKeyboardButton("💾 بکاپ JSON دیتابیس", callback_data=self.BACKUP_CALLBACK), InlineKeyboardButton("📊 بکاپ Excel دیتابیس", callback_data=self.BACKUP_XLSX_CALLBACK)],
-            [InlineKeyboardButton("⚙️ سایر تنظیمات", callback_data="settings_misc")],
+            [InlineKeyboardButton("🏅 مدیریت میان‌رده‌ها", callback_data="settings_mid_level"), InlineKeyboardButton("🔘 دکمه‌های تمدید", callback_data="settings_renew_buttons")],
+            [InlineKeyboardButton("💸 مدیریت کدهای تخفیف", callback_data="discounts_menu"), InlineKeyboardButton(discount_toggle_text, callback_data="settings_toggle_discount_step")],
+            [InlineKeyboardButton("🎯 دکمه تبلیغاتی", callback_data="promo_category_admin"), InlineKeyboardButton("⚙️ سایر تنظیمات", callback_data="settings_misc")],
+            [InlineKeyboardButton("💾 بکاپ JSON دیتابیس", callback_data=self.BACKUP_CALLBACK), InlineKeyboardButton("📆 بکاپ Excel دیتابیس", callback_data=self.BACKUP_XLSX_CALLBACK)],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text("⚙️ *تنظیمات ربات*:\nکدام بخش را می‌خواهید مدیریت کنید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -956,7 +1010,7 @@ class AdminMenuHandler:
     async def _broadcast_entry_direct(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Entry point for new broadcast flow without extra submenu."""
         from handlers.admin.broadcast_handler import broadcast_start
-        context.user_data["bc_flow"] = True
+        # Set the conversation state manually
         await broadcast_start(update=update, context=context)
 
     async def _broadcast_submenu(self, query):
@@ -1570,6 +1624,49 @@ class AdminMenuHandler:
                 logger.error(f"Failed to send invite links to user {target_user_id}: {e}", exc_info=True)
                 await update.message.reply_text(f"❌ خطا در ارسال لینک‌های دعوت به کاربر `{target_user_id}`. لطفاً به صورت دستی ارسال کنید.", parse_mode="Markdown")
 
+        # -------- Add mid-level user flow --------
+        if context.user_data.get("awaiting_mid_level_user_id"):
+            text = message.text.strip()
+            if not text.isdigit():
+                await message.reply_text("❌ آیدی باید یک عدد باشد. دوباره تلاش کنید یا دکمه لغو را بزنید.")
+                return
+            
+            user_id = int(text)
+            admin_id = update.effective_user.id
+            
+            # Add mid-level user and capture success result
+            success = DatabaseQueries.add_mid_level_user(user_id, alias="")
+            
+            # Reset flag
+            context.user_data.pop("awaiting_mid_level_user_id", None)
+            
+            # Prepare success message
+            if success:
+                success_text = f"✅ کاربر {user_id} با موفقیت به لیست میان‌رده‌ها اضافه شد."
+            else:
+                success_text = f"❌ خطا در افزودن کاربر {user_id} یا کاربر قبلاً میان‌رده است."
+            
+            # Get current mid-level users from database
+            mid_level_users = DatabaseQueries.get_all_mid_level_users()
+            
+            keyboard = [
+                [InlineKeyboardButton("➕ افزودن کاربر میان‌رده", callback_data="mid_level_add")],
+                [InlineKeyboardButton("📋 مشاهده لیست", callback_data="mid_level_list")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="settings")],
+            ]
+            
+            count = len(mid_level_users)
+            text = f"🏅 *مدیریت کاربران میان‌رده*\n\n"
+            text += f"📊 تعداد کاربران میان‌رده: {count}\n\n"
+            text += "دسترسی‌های کاربران میان‌رده:\n"
+            text += "• 🎫 مدیریت تیکت‌ها\n"
+            text += "• 💳 مدیریت پرداخت‌ها\n"
+            text += "• 📢 ارسال پیام همگانی\n\n"
+            text += success_text
+            
+            await message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
         # If no flags matched, simply ignore the message so that other handlers may process it.
         logger.debug("broadcast_message_handler: No relevant flow flag set – ignoring message.")
         return
@@ -1977,7 +2074,7 @@ class AdminMenuHandler:
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     # ---- Extend Subscription Duration (Single User) Flow ----
-    @staff_only
+    @staff_required
     async def start_extend_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Entry point: ask admin for target user identifier (username or Telegram ID)."""
         query = update.callback_query
@@ -2073,7 +2170,7 @@ class AdminMenuHandler:
         return ConversationHandler.END
 
     # ---- Extend Subscription Duration for All Users (Bulk) ----
-    @staff_only
+    @staff_required
     async def start_extend_subscription_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
@@ -2150,7 +2247,7 @@ class AdminMenuHandler:
         return ConversationHandler.END
 
     # ---- Check Subscription Status Flow ----
-    @staff_only
+    @staff_required
     async def start_check_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
@@ -2440,17 +2537,18 @@ class AdminMenuHandler:
 
         # This is the main handler for all other admin menu callbacks
         # Note: The invite link and ban/unban callbacks are handled by their respective ConversationHandlers.
-        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|bc_cat_|bc_plan_|bc_chan_|audience_|broadcast_continue$|broadcast_cancel$|settings_|products_|discounts_|view_discount_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_|crypto_panel)"))
+        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|bc_cat_|bc_plan_|bc_chan_|audience_|broadcast_continue$|broadcast_cancel$|settings_(?!mid_level)|products_|discounts_|view_discount_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_|crypto_panel)"))
 
         # ---- Promotional category handlers ----
         from handlers.admin_promotional_category import (
             show_promotional_category_admin, show_category_selection,
-            set_promotional_category_handler, toggle_promotional_category_handler,
+            set_promotional_category_handler, set_promotional_product_handler, toggle_promotional_category_handler,
             prompt_promotional_change_text_handler, receive_new_promo_text_message
         )
         handlers.append(CallbackQueryHandler(show_promotional_category_admin, pattern="^promo_category_admin$"))
         handlers.append(CallbackQueryHandler(show_category_selection, pattern="^promo_select_category$"))
         handlers.append(CallbackQueryHandler(set_promotional_category_handler, pattern="^promo_set_category_\d+$"))
+        handlers.append(CallbackQueryHandler(set_promotional_product_handler, pattern="^promo_set_product_\d+$"))
         handlers.append(CallbackQueryHandler(toggle_promotional_category_handler, pattern="^promo_toggle$"))
 
         # Conversation handler for changing promotional button text
@@ -2465,5 +2563,107 @@ class AdminMenuHandler:
         )
         handlers.append(promo_text_conv_handler)
 
+        # ---- Mid-level user management handlers ----
+        handlers.append(CallbackQueryHandler(self._settings_mid_level_submenu, pattern='^settings_mid_level$'))
+        handlers.append(CallbackQueryHandler(self._mid_level_add_user_prompt, pattern='^mid_level_add$'))
+        handlers.append(CallbackQueryHandler(self._mid_level_remove_user, pattern=r'^mid_level_remove_(\d+)$'))
+        handlers.append(CallbackQueryHandler(self._mid_level_list_users, pattern='^mid_level_list$'))
+        
         return handlers
+
+    # ---- Mid-level user management methods ----
+    async def _settings_mid_level_submenu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show mid-level user management submenu"""
+        query = update.callback_query
+        await query.answer()
+        
+        # Get current mid-level users from database
+        mid_level_users = DatabaseQueries.get_all_mid_level_users()
+        
+        keyboard = [
+            [InlineKeyboardButton("➕ افزودن کاربر میان‌رده", callback_data="mid_level_add")],
+            [InlineKeyboardButton("📋 مشاهده لیست", callback_data="mid_level_list")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="settings")],
+        ]
+        
+        count = len(mid_level_users)
+        text = f"🏅 *مدیریت کاربران میان‌رده*\n\n"
+        text += f"📊 تعداد کاربران میان‌رده: {count}\n\n"
+        text += "دسترسی‌های کاربران میان‌رده:\n"
+        text += "• 🎫 مدیریت تیکت‌ها\n"
+        text += "• 💳 مدیریت پرداخت‌ها\n"
+        text += "• 📢 ارسال پیام همگانی"
+        
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    async def _mid_level_add_user_prompt(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Prompt admin to enter user ID for mid-level access"""
+        query = update.callback_query
+        await query.answer()
+        
+        text = "➕ *افزودن کاربر میان‌رده*\n\n"
+        text += "لطفاً ID کاربر را وارد کنید:\n\n"
+        text += "⚠️ توجه: ID عددی کاربر را وارد کنید نه username"
+        
+        keyboard = [[InlineKeyboardButton("❌ لغو", callback_data="settings_mid_level")]]
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        
+        # Set a flag to handle the next message as user ID
+        context.user_data['awaiting_mid_level_user_id'] = True
+    
+    async def _mid_level_list_users(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show list of current mid-level users with option to remove"""
+        query = update.callback_query
+        await query.answer()
+        
+        mid_level_users = DatabaseQueries.get_all_mid_level_users()
+        
+        if not mid_level_users:
+            text = "📋 *لیست کاربران میان‌رده*\n\n😔 هیچ کاربر میان‌رده‌ای یافت نشد."
+            keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="settings_mid_level")]]
+        else:
+            text = f"📋 *لیست کاربران میان‌رده* ({len(mid_level_users)})\n\n"
+            
+            keyboard = []
+            for user in mid_level_users:
+                user_id = user.get('telegram_id')
+                alias = user.get('alias', '')
+                created_at = user.get('created_at', '')
+                
+                display_text = f"👤 {user_id}"
+                if alias:
+                    display_text += f" ({alias})"
+                
+                text += f"{display_text}\n• تاریخ اضافه: {created_at[:10] if created_at else 'N/A'}\n\n"
+                
+                keyboard.append([InlineKeyboardButton(
+                    f"❌ حذف {user_id}", 
+                    callback_data=f"mid_level_remove_{user_id}"
+                )])
+            
+            keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="settings_mid_level")])
+        
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    async def _mid_level_remove_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Remove a user from mid-level access"""
+        query = update.callback_query
+        await query.answer()
+        
+        # Extract user ID from callback data
+        user_id = int(query.data.split('_')[-1])
+        
+        success = DatabaseQueries.remove_mid_level_user(user_id)
+        
+        if success:
+            text = f"✅ کاربر {user_id} با موفقیت از لیست میان‌رده‌ها حذف شد."
+        else:
+            text = f"❌ خطا در حذف کاربر {user_id}."
+        
+        keyboard = [
+            [InlineKeyboardButton("📋 بازگشت به لیست", callback_data="mid_level_list")],
+            [InlineKeyboardButton("🔙 منوی میان‌رده", callback_data="settings_mid_level")]
+        ]
+        
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 

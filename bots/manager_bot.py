@@ -33,6 +33,7 @@ from utils.expiration_reminder import (
 )
 from database.queries import DatabaseQueries
 from utils.helpers import is_user_in_admin_list, get_alias_from_admin_list, admin_only_decorator as admin_only, staff_only_decorator as staff_only
+from utils.admin_utils import staff_required
 import config # For other config vars like CHANNEL_ID
 from database.models import Database as DBConnection # For DB connection
 from handlers.admin.discount_handlers import get_create_discount_conv_handler
@@ -628,7 +629,7 @@ class ManagerBot:
 
 
     # --- Command Handlers ---
-    @staff_only
+    @staff_required
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle the /start command for admin users and serves as the main menu."""
         user = update.effective_user
@@ -636,6 +637,9 @@ class ManagerBot:
         self.logger.info(f"Admin user {admin_alias} ({user.id}) accessed the main menu.")
 
         is_admin_flag = is_user_in_admin_list(user.id, self.admin_config)
+        from utils.admin_utils import is_mid_level_user
+        is_mid_level_flag = is_mid_level_user(user.id)
+        
         if is_admin_flag:
             keyboard = [
                 [KeyboardButton(self.menu_handler.button_texts['users']), KeyboardButton(self.menu_handler.button_texts['products'])],
@@ -643,9 +647,16 @@ class ManagerBot:
                 [KeyboardButton(self.menu_handler.button_texts['broadcast']), KeyboardButton(self.menu_handler.button_texts['stats'])],
                 [KeyboardButton(self.menu_handler.button_texts['settings']), KeyboardButton(self.menu_handler.button_texts['back_to_main'])],
             ]
-        else:
+        elif is_mid_level_flag:
+            # Mid-level users can access tickets, payments, and broadcast
             keyboard = [
                 [KeyboardButton(self.menu_handler.button_texts['tickets']), KeyboardButton(self.menu_handler.button_texts['payments'])],
+                [KeyboardButton(self.menu_handler.button_texts['broadcast']), KeyboardButton(self.menu_handler.button_texts['back_to_main'])],
+            ]
+        else:
+            # Support users only get tickets
+            keyboard = [
+                [KeyboardButton(self.menu_handler.button_texts['tickets'])],
                 [KeyboardButton(self.menu_handler.button_texts['back_to_main'])],
             ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True, one_time_keyboard=False)
@@ -1047,6 +1058,9 @@ class ManagerBot:
 
         # --- Conversation and Callback Handlers ---
         # Add conversation handlers from different modules
+        # Import required handlers
+        from telegram.ext import CallbackQueryHandler, MessageHandler, filters
+        
         # Register AltSeason admin conversation handler
         application.add_handler(self.altseason_admin_handler.get_conv_handler())
 
@@ -1068,6 +1082,22 @@ class ManagerBot:
             filters.ChatType.PRIVATE & filters.REPLY & filters.TEXT,
             self.ticket_handler.receive_edited_answer
         ))
+        # Add broadcast callback handlers only (no ConversationHandler to avoid conflicts)
+        try:
+            from handlers.admin.broadcast_handler import add_select_callback, menu_callback, handle_message_content, audience_callback
+            
+            # Direct callback handlers for broadcast functionality
+            application.add_handler(CallbackQueryHandler(add_select_callback, pattern=r"^(bc_cat_|bc_plan_|bc_chan_|broadcast_continue|broadcast_cancel)"), group=-1)
+            application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^(broadcast_add|broadcast_send|broadcast_cancel)"), group=-1)
+            application.add_handler(CallbackQueryHandler(audience_callback, pattern=r"^(audience_active|audience_all)"), group=-1)
+            
+            # Message handler for broadcast text input (when bc_waiting_msg is set)
+            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_content), group=2)
+            
+            self.logger.info("Broadcast callback handlers added to manager bot (no ConversationHandler).")
+        except Exception as e:
+            self.logger.error(f"Failed to add broadcast handler: {e}")
+
         # Add all handlers from the menu handler, including conversation handlers
         for handler in self.menu_handler.get_handlers():
             application.add_handler(handler)

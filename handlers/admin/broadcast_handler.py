@@ -168,6 +168,16 @@ def _get_available_channels() -> list[dict]:
 
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start broadcast flow - show all products and categories for selection"""
+    # Check access permissions
+    from utils.admin_utils import has_broadcast_access
+    user_id = update.effective_user.id if update.effective_user else None
+    if not has_broadcast_access(user_id):
+        if update.callback_query:
+            await update.callback_query.answer("دسترسی محدود است.", show_alert=True)
+        elif update.effective_message:
+            await update.effective_message.reply_text("دسترسی محدود است.")
+        return
+    
     # Initialize broadcast data
     if "broadcast_buttons" not in context.user_data or not isinstance(context.user_data["broadcast_buttons"], list):
         context.user_data["broadcast_buttons"] = []
@@ -175,7 +185,6 @@ async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Show selection UI
     await _refresh_selection_message(update, context)
-    return ADD_SELECT
     
     # Build selection message helper
 async def _refresh_selection_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -258,6 +267,17 @@ async def _refresh_selection_message(update: Update, context: ContextTypes.DEFAU
 # ---------- Message content handler (admin sends actual message) ---------- #
 async def handle_message_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receive the admin's actual message content for broadcast and show a preview with selected buttons."""
+    # Only handle if we're waiting for broadcast message
+    if not context.user_data.get("bc_waiting_msg"):
+        return
+    
+    # Check access permissions
+    from utils.admin_utils import has_broadcast_access
+    user_id = update.effective_user.id if update.effective_user else None
+    if not has_broadcast_access(user_id):
+        await update.effective_message.reply_text("دسترسی محدود است.")
+        return
+    
     message = update.effective_message
     buttons_data = context.user_data.get("broadcast_buttons", [])
 
@@ -296,6 +316,9 @@ async def handle_message_content(update: Update, context: ContextTypes.DEFAULT_T
     # Keep original message object (only kept in-memory for this session)
     context.user_data["bc_draft_obj"] = message
 
+    # Clear waiting flag
+    context.user_data.pop("bc_waiting_msg", None)
+    
     # Offer menu
     await message.reply_text(
         "منو:",
@@ -312,6 +335,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle broadcast menu actions (add, send, cancel)"""
     query = update.callback_query
     await query.answer()
+    
+    # Check access permissions
+    from utils.admin_utils import has_broadcast_access
+    user_id = update.effective_user.id if update.effective_user else None
+    if not has_broadcast_access(user_id):
+        await query.answer("دسترسی محدود است.", show_alert=True)
+        return
     
     data = query.data
     logger.info(f"Broadcast menu_callback: {data}")
@@ -520,6 +550,13 @@ async def add_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     
+    # Check access permissions
+    from utils.admin_utils import has_broadcast_access
+    user_id = update.effective_user.id if update.effective_user else None
+    if not has_broadcast_access(user_id):
+        await query.answer("دسترسی محدود است.", show_alert=True)
+        return
+    
     data = query.data
     logger.info(f"Broadcast add_select_callback: {data}")
     
@@ -675,16 +712,18 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- ConversationHandler factory ---------- #
 
 def get_broadcast_conv_handler() -> ConversationHandler:
-        return ConversationHandler(
-
+    return ConversationHandler(
         entry_points=[
             CommandHandler("broadcast", broadcast_start),
-            CallbackQueryHandler(broadcast_start, pattern=r"^broadcast_custom$")
+            CallbackQueryHandler(broadcast_start, pattern=r"^broadcast_custom$"),
+            MessageHandler(filters.Text(["📢 ارسال پیام همگانی"]), broadcast_start)
         ],
         states={
             ASK_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_content)],
             MENU: [CallbackQueryHandler(menu_callback)],
-            ADD_SELECT: [CallbackQueryHandler(add_select_callback)],
+            ADD_SELECT: [
+                CallbackQueryHandler(add_select_callback, pattern=r"^(bc_cat_|bc_plan_|bc_chan_|broadcast_continue|broadcast_cancel)")
+            ],
             ASK_AUDIENCE: [CallbackQueryHandler(audience_callback)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],

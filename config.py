@@ -259,6 +259,7 @@ import json
 # --- Admin Role Constants ---
 ROLE_MAIN_BOT_ERROR_CONTACT = "main_bot_error_contact"
 ROLE_MAIN_BOT_SUPPORT_STAFF = "main_bot_support_staff"
+ROLE_MAIN_BOT_MID_LEVEL_STAFF = "main_bot_mid_level_staff"  # New mid-level role
 ROLE_MANAGER_BOT_ADMIN = "manager_bot_admin"
 ROLE_MANAGER_BOT_ERROR_CONTACT = "manager_bot_error_contact"
 # Add other roles here if any, e.g.:
@@ -277,6 +278,7 @@ except json.JSONDecodeError:
 
 MAIN_BOT_ERROR_CONTACT_IDS = []
 MAIN_BOT_SUPPORT_STAFF_LIST = [] # List of {"chat_id": int, "alias": str}
+MAIN_BOT_MID_LEVEL_STAFF_LIST = [] # List of {"chat_id": int, "alias": str} for mid-level users
 MANAGER_BOT_ADMINS_DICT = {} # Dict of {chat_id: alias}
 MANAGER_BOT_ERROR_CONTACT_IDS = []
 
@@ -293,6 +295,8 @@ for admin_info in ALL_ADMINS_LIST:
         MAIN_BOT_ERROR_CONTACT_IDS.append(chat_id)
     if ROLE_MAIN_BOT_SUPPORT_STAFF in roles:
         MAIN_BOT_SUPPORT_STAFF_LIST.append({"chat_id": chat_id, "alias": alias})
+    if ROLE_MAIN_BOT_MID_LEVEL_STAFF in roles:
+        MAIN_BOT_MID_LEVEL_STAFF_LIST.append({"chat_id": chat_id, "alias": alias})
     if ROLE_MANAGER_BOT_ADMIN in roles:
         MANAGER_BOT_ADMINS_DICT[chat_id] = alias
     if ROLE_MANAGER_BOT_ERROR_CONTACT in roles:
@@ -307,9 +311,11 @@ if not ADMIN_USER_IDS:
 if not MAIN_BOT_ERROR_CONTACT_IDS:
     logger.warning(f"No admin configured with '{ROLE_MAIN_BOT_ERROR_CONTACT}' role. Main bot error reporting via Telegram might be disabled.")
 if not MAIN_BOT_SUPPORT_STAFF_LIST:
-    logger.info(f"No admin configured with '{ROLE_MAIN_BOT_SUPPORT_STAFF}' role. Main bot might not display support staff info if this list is used directly for that.")
+    logger.warning(f"No admin configured with '{ROLE_MAIN_BOT_SUPPORT_STAFF}' role. Support staff list will be empty.")
+if not MAIN_BOT_MID_LEVEL_STAFF_LIST:
+    logger.info(f"No admin configured with '{ROLE_MAIN_BOT_MID_LEVEL_STAFF}' role. Mid-level staff list will be empty.")
 if not MANAGER_BOT_ADMINS_DICT:
-    logger.warning(f"No admin configured with '{ROLE_MANAGER_BOT_ADMIN}' role. Manager bot may not be accessible by any admin.")
+    logger.warning(f"No admin configured with '{ROLE_MANAGER_BOT_ADMIN}' role. Manager bot admin commands will be disabled.")
 if not MANAGER_BOT_ERROR_CONTACT_IDS:
     logger.warning(f"No admin configured with '{ROLE_MANAGER_BOT_ERROR_CONTACT}' role. Manager bot error reporting via Telegram might be disabled.")
 

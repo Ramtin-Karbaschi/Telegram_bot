@@ -178,7 +178,7 @@ def get_main_menu_keyboard(user_id=None, is_admin=False, is_registered=False):
             InlineKeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow"),
             # AltSeason inline button if feature enabled
             *( [InlineKeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON, callback_data="altseason_flow")] if __import__('database.altseason_queries', fromlist=['AltSeasonQueries']).AltSeasonQueries().is_enabled() else [] ),
-            *( [InlineKeyboardButton(promo_text, callback_data=f"products_menu_{promo_cat}")] if (lambda: (
+            *( [InlineKeyboardButton(promo_text, callback_data=(f"plan_{promo_cat}" if promo_status.get('item_type') == 'product' else f"products_menu_{promo_cat}"))] if (lambda: (
                 (promo_status := __import__('handlers.admin_promotional_category', fromlist=['PromotionalCategoryManager']).PromotionalCategoryManager.get_promotional_category_status()),
                 promo_text := promo_status.get('button_text'),
                 promo_cat := promo_status.get('category_id'),
@@ -245,7 +245,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False, paid_only: bool = True, category_id: int | None = None):
+def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False, paid_only: bool = True, category_id: int | None = None, specific_plan_id: int | None = None):
     """Build an inline keyboard of subscription plans.
 
     Parameters
@@ -262,6 +262,22 @@ def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False
     # Lazy import to avoid circular dependency
     from database.queries import DatabaseQueries as _DB
     all_plans = [dict(r) for r in _DB.get_active_plans()]  # Convert Row→dict
+
+    # ----------------------------------------------------------
+    # If a single plan is explicitly requested (e.g. promo button)
+    # ----------------------------------------------------------
+    if specific_plan_id is not None:
+        plan = next((p for p in all_plans if p['id'] == specific_plan_id), None)
+        if not plan:
+            logger.warning(f"specific_plan_id {specific_plan_id} not found among active plans")
+            return InlineKeyboardMarkup([[InlineKeyboardButton("❌ طرح یافت نشد", callback_data="no_plans_available")]])
+        from utils.text_utils import buttonize_markdown
+        button_text = buttonize_markdown(plan['name'])
+        keyboard = [
+            [InlineKeyboardButton(button_text, callback_data=f"plan_{plan['id']}")],
+            [InlineKeyboardButton("↩ بازگشت", callback_data="products_menu")]
+        ]
+        return InlineKeyboardMarkup(keyboard)
 
     # Filter according to price category
     filtered_plans: list = []
@@ -539,7 +555,7 @@ def get_back_to_ask_discount_keyboard():
             InlineKeyboardButton(constants.TEXT_MAIN_MENU_FREE_PACKAGE, callback_data="free_package_flow"),
             # AltSeason inline button if feature enabled
             *( [InlineKeyboardButton(constants.TEXT_MAIN_MENU_ALTSEASON, callback_data="altseason_flow")] if __import__('database.altseason_queries', fromlist=['AltSeasonQueries']).AltSeasonQueries().is_enabled() else [] ),
-            *( [InlineKeyboardButton(promo_text, callback_data=f"products_menu_{promo_cat}")] if (lambda: (
+            *( [InlineKeyboardButton(promo_text, callback_data=(f"plan_{promo_cat}" if promo_status.get('item_type') == 'product' else f"products_menu_{promo_cat}"))] if (lambda: (
                 (promo_status := __import__('handlers.admin_promotional_category', fromlist=['PromotionalCategoryManager']).PromotionalCategoryManager.get_promotional_category_status()),
                 promo_text := promo_status.get('button_text'),
                 promo_cat := promo_status.get('category_id'),

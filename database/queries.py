@@ -2627,6 +2627,87 @@ class DatabaseQueries:
             finally:
                 db.close()
         return False
+    
+    @staticmethod
+    def is_mid_level_user(telegram_id: int) -> bool:
+        """Return True if telegram_id exists in mid_level_users table and is active."""
+        db = Database()
+        if db.connect():
+            try:
+                db.execute("SELECT 1 FROM mid_level_users WHERE telegram_id = ?", (telegram_id,))
+                result = db.fetchone()
+                db.close()
+                return bool(result)
+            except Exception as exc:
+                logging.error("SQLite error in is_mid_level_user: %s", exc)
+                return False
+            finally:
+                db.close()
+        return False
+
+    @staticmethod
+    def add_mid_level_user(telegram_id: int, alias: str = "") -> bool:
+        """Add a user to mid_level_users table."""
+        db = Database()
+        if not db.connect():
+            return False
+        try:
+            # First check if user already exists
+            db.execute("SELECT 1 FROM mid_level_users WHERE telegram_id = ?", (telegram_id,))
+            if db.fetchone():
+                logging.info(f"User {telegram_id} is already a mid-level user")
+                return True
+            
+            # Add the user
+            current_time = get_current_time().strftime("%Y-%m-%d %H:%M:%S")
+            db.execute(
+                "INSERT INTO mid_level_users (telegram_id, alias, created_at) VALUES (?, ?, ?)",
+                (telegram_id, alias, current_time)
+            )
+            db.commit()
+            logging.info(f"Added user {telegram_id} as mid-level user")
+            return True
+        except Exception as exc:
+            logging.error(f"Error adding mid-level user {telegram_id}: {exc}")
+            return False
+        finally:
+            db.close()
+    
+    @staticmethod
+    def remove_mid_level_user(telegram_id: int) -> bool:
+        """Remove a user from mid_level_users table."""
+        db = Database()
+        if not db.connect():
+            return False
+        try:
+            db.execute("DELETE FROM mid_level_users WHERE telegram_id = ?", (telegram_id,))
+            db.commit()
+            deleted = db.cursor.rowcount > 0
+            if deleted:
+                logging.info(f"Removed user {telegram_id} from mid-level users")
+            else:
+                logging.info(f"User {telegram_id} was not a mid-level user")
+            return True
+        except Exception as exc:
+            logging.error(f"Error removing mid-level user {telegram_id}: {exc}")
+            return False
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_all_mid_level_users() -> list:
+        """Get all mid-level users."""
+        db = Database()
+        if not db.connect():
+            return []
+        try:
+            db.execute("SELECT telegram_id, alias, created_at FROM mid_level_users ORDER BY created_at DESC")
+            return [dict(row) for row in db.fetchall()]
+        except Exception as exc:
+            logging.error(f"Error getting mid-level users: {exc}")
+            return []
+        finally:
+            db.close()
 
     # ---- User Subscription Summary Helpers ----
     @staticmethod
