@@ -15,11 +15,11 @@ async def promotional_category_text_handler(update: Update, context: ContextType
         text = update.message.text
         
         # بررسی اینکه آیا این متن مربوط به دکمه تبلیغاتی است
-        handled = await handle_promotional_category_button(text, update, context)
+        result = await handle_promotional_category_button(text, update, context)
         
-        if handled:
+        if result is not False:  # اگر result یک state باشد یا True باشد
             logger.info(f"Promotional category button handled for user {update.effective_user.id}")
-            return
+            return result  # برگرداندن state conversation
         
         # اگر handle نشد، ادامه معمولی
         return
