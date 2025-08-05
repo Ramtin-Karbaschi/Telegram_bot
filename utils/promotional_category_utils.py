@@ -114,30 +114,51 @@ async def handle_promotional_product_click(product_id: int, update, context):
             })
 
         # ------------------------------
-        # 3. ارسال پیام انتخاب روش پرداخت (مطابق مسیر VIP)
+        # 3. بررسی فعال بودن مرحله کد تخفیف و نمایش مناسب
         # ------------------------------
-        from utils.constants.all_constants import PAYMENT_METHOD_MESSAGE
-        from utils.text_utils import buttonize_markdown as _btn_md
-
-        plan_display_name = _btn_md(product.get("name", "محصول"))
-        plan_price_irr_formatted = f"{irr_price:,}" if 'irr_price' in locals() else "-"
-        plan_price_usdt_formatted = f"{usdt_price}" if 'usdt_price' in locals() else "-"
-
-        message_text = PAYMENT_METHOD_MESSAGE.format(
-            plan_name=plan_display_name,
-            plan_price=plan_price_irr_formatted,
-            plan_tether=plan_price_usdt_formatted
-        )
-        message_text += "\n\n⚠️ قیمت‌ها تا ۳۰ دقیقه اعتبار دارند."
-
-        await update.message.reply_text(
-            message_text,
-            reply_markup=get_payment_methods_keyboard(),
-            parse_mode="HTML"
-        )
-        # جریان مکالمه باید به SELECT_PAYMENT_METHOD هدایت شود؛ مقدار ثابت را از ماژول پرداخت وارد می‌کنیم.
-        from handlers.payment.payment_handlers import SELECT_PAYMENT_METHOD as _SELECT_PAYMENT_METHOD
-        return _SELECT_PAYMENT_METHOD
+        from database.queries import DatabaseQueries
+        from utils.keyboards import get_ask_discount_keyboard, get_payment_methods_keyboard
+        from utils.text_utils import buttonize_markdown
+        
+        # بررسی فعال بودن مرحله کد تخفیف
+        discount_step_enabled = DatabaseQueries.get_setting("enable_discount_code_step", "1") == "1"
+        
+        if discount_step_enabled:
+            # نمایش سوال کد تخفیف
+            plan_display_name = buttonize_markdown(product.get("name", "محصول"))
+            message_text = f"شما پلن «{plan_display_name}» را انتخاب کرده‌اید. آیا کد تخفیف دارید؟"
+            
+            await update.message.reply_text(
+                message_text,
+                reply_markup=get_ask_discount_keyboard(),
+                parse_mode="HTML"
+            )
+            
+            from handlers.payment.payment_handlers import ASK_DISCOUNT
+            return ASK_DISCOUNT
+        else:
+            # رد کردن مرحله کد تخفیف و نمایش مستقیم روش‌های پرداخت
+            from utils.constants.all_constants import PAYMENT_METHOD_MESSAGE
+            
+            plan_display_name = buttonize_markdown(product.get("name", "محصول"))
+            plan_price_irr_formatted = f"{irr_price:,}" if 'irr_price' in locals() else "-"
+            plan_price_usdt_formatted = f"{usdt_price}" if 'usdt_price' in locals() else "-"
+            
+            message_text = PAYMENT_METHOD_MESSAGE.format(
+                plan_name=plan_display_name,
+                plan_price=plan_price_irr_formatted,
+                plan_tether=plan_price_usdt_formatted
+            )
+            message_text += "\n\n⚠️ قیمت‌ها تا ۳۰ دقیقه اعتبار دارند."
+            
+            await update.message.reply_text(
+                message_text,
+                reply_markup=get_payment_methods_keyboard(),
+                parse_mode="HTML"
+            )
+            
+            from handlers.payment.payment_handlers import SELECT_PAYMENT_METHOD
+            return SELECT_PAYMENT_METHOD
 
     except Exception as e:
         logger.error(f"Error handling promotional product click: {e}")

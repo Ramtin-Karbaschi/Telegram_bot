@@ -499,9 +499,7 @@ class MainBot:
         self.altseason_handler = AltSeasonHandler()
         for h in self.altseason_handler.get_handlers():
             self.application.add_handler(h, group=0)
-        # Promotional category button handler (reply button)
-        from handlers.promotional_category_integration import get_promotional_category_handler
-        self.application.add_handler(get_promotional_category_handler(), group=0)
+        # Promotional category button handler will be added to payment conversation instead
 
         # Free Package conversation handler
         self.application.add_handler(get_free_package_conv_handler(), group=0)
@@ -532,6 +530,22 @@ class MainBot:
         # ---------------- Payment conversation AFTER free package ----------------
         # Add the 'products' text button as an entry point to the conversation
         payment_conversation.entry_points.append(MessageHandler(filters.TEXT & filters.Regex(r"^🛒 (?:محصولات|خدمات VIP)$"), start_subscription_flow))
+        
+        # Add promotional category button as entry point to payment conversation
+        from handlers.promotional_category_integration import promotional_category_text_handler
+        from utils.promotional_category_utils import get_promotional_category_button
+        
+        # Get promotional button text dynamically and add to conversation entry points
+        try:
+            promo_button = get_promotional_category_button()
+            if promo_button:
+                promo_text = promo_button.text
+                payment_conversation.entry_points.append(
+                    MessageHandler(filters.TEXT & filters.Regex(f"^{promo_text}$"), promotional_category_text_handler)
+                )
+        except Exception as e:
+            logger.error(f"Failed to add promotional button to payment conversation: {e}")
+            
         self.application.add_handler(payment_conversation, group=1)
 
         # Handler for back button from payment method selection to plan selection
