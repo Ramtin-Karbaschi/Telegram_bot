@@ -867,7 +867,6 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             [InlineKeyboardButton("💰 تراکنش‌های اخیر", callback_data="payments_recent"), InlineKeyboardButton("🔍 جستجوی پرداخت", callback_data="payments_search")],
             [InlineKeyboardButton("📊 گزارش فروش محصولات", callback_data="product_sales_reports")],
             [InlineKeyboardButton("📤 خروجی مشترکین", callback_data=self.EXPORT_SUBS_MENU), InlineKeyboardButton("📈 آمار اشتراک‌ها", callback_data="payments_stats")],
-            [InlineKeyboardButton("💰 پنل کریپتو", callback_data="crypto_panel")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text("💳 *مدیریت پرداخت‌ها*:\nچه کاری می‌خواهید انجام دهید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -884,6 +883,7 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             [InlineKeyboardButton("➕ محصول جدید", callback_data="products_add"), InlineKeyboardButton("📜 محصولات", callback_data="products_list")],
             [InlineKeyboardButton("📂 مدیریت دسته‌بندی‌ها", callback_data="manage_categories")],
             [InlineKeyboardButton("آلت‌سیزن", callback_data="altseason_admin")],
+            [InlineKeyboardButton("💰 پنل کریپتو", callback_data="crypto_panel")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text("📦 *مدیریت محصولات*:\nچه کاری می‌خواهید انجام دهید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))

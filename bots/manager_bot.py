@@ -1346,7 +1346,7 @@ def setup_handlers(self):
     admin_button_filter = filters.Text(list(self.admin_buttons_map.keys()))
     application.add_handler(MessageHandler(
          admin_button_filter & filters.ChatType.PRIVATE,
-         self._admin_reply_keyboard_handler
+         self.menu_handler.route_admin_command
      ), group=2)
 
     # This is a general message handler for admins, which can be used for features like search.
