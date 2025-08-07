@@ -280,6 +280,46 @@ async def activate_or_extend_subscription(
             logger.error(f"Failed to add subscription to DB for user_id: {user_id}, plan_id: {plan_id}.")
             return False, "خطا در ثبت اولیه اشتراک در پایگاه داده."
 
+        # --- Immediate sales report to channel ---
+        try:
+            channel_id = getattr(config, "PURCHASE_REPORT_CHANNEL_ID", -1002326841125)
+            if channel_id:
+                # Try to fetch username for prettier display
+                username = None
+                try:
+                    chat_info = await context.bot.get_chat(telegram_id)
+                    if chat_info.username:
+                        username = f"@{chat_info.username}"
+                except Exception:
+                    pass  # Ignore lookup failures
+                user_display = username if username else f"ID:{telegram_id}"
+
+                # Format amount based on method and set hashtag
+                pm_lower = payment_method.lower()
+                if pm_lower in ["rial", "zarinpal"]:
+                    price_formatted = f"{int(payment_amount):,} تومان"
+                    purchase_tag = "#خرید_ریالی"
+                elif pm_lower in ["tether", "usdt"]:
+                    price_formatted = f"{payment_amount} تتر"
+                    purchase_tag = "#خرید_تتری"
+                else:
+                    price_formatted = "رایگان"
+                    purchase_tag = "#خرید_رایگان"
+
+                # Send nicely formatted, multi-line notification with hashtag on top
+                await context.bot.send_message(
+                    chat_id=channel_id,
+                    text=(
+                        f"{purchase_tag}\n"
+                        f"🛒 خرید جدید!\n"
+                        f"👤 کاربر: {user_display}\n"
+                        f"📦 محصول: {plan_name}\n"
+                        f"💰 مبلغ: {price_formatted}"
+                    )
+                )
+        except Exception as e:
+            logger.error(f"Failed to send immediate purchase report: {e}")
+
         # --- New Logic: Update user's subscription summary ---
         logger.info(f"Updating user subscription summary for user_id: {user_id}")
         

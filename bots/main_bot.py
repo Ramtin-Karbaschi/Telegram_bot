@@ -209,6 +209,19 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             payment_method='zarinpal'
                         )
                         if subscription_id:
+                            # --- Send sales report message to channel ---
+                            try:
+                                sales_channel_id = -1002326841125  # گزارشهای فروش
+                                username = update.effective_user.username if update.effective_user and update.effective_user.username else None
+                                user_display = f"@{username}" if username else f"ID:{user_id}"
+                                price_formatted = f"{int(rial_amount):,} تومان"
+                                await context.bot.send_message(
+                                    chat_id=sales_channel_id,
+                                    text=f"🛒 {user_display} محصول {plan_info['name']} را به قیمت {price_formatted} خریداری کرد."
+                                )
+                            except Exception as e:
+                                logger.error(f"Failed to send sales report message: {e}")
+
                             # Increment discount usage count if a discount was applied
                             did = context.user_data.get('discount_id') if 'discount_id' in context.user_data else payment.get('discount_id')
                             if did:
