@@ -1270,8 +1270,9 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         # Use the updated comprehensive stats handler
         await self._show_stats_handler(query)
 
-    async def _products_submenu(self, query):
-        """Display products management submenu."""
+    # LEGACY minimal products submenu (kept for backwards compatibility but renamed)
+    async def _products_submenu_legacy(self, query):
+        """[LEGACY] Display minimal products management submenu."""
         keyboard = [
             [InlineKeyboardButton("📋 لیست محصولات", callback_data="products_list")],
             [InlineKeyboardButton("📈 گزارش فروش محصولات", callback_data="products_sales_reports")],
