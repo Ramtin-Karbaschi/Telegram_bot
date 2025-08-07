@@ -883,6 +883,7 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             [InlineKeyboardButton("➕ محصول جدید", callback_data="products_add"), InlineKeyboardButton("📜 محصولات", callback_data="products_list")],
             [InlineKeyboardButton("📂 مدیریت دسته‌بندی‌ها", callback_data="manage_categories")],
             [InlineKeyboardButton("آلت‌سیزن", callback_data="altseason_admin")],
+            [InlineKeyboardButton("📈 گزارش فروش محصولات", callback_data="product_sales_reports")],
             [InlineKeyboardButton("💰 پنل کریپتو", callback_data="crypto_panel")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
