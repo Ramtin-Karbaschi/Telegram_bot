@@ -240,19 +240,21 @@ async def _refresh_selection_message(update: Update, context: ContextTypes.DEFAU
     if update.callback_query:
         try:
             await update.callback_query.edit_message_text(
-                "🎯 **انتخاب دکمه‌های پیام همگانی**\n\n"
-                "دسته‌بندی‌ها و محصولاتی که می‌خواهید به عنوان دکمه در پیام نمایش داده شوند را انتخاب کنید:\n\n"
-                f"**انتخاب شده:** {len(context.user_data.get('broadcast_buttons', []))} مورد",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown"
+                "🎯 انتخاب دکمه‌های پیام همگانی\n\n"
+                "دسته‌بندی‌ها و محصولاتی که می‌خواهید به عنوان دکمه در پیام نمایش داده شوند را انتخاب کنید:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
         except Exception as e:
             if "Message is not modified" in str(e):
                 # Message content is the same, just answer the callback
                 await update.callback_query.answer()
             else:
-                # Re-raise other exceptions
-                raise e
+                logger.error(f"Error editing broadcast selection message: {e}")
+                # Try to answer the callback anyway
+                try:
+                    await update.callback_query.answer()
+                except:
+                    pass
     else:
         await update.message.reply_text(
             "🎯 **انتخاب دکمه‌های پیام همگانی**\n\n"
@@ -364,12 +366,20 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("❌ لغو", callback_data="broadcast_cancel")]
         ])
         
-        await query.edit_message_text(
-            "👥 **انتخاب مخاطبان**\n\n"
-            "پیام برای چه کسانی ارسال شود؟",
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
+        try:
+            await query.edit_message_text(
+                "👥 **انتخاب مخاطبان**\n\n"
+                "پیام برای چه کسانی ارسال شود؟",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            if "Message is not modified" in str(e):
+                # Message content is identical, just answer the callback
+                await query.answer()
+            else:
+                logger.error(f"Error editing message in menu_callback: {e}")
+                await query.answer("خطا در بروزرسانی پیام", show_alert=True)
         context.user_data["bc_in_audience"] = True
         
     elif data == "broadcast_cancel":
@@ -580,11 +590,11 @@ async def add_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                         "text": category["name"],
                         "url": None  # Will be set during broadcast
                     })
-                    await query.answer(f"✅ دسته '{category['name']}' اضافه شد")
+                    await query.answer(f"✅ دسته '{category['name']}' انتخاب شد", show_alert=False)
                 else:
                     # Remove if already exists
                     buttons[:] = [b for b in buttons if not (b.get("type") == "category" and b.get("id") == category_id)]
-                    await query.answer(f"❌ دسته '{category['name']}' حذف شد")
+                    await query.answer(f"❌ دسته '{category['name']}' حذف شد", show_alert=False)
             
             # Refresh the selection page
             await _refresh_selection_message(update, context)
@@ -603,10 +613,10 @@ async def add_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                         "text": ch_obj.get("name"),
                         "url": ch_obj.get("url")
                     })
-                    await query.answer(f"✅ کانال '{ch_obj.get('name')}' اضافه شد")
+                    await query.answer(f"✅ کانال '{ch_obj.get('name')}' انتخاب شد", show_alert=False)
                 else:
                     buttons[:] = [b for b in buttons if not (b.get("type") == "channel" and str(b.get("id")) == chan_id)]
-                    await query.answer(f"❌ کانال '{ch_obj.get('name')}' حذف شد")
+                    await query.answer(f"❌ کانال '{ch_obj.get('name')}' حذف شد", show_alert=False)
             await _refresh_selection_message(update, context)
 
         elif data.startswith("bc_plan_"):
@@ -625,11 +635,11 @@ async def add_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                         "text": plan["name"],
                         "url": None  # Will be set during broadcast
                     })
-                    await query.answer(f"✅ محصول '{plan['name']}' اضافه شد")
+                    await query.answer(f"✅ محصول '{plan['name']}' انتخاب شد", show_alert=False)
                 else:
                     # Remove if already exists
                     buttons[:] = [b for b in buttons if not (b.get("type") == "plan" and b.get("id") == plan_id)]
-                    await query.answer(f"❌ محصول '{plan['name']}' حذف شد")
+                    await query.answer(f"❌ محصول '{plan['name']}' حذف شد", show_alert=False)
             
             # Refresh the selection page
             await _refresh_selection_message(update, context)

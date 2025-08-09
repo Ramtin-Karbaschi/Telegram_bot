@@ -1149,8 +1149,7 @@ class ManagerBot:
         try:
             from handlers.admin.broadcast_handler import add_select_callback, menu_callback, handle_message_content, audience_callback
             
-            # Direct callback handlers for broadcast functionality
-            application.add_handler(CallbackQueryHandler(add_select_callback, pattern=r"^(bc_cat_|bc_plan_|bc_chan_|broadcast_continue|broadcast_cancel)"), group=-1)
+            # Direct callback handlers for broadcast functionality (selection handled by admin_menu_handlers routing)
             application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^(broadcast_add|broadcast_send|broadcast_cancel)"), group=-1)
             application.add_handler(CallbackQueryHandler(audience_callback, pattern=r"^(audience_active|audience_all)"), group=-1)
             
