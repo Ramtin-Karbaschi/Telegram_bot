@@ -258,8 +258,8 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
                     
                     if plan_id:
                         try:
-                            active_count = DatabaseQueries.get_active_subscriptions_count_for_plan(plan_id) or 0
-                            total_count = DatabaseQueries.get_total_subscriptions_count_for_plan(plan_id) or 0
+                            active_count = DatabaseQueries.count_subscriptions_for_plan(plan_id) or 0
+                            total_count = DatabaseQueries.count_total_subscriptions_for_plan(plan_id) or 0
                             expired_count = total_count - active_count
                             
                             total_active_subs += active_count
@@ -292,47 +292,72 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             
             # === Payment Statistics ===
             try:
-                # Get payment statistics
+                # Compute payment statistics directly from DB (supports both payments and crypto_payments)
                 total_payments = 0
                 successful_payments = 0
-                total_revenue = 0
-                
-                # Try to get payment data (methods may not exist)
+                total_revenue = 0.0  # IRR
+
+                from database.models import Database
+                db = Database()
+                cursor = db.conn.cursor()
+
+                # Total payment attempts
                 try:
-                    payments_data = DatabaseQueries.get_payment_statistics() or {}
-                    total_payments = payments_data.get('total', 0)
-                    successful_payments = payments_data.get('successful', 0)
-                    total_revenue = payments_data.get('revenue', 0)
-                except:
-                    # Fallback: try to count from plans sales
-                    for plan in plans:
-                        if isinstance(plan, dict):
-                            plan_id = plan.get('id')
-                            plan_price = plan.get('price', 0)
-                        else:
-                            plan_id = plan[0] if len(plan) > 0 else None
-                            plan_price = plan[3] if len(plan) > 3 else 0
-                        
-                        if plan_id:
-                            try:
-                                sales_count = DatabaseQueries.get_plan_sales_count(plan_id) or 0
-                                total_payments += sales_count
-                                successful_payments += sales_count
-                                total_revenue += (sales_count * plan_price)
-                            except:
-                                continue
-                
+                    cursor.execute("SELECT COUNT(*) FROM payments")
+                    total_payments += cursor.fetchone()[0] or 0
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='crypto_payments'")
+                    if cursor.fetchone():
+                        cursor.execute("SELECT COUNT(*) FROM crypto_payments")
+                        total_payments += cursor.fetchone()[0] or 0
+                except Exception:
+                    pass
+
+                # Successful payments
+                try:
+                    cursor.execute("SELECT COUNT(*) FROM payments WHERE status IN ('paid','completed','successful','verified')")
+                    successful_payments += cursor.fetchone()[0] or 0
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='crypto_payments'")
+                    if cursor.fetchone():
+                        cursor.execute("SELECT COUNT(*) FROM crypto_payments WHERE status IN ('paid','paid-late','completed','successful','verified')")
+                        successful_payments += cursor.fetchone()[0] or 0
+                except Exception:
+                    pass
+
+                # Total IRR revenue
+                try:
+                    cursor.execute("SELECT SUM(amount) FROM payments WHERE status IN ('paid','completed','successful','verified') AND amount IS NOT NULL AND amount > 0")
+                    res = cursor.fetchone()[0]
+                    if res:
+                        total_revenue += float(res)
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='crypto_payments'")
+                    if cursor.fetchone():
+                        cursor.execute("SELECT SUM(rial_amount) FROM crypto_payments WHERE status IN ('paid','paid-late','completed','successful','verified') AND rial_amount IS NOT NULL AND rial_amount > 0")
+                        res = cursor.fetchone()[0]
+                        if res:
+                            total_revenue += float(res)
+                except Exception:
+                    pass
+
                 message_text += "💰 <b>آمار مالی:</b>\n"
                 message_text += f"• کل پرداخت‌ها: <code>{total_payments:,}</code>\n"
                 if total_payments > 0:
                     success_rate = (successful_payments / total_payments * 100)
                     message_text += f"• نرخ موفقیت: <code>{success_rate:.1f}%</code>\n"
                 message_text += f"• کل درآمد: <code>{total_revenue:,.0f}</code> تومان\n"
-                
+
                 if total_payments > 0:
                     avg_payment = total_revenue / total_payments
                     message_text += f"• میانگین پرداخت: <code>{avg_payment:,.0f}</code> تومان\n"
-                
+
                 message_text += "\n"
             except Exception as e:
                 logger.error(f"Error getting payment stats: {e}")
@@ -636,6 +661,8 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             await query.edit_message_text("🔎 لطفاً شناسه پرداخت یا هش تراکنش را ارسال کنید:")
             context.user_data["awaiting_payment_search"] = True
             await self._show_recent_payments(query)
+        elif data == "payments_export_excel":
+            await self._export_payments_excel(query, context)
         elif data == "payments_stats":
             await self._show_payments_stats(query)
         # ----- Crypto panel actions -----
@@ -867,6 +894,7 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             [InlineKeyboardButton("💰 تراکنش‌های اخیر", callback_data="payments_recent"), InlineKeyboardButton("🔍 جستجوی پرداخت", callback_data="payments_search")],
             [InlineKeyboardButton("📊 گزارش فروش محصولات", callback_data="product_sales_reports")],
             [InlineKeyboardButton("📤 خروجی مشترکین", callback_data=self.EXPORT_SUBS_MENU), InlineKeyboardButton("📈 آمار اشتراک‌ها", callback_data="payments_stats")],
+            [InlineKeyboardButton("📤 خروجی اکسل پرداخت‌ها", callback_data="payments_export_excel")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]
         await query.edit_message_text("💳 *مدیریت پرداخت‌ها*:\nچه کاری می‌خواهید انجام دهید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -2195,6 +2223,77 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
                     InlineKeyboardButton("🔙 بازگشت", callback_data=self.PAYMENTS_MENU)
                 ]])
             )
+    
+    async def _export_payments_excel(self, query, context):
+        """Generate an Excel workbook with payments-related data and send it to the admin.
+        Sheets: payments, crypto_payments, payment_status_history
+        """
+        await query.answer()
+        try:
+            import sqlite3
+            from io import BytesIO
+            from datetime import datetime
+            import pandas as pd
+            from database.models import Database
+        except Exception as e:
+            logger.error(f"Import error for payments export: {e}")
+            await query.answer("❌ پیش‌نیازها نصب نیستند (pandas).", show_alert=True)
+            return
+
+        # Ensure DB connection
+        db = Database()
+        if not db.connect():
+            await query.answer("❌ خطا در اتصال به دیتابیس.", show_alert=True)
+            return
+
+        try:
+            # Make sure rows are dict-like
+            db.conn.row_factory = sqlite3.Row  # type: ignore[attr-defined]
+            cursor = db.cursor
+
+            # Determine Excel engine
+            try:
+                import xlsxwriter  # noqa: F401
+                engine_name = "xlsxwriter"
+            except ImportError:
+                try:
+                    import openpyxl  # noqa: F401
+                    engine_name = "openpyxl"
+                except ImportError:
+                    await query.answer("❌ هیچ‌یک از پکیج‌های xlsxwriter یا openpyxl نصب نیست.", show_alert=True)
+                    return
+
+            tables = ["payments", "crypto_payments", "payment_status_history"]
+            bio = BytesIO()
+            with pd.ExcelWriter(bio, engine=engine_name) as writer:
+                for table in tables:
+                    try:
+                        cursor.execute(f"SELECT * FROM {table}")
+                        rows = cursor.fetchall() or []
+                        df = pd.DataFrame([dict(r) for r in rows]) if rows else pd.DataFrame()
+                        # Excel sheet names are max 31 chars
+                        sheet = table[:31]
+                        df.to_excel(writer, sheet_name=sheet, index=False)
+                    except Exception as exc:
+                        logger.error(f"Failed reading table {table}: {exc}")
+                        # still create an empty sheet to indicate presence
+                        pd.DataFrame().to_excel(writer, sheet_name=table[:31], index=False)
+
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            bio.name = f"payments_export_{ts}.xlsx"
+            bio.seek(0)
+
+            await context.bot.send_document(
+                chat_id=query.from_user.id,
+                document=bio,
+                filename=bio.name,
+            )
+            await query.answer("📤 فایل اکسل پرداخت‌ها ارسال شد")
+        except Exception as e:
+            logger.error(f"Error generating payments Excel: {e}", exc_info=True)
+            await query.answer("❌ خطا در تولید فایل اکسل پرداخت‌ها.", show_alert=True)
+        finally:
+            db.close()
     async def _show_admins_settings(self, query):
         """Display list of configured admins. Use safe HTML formatting to avoid Markdown errors."""
         import html as _html
