@@ -3291,13 +3291,25 @@ class AdminProductHandler:
         context.user_data.clear()
         return ConversationHandler.END
 
+    async def _handle_delete_plan_confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Wrapper for CallbackQueryHandler to call delete_plan_confirmation with correct args."""
+        query = update.callback_query
+        data = query.data or ""
+        try:
+            plan_id = int(data.rsplit("_", 1)[1])
+        except Exception:
+            # Fallback: alert invalid callback data
+            await query.answer("شناسه پلن نامعتبر است.", show_alert=True)
+            return
+        await self.delete_plan_confirmation(query, plan_id)
+
     def get_static_product_handlers(self):
         return [
             CallbackQueryHandler(self.handle_show_all_plans, pattern='^products_show_all$'),
             CallbackQueryHandler(self.handle_view_single_plan, pattern='^view_plan_'),
             CallbackQueryHandler(self.handle_toggle_plan_status, pattern='^toggle_plan_active_'),
             CallbackQueryHandler(self.handle_toggle_plan_visibility, pattern='^toggle_plan_public_'),
-            CallbackQueryHandler(self.delete_plan_confirmation, pattern='^delete_plan_confirm_'),
+            CallbackQueryHandler(self._handle_delete_plan_confirm, pattern='^delete_plan_confirm_'),
             CallbackQueryHandler(self.delete_plan, pattern='^delete_plan_execute_')
         ]
 
