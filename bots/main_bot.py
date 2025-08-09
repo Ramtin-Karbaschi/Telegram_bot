@@ -211,7 +211,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if subscription_id:
                             # --- Send sales report message to channel ---
                             try:
-                                sales_channel_id = -1002326841125  # گزارشهای فروش
+                                sales_channel_id = config.SALE_CHANNEL_ID  # گزارشهای فروش
                                 username = update.effective_user.username if update.effective_user and update.effective_user.username else None
                                 user_display = f"@{username}" if username else f"ID:{user_id}"
                                 price_formatted = f"{int(rial_amount):,} تومان"
@@ -424,13 +424,11 @@ class MainBot:
                 # Create a persistence object
         persistence = PicklePersistence(filepath="database/data/bot_persistence.pkl")
         
-        # Configure HTTPX request with extended timeouts for large file uploads
-        request = HTTPXRequest(connect_timeout=30.0, read_timeout=300.0, write_timeout=300.0)
+        # Build application with default settings (avoiding HTTPXRequest proxy issues)
         self.application = (
             Application.builder()
             .token(config.MAIN_BOT_TOKEN)
             .persistence(persistence)
-            .request(request)
             .build()
         )
         # Explicitly set allowed_updates to ensure the bot subscribes to the desired update types and to
@@ -519,8 +517,7 @@ class MainBot:
         # Queue position (inline and text)
         self.application.add_handler(CallbackQueryHandler(show_queue_position, pattern=r"^freepkg_queue_pos$"), group=0)
         self.application.add_handler(MessageHandler(filters.Regex(r"^📊 جایگاه صف رایگان$"), show_queue_position_message), group=0)
-        # Free packages submenu (text button)
-        self.application.add_handler(MessageHandler(filters.Regex(r"^🎁 (?:رایگان|خدمات رایگان)$"), free_packages_menu), group=0)
+        # Free packages submenu (text button) - removed duplicate, handled in group=-1
         # Callback for Toobit package selection from submenu
         self.application.add_handler(CallbackQueryHandler(start_free_package_flow, pattern=r"^freepkg_toobit$"), group=0)
         # Callback handlers for expiration reminder buttons

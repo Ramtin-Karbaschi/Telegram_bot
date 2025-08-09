@@ -18,7 +18,7 @@ from utils.helpers import is_admin
 from utils.helpers import staff_only_decorator as staff_only
 
 import json
-from ai.model import responder
+# from ai.model import responder  # Temporarily disabled due to httpx compatibility issues
 import html  # For escaping HTML entities
 from io import BytesIO
 from docx import Document

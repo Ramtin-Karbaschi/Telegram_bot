@@ -34,6 +34,15 @@ if SHARED_CHANNEL_ID:
         logger.warning("SHARED_CHANNEL_ID must be a valid integer (channel ID)")
         SHARED_CHANNEL_ID = None
 
+# Sales reports channel
+SALE_CHANNEL_ID = os.getenv("SALE_CHANNEL_ID")
+if SALE_CHANNEL_ID:
+    try:
+        SALE_CHANNEL_ID = int(SALE_CHANNEL_ID)
+    except ValueError:
+        logger.warning("SALE_CHANNEL_ID must be a valid integer (channel ID)")
+        SALE_CHANNEL_ID = None
+
 # Ensure tokens are set
 if not MAIN_BOT_TOKEN:
     raise ValueError("MAIN_BOT_TOKEN environment variable not set.")
