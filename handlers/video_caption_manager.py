@@ -1,6 +1,7 @@
 """
 Video Caption Management Methods for Admin Product Handlers
 """
+from utils.helpers import safe_edit_message_text
 
 async def _handle_manage_video_captions(self, update, context):
     """Show video caption management interface."""
@@ -45,7 +46,7 @@ async def _handle_manage_video_captions(self, update, context):
         [InlineKeyboardButton("✅ تأیید و ادامه", callback_data="confirm_video_selection")]
     ])
     
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    await safe_edit_message_text(query, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     return FIELD_VALUE
 
 async def _handle_edit_caption(self, update, context):
@@ -89,7 +90,7 @@ async def _handle_edit_caption(self, update, context):
         InlineKeyboardButton("❌ لغو", callback_data="cancel_caption_edit")
     ]]
     
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    await safe_edit_message_text(query, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     return FIELD_VALUE
 
 async def _handle_caption_input(self, update, context):
@@ -195,7 +196,7 @@ async def _handle_video_help(self, update, context):
         InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_video_selection")
     ]]
     
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    await safe_edit_message_text(query, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     return FIELD_VALUE
 
 async def _handle_reorder_videos(self, update, context):
@@ -239,7 +240,7 @@ async def _handle_reorder_videos(self, update, context):
         [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_video_selection")]
     ])
     
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    await safe_edit_message_text(query, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     return FIELD_VALUE
 
 # Additional callback handlers that need to be added to conversation handler

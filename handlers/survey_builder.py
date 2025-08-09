@@ -14,6 +14,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from utils.helpers import safe_edit_message_text
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ async def add_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     counter = len(context.user_data.get('survey_builder_buffer', [])) + 1
-    await query.edit_message_text(f"📝 متن سوال شماره {counter} را وارد کنید:")
+    await safe_edit_message_text(query, text=f"📝 متن سوال شماره {counter} را وارد کنید:")
     return WAIT_Q_TEXT
 
 async def finish_survey(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -80,13 +81,13 @@ async def finish_survey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = context.user_data.get('extra_mode', 'add')
     prefix = 'new_plan_' if mode == 'add' else 'edit_plan_'
     context.user_data[f'{prefix}survey_data'] = buffer
-    await query.edit_message_text("✅ نظرسنجی با موفقیت ذخیره شد.")
+    await safe_edit_message_text(query, text="✅ نظرسنجی با موفقیت ذخیره شد.")
     return ConversationHandler.END
 
 async def cancel_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text("❌ سازنده نظرسنجی لغو شد.")
+        await safe_edit_message_text(update.callback_query, text="❌ سازنده نظرسنجی لغو شد.")
     else:
         await update.message.reply_text("❌ سازنده نظرسنجی لغو شد.")
     context.user_data.pop('survey_builder_buffer', None)

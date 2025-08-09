@@ -28,9 +28,9 @@ from datetime import datetime, timezone
 from typing import Final
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (CallbackQueryHandler, ConversationHandler,
-                          ContextTypes, MessageHandler, filters)
+from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
 from telegram.error import BadRequest
+from utils.helpers import safe_edit_message_text
 
 import config
 from database.queries import DatabaseQueries as Db
@@ -152,9 +152,6 @@ async def free_packages_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     if query:
         await query.answer()
-        send_func = query.message.edit_text
-    else:
-        send_func = update.message.reply_text
 
     logger.debug("free_packages_menu invoked")
     # Build keyboard – reuse existing util for free plans
@@ -179,17 +176,17 @@ async def free_packages_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     logger.debug("free_packages_menu: final keyboard rows=%s", len(keyboard))
 
-    try:
-        await send_func(
+    if query:
+        await safe_edit_message_text(
+            query,
             text="🎁 پکیج‌های رایگان موجود:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-    except BadRequest as e:
-        if "Message is not modified" in str(e):
-            # Message content is the same, no need to edit
-            pass
-        else:
-            raise
+    else:
+        await update.message.reply_text(
+            text="🎁 پکیج‌های رایگان موجود:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 # ---------------------------------------------------------------------------
 # Conversation entry-point

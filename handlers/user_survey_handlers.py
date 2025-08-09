@@ -7,6 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
 from database.queries import DatabaseQueries
 from services.survey_service import SurveyService
+from utils.helpers import safe_edit_message_text
 import logging
 
 logger = logging.getLogger(__name__)
@@ -106,7 +107,7 @@ class UserSurveyHandler:
             text += "💬 لطفاً پاسخ خود را تایپ کنید:"
         
         if update.callback_query:
-            await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            await safe_edit_message_text(update.callback_query, text=text, reply_markup=reply_markup, parse_mode='Markdown')
         else:
             await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
@@ -224,7 +225,7 @@ class UserSurveyHandler:
             ack_text += "\n📹 در حال ارسال ویدئوهای پلن..."
 
         if update.callback_query:
-            await update.callback_query.edit_message_text(ack_text, parse_mode='Markdown')
+            await safe_edit_message_text(update.callback_query, text=ack_text, parse_mode='Markdown')
         else:
             await update.message.reply_text(ack_text, parse_mode='Markdown')
 
@@ -261,7 +262,7 @@ class UserSurveyHandler:
         text += "💡 برای دسترسی به محتوای پلن، باید نظرسنجی را تکمیل کنید."
         
         if update.callback_query:
-            await update.callback_query.edit_message_text(text, parse_mode='Markdown')
+            await safe_edit_message_text(update.callback_query, text=text, parse_mode='Markdown')
         else:
             await update.message.reply_text(text, parse_mode='Markdown')
         
@@ -316,7 +317,7 @@ class UserSurveyHandler:
         # Get plan_id from survey
         survey = self.db_queries.get_survey_by_id(survey_id)
         if not survey:
-            await update.callback_query.edit_message_text("❌ نظرسنجی یافت نشد.")
+            await safe_edit_message_text(update.callback_query, text="❌ نظرسنجی یافت نشد.")
             return ConversationHandler.END
         
         plan_id = survey['plan_id']
@@ -382,7 +383,7 @@ class UserSurveyHandler:
     
     async def _cancel_survey(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Cancel survey."""
-        await update.callback_query.edit_message_text("❌ نظرسنجی لغو شد.")
+        await safe_edit_message_text(update.callback_query, text="❌ نظرسنجی لغو شد.")
         context.user_data.pop('current_survey', None)
         return ConversationHandler.END
 

@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes, CallbackQueryHandler
 from database.queries import DatabaseQueries
 from services.video_service import video_service
 from handlers.user_survey_handlers import user_survey_handler
+from utils.helpers import safe_edit_message_text
 import logging
 import os
 
@@ -60,7 +61,8 @@ class VideoAccessHandler:
         
         # Check if user has active subscription for this plan
         if not self._has_active_subscription(user_id, plan_id):
-            await query.edit_message_text(
+            await safe_edit_message_text(
+                query,
                 "❌ شما اشتراک فعال برای این پلن ندارید.\n\n"
                 "💡 ابتدا پلن را خریداری کنید.",
                 parse_mode='Markdown'
@@ -75,7 +77,8 @@ class VideoAccessHandler:
             # Check if user has completed the survey
             if not self.db_queries.has_user_completed_survey(user_id, survey_id):
                 # Start survey
-                await query.edit_message_text(
+                await safe_edit_message_text(
+                    query,
                     "📋 **نظرسنجی مورد نیاز**\n\n"
                     "🔒 برای دسترسی به محتوای این پلن، ابتدا باید نظرسنجی را تکمیل کنید.\n\n"
                     "⏱️ زمان تکمیل: حدود 2-3 دقیقه",
@@ -93,14 +96,15 @@ class VideoAccessHandler:
         # Get plan details
         plan = self.db_queries.get_plan_by_id(plan_id)
         if not plan:
-            await update.callback_query.edit_message_text("❌ پلن یافت نشد.")
+            await safe_edit_message_text(update.callback_query, "❌ پلن یافت نشد.")
             return
         
         # Get videos for this plan
         videos = self.db_queries.get_plan_videos(plan_id)
         
         if not videos:
-            await update.callback_query.edit_message_text(
+            await safe_edit_message_text(
+                update.callback_query,
                 f"📦 **{plan['name']}**\n\n"
                 "📹 هنوز ویدئویی برای این پلن اضافه نشده است.\n\n"
                 "⏳ لطفاً بعداً مراجعه کنید.",
@@ -126,9 +130,10 @@ class VideoAccessHandler:
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.callback_query.edit_message_text(
-            text, 
-            reply_markup=reply_markup, 
+        await safe_edit_message_text(
+            update.callback_query,
+            text,
+            reply_markup=reply_markup,
             parse_mode='Markdown'
         )
 
@@ -144,7 +149,7 @@ class VideoAccessHandler:
         # Get video details
         video = self.db_queries.get_video_by_id(video_id)
         if not video:
-            await query.edit_message_text("❌ ویدئو یافت نشد.")
+            await safe_edit_message_text(query, "❌ ویدئو یافت نشد.")
             return
         
         # Check if user has access to this video's plan
@@ -164,7 +169,8 @@ class VideoAccessHandler:
                 break
         
         if not has_access:
-            await query.edit_message_text(
+            await safe_edit_message_text(
+                query,
                 "❌ شما دسترسی به این ویدئو ندارید.\n\n"
                 "💡 ابتدا پلن مربوطه را خریداری کرده و نظرسنجی را تکمیل کنید.",
                 parse_mode='Markdown'
@@ -176,7 +182,8 @@ class VideoAccessHandler:
             video_path = video_service.get_video_path(video['filename'])
             
             if not os.path.exists(video_path):
-                await query.edit_message_text(
+                await safe_edit_message_text(
+                    query,
                     "❌ فایل ویدئو یافت نشد.\n\n"
                     "🔧 لطفاً با پشتیبانی تماس بگیرید.",
                     parse_mode='Markdown'
@@ -187,7 +194,7 @@ class VideoAccessHandler:
             caption = f"🎦 **{video['display_name'] or 'ویدئو'}**\n\n"
             caption += "✅ از طریق ربات دارایی آکادمی"
             
-            await query.edit_message_text("📤 در حال ارسال ویدئو...")
+            await safe_edit_message_text(query, "📤 در حال ارسال ویدئو...")
             
             with open(video_path, 'rb') as video_file:
                 await context.bot.send_video(
@@ -201,14 +208,16 @@ class VideoAccessHandler:
             keyboard = [[InlineKeyboardButton("🔙 بازگشت به لیست", callback_data=f"access_plan_{plan_id}")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await query.edit_message_text(
+            await safe_edit_message_text(
+                query,
                 "✅ ویدئو با موفقیت ارسال شد!",
                 reply_markup=reply_markup
             )
             
         except Exception as e:
             logger.error(f"Error sending video {video_id}: {e}")
-            await query.edit_message_text(
+            await safe_edit_message_text(
+                query,
                 "❌ خطا در ارسال ویدئو.\n\n"
                 "🔧 لطفاً بعداً تلاش کنید یا با پشتیبانی تماس بگیرید.",
                 parse_mode='Markdown'
@@ -246,7 +255,7 @@ class VideoAccessHandler:
         # Get video details
         video = self.db_queries.get_video_by_id(video_id)
         if not video:
-            await query.edit_message_text("❌ ویدیو یافت نشد.")
+            await safe_edit_message_text(query, "❌ ویدیو یافت نشد.")
             return
         
         # Send the video using video service
@@ -268,21 +277,19 @@ class VideoAccessHandler:
         # Get plan details
         plan = self.db_queries.get_plan_by_id(plan_id)
         if not plan:
-            await query.edit_message_text("❌ پلن یافت نشد.")
+            await safe_edit_message_text(query, "❌ پلن یافت نشد.")
             return
         
         # Send all videos
         try:
             success = await video_service.send_plan_videos(context.bot, user_id, plan_id)
             if success:
-                await query.edit_message_text(
-                    f"✅ تمام ویدیوهای «{plan['name']}» با موفقیت ارسال شد."
-                )
+                await safe_edit_message_text(query, f"✅ تمام ویدیوهای «{plan['name']}» با موفقیت ارسال شد.")
             else:
-                await query.edit_message_text("⚠️ خطا در ارسال ویدیوها")
+                await safe_edit_message_text(query, "⚠️ خطا در ارسال ویدیوها")
         except Exception as e:
             logger.error(f"Error sending all videos for plan {plan_id} to user {user_id}: {e}")
-            await query.edit_message_text("⚠️ خطا در ارسال ویدیوها")
+            await safe_edit_message_text(query, "⚠️ خطا در ارسال ویدیوها")
 
 # Global instance
 video_access_handler = VideoAccessHandler()

@@ -178,6 +178,9 @@ def is_user_registered(user_id: int) -> bool:
 import io
 import qrcode
 from telegram.error import BadRequest
+import logging
+
+logger = logging.getLogger(__name__)
 
 def generate_qr_code(data: str) -> io.BytesIO:
     """Generate a QR code image from the given data and return it as BytesIO object."""
@@ -198,13 +201,63 @@ def generate_qr_code(data: str) -> io.BytesIO:
     img_byte_arr.seek(0)  # Rewind the buffer to the beginning
     return img_byte_arr
 
-async def safe_edit_message_text(query, text, reply_markup=None, parse_mode=None):
-    """Safely edit message text, handling 'Message is not modified' errors."""
+async def safe_edit_message_text(target, text=None, reply_markup=None, parse_mode=None):
+    """
+    Safely edit a message's text while handling common Telegram API edge-cases.
+
+    - If only ``reply_markup`` is provided (empty or None text), performs a safe
+      reply_markup-only edit to avoid "There is no text in the message to edit".
+    - If editing text fails with "There is no text in the message to edit",
+      attempts to edit the caption instead.
+    - Silently ignores "Message is not modified" errors.
+
+    Supports both CallbackQuery-like targets (with ``edit_message_text`` / ``edit_message_caption``)
+    and Message-like targets (with ``edit_text`` / ``edit_caption`` / ``edit_reply_markup``).
+    """
+    # Helper to detect empty text (None or whitespace)
+    def _is_empty(val):
+        return val is None or (isinstance(val, str) and val.strip() == "")
+
+    # 1) If no text is provided but we have a reply_markup, update only the markup.
+    if _is_empty(text):
+        if reply_markup is not None:
+            try:
+                if hasattr(target, "edit_message_reply_markup"):
+                    # CallbackQuery-like
+                    return await target.edit_message_reply_markup(reply_markup=reply_markup)
+                if hasattr(target, "edit_reply_markup"):
+                    # Message-like
+                    return await target.edit_reply_markup(reply_markup=reply_markup)
+            except BadRequest as e:
+                if "Message is not modified" in str(e):
+                    return
+                raise
+        # Nothing to update
+        return
+
+    # 2) Try editing text first; fall back to caption if needed.
     try:
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        if hasattr(target, "edit_message_text"):
+            # CallbackQuery-like
+            return await target.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        if hasattr(target, "edit_text"):
+            # Message-like
+            return await target.edit_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
     except BadRequest as e:
-        if "Message is not modified" in str(e):
-            # Message content is the same, no need to edit
-            pass
-        else:
-            raise
+        s = str(e)
+        if "There is no text in the message to edit" in s:
+            # Try editing the caption instead
+            try:
+                if hasattr(target, "edit_message_caption"):
+                    return await target.edit_message_caption(caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
+                if hasattr(target, "edit_caption"):
+                    return await target.edit_caption(caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
+            except BadRequest as e2:
+                if "Message is not modified" in str(e2):
+                    return
+                raise
+        if "Message is not modified" in s:
+            return
+        # Unexpected error – log and re-raise to preserve behavior for callers that rely on exceptions
+        logger.warning("safe_edit_message_text: edit failed: %s", s)
+        raise

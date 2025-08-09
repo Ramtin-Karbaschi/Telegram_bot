@@ -39,6 +39,7 @@ from telegram.ext import (
 )
 
 from services.video_service import video_service
+from utils.helpers import safe_edit_message_text
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,8 @@ async def entrypoint(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data.pop("upload_video_id", None)
-    await query.edit_message_text(
+    await safe_edit_message_text(
+        query,
         "🎥 لطفاً فایل ویدئویی را ارسال کنید یا /cancel را بزنید.",
     )
     logger.info("Returning WAIT_VIDEO state")
@@ -118,7 +120,7 @@ async def handle_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def prompt_caption_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("📝 کپشن دلخواه را ارسال کنید (حداکثر 500 کاراکتر). برای حذف /skip بزنید.")
+    await safe_edit_message_text(query, "📝 کپشن دلخواه را ارسال کنید (حداکثر 500 کاراکتر). برای حذف /skip بزنید.")
     return WAIT_CAPTION
 
 
@@ -159,7 +161,7 @@ async def handle_next_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data.pop("upload_video_id", None)
-    await query.edit_message_text("🎥 لطفاً ویدئوی بعدی را ارسال کنید یا /cancel را بزنید.")
+    await safe_edit_message_text(query, "🎥 لطفاً ویدئوی بعدی را ارسال کنید یا /cancel را بزنید.")
     return WAIT_VIDEO
 
 
@@ -167,7 +169,8 @@ async def finish_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """End conversation and return to video selection UI."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(
+    await safe_edit_message_text(
+        query,
         "✅ عملیات آپلود به پایان رسید.\n\n"
         "برای بازگشت به مدیریت ویدئوها از منوی اصلی استفاده کنید."
     )
@@ -181,7 +184,7 @@ async def finish_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text("❌ عملیات آپلود لغو شد.")
+        await safe_edit_message_text(update.callback_query, "❌ عملیات آپلود لغو شد.")
     else:
         await update.message.reply_text("❌ عملیات آپلود لغو شد.")
     return ConversationHandler.END

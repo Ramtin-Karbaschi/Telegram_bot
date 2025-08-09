@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, Mess
 from telegram.constants import ParseMode
 from database.queries import DatabaseQueries as Database
 from utils.keyboards import get_main_menu_keyboard, get_support_menu_keyboard, get_ticket_conversation_keyboard, get_back_button
+from utils.helpers import safe_edit_message_text
 from utils.constants import (
     SUPPORT_WELCOME_MESSAGE, NEW_TICKET_SUBJECT_REQUEST,
     TICKET_CLOSED_MESSAGE, TICKET_REOPENED_MESSAGE,
@@ -56,7 +57,11 @@ async def start_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if update.callback_query:
             await update.callback_query.answer()
-            await update.callback_query.message.edit_text(message_text, reply_markup=reply_markup)
+            await safe_edit_message_text(
+                update.callback_query.message,
+                text=message_text,
+                reply_markup=reply_markup
+            )
         else:
             await update.message.reply_text(message_text, reply_markup=reply_markup)
         return ConversationHandler.END # End the support conversation if not registered
@@ -73,8 +78,9 @@ async def start_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Or if the current keyboard is already the support menu keyboard (more complex to check reliably without message ID)
         # For simplicity, we'll just edit if the text is different or assume it's a fresh request for the menu.
         if update.callback_query.message.text != SUPPORT_WELCOME_MESSAGE:
-            await update.callback_query.message.edit_text(
-                SUPPORT_WELCOME_MESSAGE,
+            await safe_edit_message_text(
+                update.callback_query.message,
+                text=SUPPORT_WELCOME_MESSAGE,
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.HTML
             )
@@ -112,8 +118,9 @@ async def create_new_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        await query.message.reply_text(
-            NEW_TICKET_SUBJECT_REQUEST,
+        await safe_edit_message_text(
+            query.message,
+            text=NEW_TICKET_SUBJECT_REQUEST,
             reply_markup=reply_markup,
             parse_mode=ParseMode.HTML
         )
@@ -249,8 +256,9 @@ async def view_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE, ticket
                 ticket_id = int(query.data.split('_')[-1])
             except (IndexError, ValueError):
                 logger.error(f"Could not parse ticket_id from callback_data: {query.data}")
-                await query.message.edit_text(
-                    "خطا در پردازش درخواست. لطفاً دوباره تلاش کنید.",
+                await safe_edit_message_text(
+                    query.message,
+                    text="خطا در پردازش درخواست. لطفاً دوباره تلاش کنید.",
                     reply_markup=get_support_menu_keyboard([]) # Show basic support menu
                 )
                 logger.debug(f"view_ticket returning SUPPORT_MENU due to parsing error for ticket_id from {query.data}")
@@ -264,8 +272,9 @@ async def view_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE, ticket
     if not ticket:
         not_found_message = "تیکت مورد نظر یافت نشد یا شما دسترسی به آن ندارید."
         if update.callback_query:
-            await update.callback_query.message.edit_text(
-                not_found_message,
+            await safe_edit_message_text(
+                update.callback_query.message,
+                text=not_found_message,
                 reply_markup=get_support_menu_keyboard(Database.get_user_tickets(update.effective_user.id))
             )
         else:
@@ -307,8 +316,9 @@ async def view_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE, ticket
     context.user_data['active_ticket_id'] = ticket_id # Store for sending messages
 
     if update.callback_query:
-        await update.callback_query.message.edit_text(
-            message_text,
+        await safe_edit_message_text(
+            update.callback_query.message,
+            text=message_text,
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
@@ -389,8 +399,9 @@ async def back_to_tickets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tickets = Database.get_user_tickets(user_id)
     
     # Send support menu
-    await query.message.edit_text(
-        SUPPORT_WELCOME_MESSAGE,
+    await safe_edit_message_text(
+        query.message,
+        text=SUPPORT_WELCOME_MESSAGE,
         reply_markup=get_support_menu_keyboard(tickets)
     )
     
@@ -441,7 +452,8 @@ async def choose_suggested_subject(update: Update, context: ContextTypes.DEFAULT
     context.user_data['ticket_subject'] = subject
     # Update the existing inline message AND add an inline cancel button
     cancel_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="ticket_cancel")]])
-    await query.message.edit_text(
+    await safe_edit_message_text(
+        query.message,
         text=f"موضوع انتخاب شد: <b>{subject}</b>\nاکنون متن پیام خود را ارسال کنید.",
         reply_markup=cancel_keyboard,
         parse_mode=ParseMode.HTML,
@@ -459,8 +471,9 @@ async def choose_suggested_subject(update: Update, context: ContextTypes.DEFAULT
         tickets = Database.get_user_tickets(user_id)
 
         if not tickets:
-            await query.message.edit_text(
-                "شما تاکنون تیکتی ثبت نکرده‌اید.",
+            await safe_edit_message_text(
+                query.message,
+                text="شما تاکنون تیکتی ثبت نکرده‌اید.",
                 reply_markup=get_support_menu_keyboard([])
             )
             return SUPPORT_MENU
@@ -490,8 +503,9 @@ async def choose_suggested_subject(update: Update, context: ContextTypes.DEFAULT
         # Add back button
         ticket_buttons.append([InlineKeyboardButton("↩ بازگشت", callback_data="back_to_tickets")])
 
-        await query.message.edit_text(
-            header_text,
+        await safe_edit_message_text(
+            query.message,
+            text=header_text,
             reply_markup=InlineKeyboardMarkup(ticket_buttons),
             parse_mode=ParseMode.HTML
         )
@@ -509,8 +523,9 @@ async def choose_suggested_subject(update: Update, context: ContextTypes.DEFAULT
         tickets = Database.get_user_tickets(user_id)
         
         # Send support menu
-        await query.message.edit_text(
-            SUPPORT_WELCOME_MESSAGE,
+        await safe_edit_message_text(
+            query.message,
+            text=SUPPORT_WELCOME_MESSAGE,
             reply_markup=get_support_menu_keyboard(tickets)
         )
         
@@ -584,14 +599,11 @@ async def ticket_history_handler(update: Update, context: ContextTypes.DEFAULT_T
     user_id = update.effective_user.id
     tickets = Database.get_user_tickets(user_id)
     if not tickets:
-        try:
-            await query.message.edit_text(
-                "شما تاکنون تیکتی ثبت نکرده‌اید.",
-                reply_markup=get_support_menu_keyboard([])
-            )
-        except BadRequest as e:
-            if "Message is not modified" not in str(e):
-                raise
+        await safe_edit_message_text(
+            query.message,
+            text="شما تاکنون تیکتی ثبت نکرده‌اید.",
+            reply_markup=get_support_menu_keyboard([])
+        )
         return SUPPORT_MENU
     status_to_emoji = {
         'open': '🟢',
@@ -610,8 +622,9 @@ async def ticket_history_handler(update: Update, context: ContextTypes.DEFAULT_T
             subject = subject[:23] + '…'
         ticket_buttons.append([InlineKeyboardButton(f"{emoji} #{ticket_id} – {subject}", callback_data=f"view_ticket_{ticket_id}")])
     ticket_buttons.append([InlineKeyboardButton("↩ بازگشت", callback_data="back_to_tickets")])
-    await query.message.edit_text(
-        header_text,
+    await safe_edit_message_text(
+        query.message,
+        text=header_text,
         reply_markup=InlineKeyboardMarkup(ticket_buttons),
         parse_mode=ParseMode.HTML
     )
@@ -623,8 +636,9 @@ async def support_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     user_id = update.effective_user.id
     tickets = Database.get_user_tickets(user_id)
-    await query.message.edit_text(
-        SUPPORT_WELCOME_MESSAGE,
+    await safe_edit_message_text(
+        query.message,
+        text=SUPPORT_WELCOME_MESSAGE,
         reply_markup=get_support_menu_keyboard(tickets)
     )
     return SUPPORT_MENU
