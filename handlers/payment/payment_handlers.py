@@ -2281,6 +2281,21 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
             Database.update_crypto_payment_on_success(payment_record['payment_id'], final_tx, amount, late=payment_expired)
             plan_id = payment_record.get('plan_id')
             
+            # دریافت اطلاعات پلن از دیتابیس
+            plan_row = Database.get_plan_by_id(plan_id)
+            if not plan_row:
+                logger.error(f"❌ Plan {plan_id} not found in database for payment {crypto_payment_id}")
+                await safe_edit_message_text(
+                    "❌ **خطای سیستمی**\n\n"
+                    "اطلاعات پلن در دیتابیس یافت نشد.\n"
+                    "لطفاً با پشتیبانی تماس بگیرید.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("💬 پشتیبانی", url="https://t.me/daraeiposhtibani")]
+                    ])
+                )
+                return ConversationHandler.END
+            
             try:
                 # فعال‌سازی اشتراک
                 activation_success, _ = await activate_or_extend_subscription(

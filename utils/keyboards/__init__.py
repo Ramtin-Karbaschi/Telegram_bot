@@ -29,8 +29,8 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
 
         # Promotional category button
         try:
-            from utils.promotional_category_utils import get_promotional_category_button
-            promo_button = get_promotional_category_button()
+            from utils.promotional_category_utils import get_promotional_category_buttons
+            promo_buttons = get_promotional_category_buttons()
         except Exception as e:
             logger.error(f"Unable to get promotional category button: {e}")
 
@@ -42,11 +42,13 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
         except Exception as e:
             logger.error(f"Unable to add AltSeason button: {e}")
 
-        # Insert rows in order: promotional first, then AltSeason
-        if promo_button:
+        # Insert promotional buttons (newest first)
+        for promo_button in promo_buttons:
             keyboard_buttons.insert(0, [promo_button])
+        
+        # Insert AltSeason button after promotional buttons
         if altseason_button:
-            keyboard_buttons.insert(1 if promo_button else 0, [altseason_button])
+            keyboard_buttons.insert(len(promo_buttons), [altseason_button])
         altseason_button = None
         
 
@@ -115,8 +117,8 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
 
         # Promotional category button
         try:
-            from utils.promotional_category_utils import get_promotional_category_button
-            promo_button = get_promotional_category_button()
+            from utils.promotional_category_utils import get_promotional_category_buttons
+            promo_buttons = get_promotional_category_buttons()
         except Exception as e:
             logger.error(f"Unable to get promotional category button: {e}")
 
@@ -128,11 +130,13 @@ def get_main_reply_keyboard(user_id=None, is_admin=False, is_registered=False):
         except Exception as e:
             logger.error(f"Unable to add AltSeason button: {e}")
 
-        # Insert rows in order: promotional first, then AltSeason
-        if promo_button:
+        # Insert promotional buttons in reverse order (newest first)
+        for promo_button in reversed(promo_buttons):
             keyboard_buttons.insert(0, [promo_button])
+        
+        # Insert AltSeason button after promotional buttons
         if altseason_button:
-            keyboard_buttons.insert(1 if promo_button else 0, [altseason_button])
+            keyboard_buttons.insert(len(promo_buttons), [altseason_button])
         altseason_button = None
         
 
@@ -282,26 +286,45 @@ def get_subscription_plans_keyboard(telegram_id=None, *, free_only: bool = False
     # Filter according to price category
     filtered_plans: list = []
     logger.debug(f"Category filter active: {category_id}")
+    logger.debug(f"Filter flags: free_only={free_only}, paid_only={paid_only}")
     for plan in all_plans:
         logger.debug(f"Evaluating plan {plan['id']} with category {plan.get('category_id')}")
-        # Category filtering rules:
-        # - If a specific category_id is provided, show only plans in that category.
-        # - If no category_id is provided (main products menu), show only uncategorized plans (category_id is NULL).
-        # Category rules: if no category selected, display only uncategorized plans
-        if category_id is None:
-            if plan.get('category_id') is not None:
-                continue
-        else:
-            if plan.get('category_id') != category_id:
-                continue
+        
+        # First check price to determine if plan is free
         price_usdt = plan.get('price_tether') or plan.get('original_price_usdt') or 0
         price_irr = plan.get('price') or plan.get('original_price_irr') or 0
         is_free = (price_usdt == 0 and price_irr == 0)
-        # Apply free/paid filters more accurately across currencies
+        logger.debug(f"Plan {plan['id']} price analysis: price_tether={plan.get('price_tether')}, price={plan.get('price')}, price_usdt={price_usdt}, price_irr={price_irr}, is_free={is_free}")
+        
+        # Apply free/paid filters first
         if free_only and not is_free:
+            logger.debug(f"Plan {plan['id']} skipped: free_only=True but is_free={is_free}")
             continue
         if paid_only and is_free:
+            logger.debug(f"Plan {plan['id']} skipped: paid_only=True but is_free={is_free}")
             continue
+            
+        # Special rule: If showing free products only (free_only=True), skip category filtering
+        # Free products should appear in "🎁 خدمات رایگان" regardless of their category
+        if free_only and is_free:
+            logger.debug(f"Plan {plan['id']} is free - bypassing category filter for free services menu")
+            filtered_plans.append(plan)
+            continue
+            
+        # Apply category filtering for non-free products or when not in free-only mode
+        # Category filtering rules:
+        # - If a specific category_id is provided, show only plans in that category.
+        # - If no category_id is provided (main products menu), show only uncategorized plans (category_id is NULL).
+        if category_id is None:
+            if plan.get('category_id') is not None:
+                logger.debug(f"Plan {plan['id']} skipped due to category filter (has category {plan.get('category_id')})")
+                continue
+        else:
+            if plan.get('category_id') != category_id:
+                logger.debug(f"Plan {plan['id']} skipped due to category mismatch")
+                continue
+                
+        logger.debug(f"Plan {plan['id']} passed all filters, adding to filtered_plans")
         filtered_plans.append(plan)
     logger.debug(f"Fetched {len(all_plans)} plans from get_active_plans: {[dict(row) for row in all_plans] if all_plans else '[]'}")
     # Fallback in case multiple conflicting definitions returned nothing

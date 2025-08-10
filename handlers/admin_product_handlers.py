@@ -428,39 +428,73 @@ class AdminProductHandler:
     }
 
     # ---------------- Channel picker helpers ----------------
-    def _build_channel_select_keyboard(self, channels: list[dict], selected_ids: Set[int]):
-        """Build inline keyboard with custom prefix 'plch_'."""
+    # OLD FUNCTION REMOVED - Use _build_combined_access_keyboard instead
+
+    def _build_combined_access_keyboard(self, channels: list[dict], websites: list[dict], selected_channel_ids: Set[int], selected_website_links: Set[str]):
+        """Build inline keyboard for both channels and websites selection."""
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         keyboard = []
-        row = []
-        for ch in channels:
-            cid = ch.get("id")
-            title = ch.get("title")
-            if cid is None or title is None:
-                continue
-            selected = cid in selected_ids
-            text = ("✅ " if selected else "☑️ ") + title
-            row.append(InlineKeyboardButton(text, callback_data=f"plch_{cid}"))
-            if len(row) == 2:
+        
+        # Add channels section
+        if channels:
+            keyboard.append([InlineKeyboardButton("📺 کانال‌ها:", callback_data="header_channels")])
+            row = []
+            for ch in channels:
+                cid = ch.get("id")
+                title = ch.get("title")
+                if cid is None or title is None:
+                    continue
+                selected = cid in selected_channel_ids
+                text = ("✅ " if selected else "☑️ ") + title
+                row.append(InlineKeyboardButton(text, callback_data=f"plch_ch_{cid}"))
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+            if row:
                 keyboard.append(row)
-                row = []
-        if row:
-            keyboard.append(row)
-        toggle_text = "انتخاب همه" if len(selected_ids) < len(channels) else "لغو همه"
+        
+        # Add websites section
+        if websites:
+            if channels:  # Add separator if there are channels
+                keyboard.append([InlineKeyboardButton("━━━━━━━━━━━━━", callback_data="separator")])
+            keyboard.append([InlineKeyboardButton("🌐 وبسایت‌ها:", callback_data="header_websites")])
+            row = []
+            for idx, web in enumerate(websites):
+                link = web.get("link")
+                title = web.get("title")
+                if link is None or title is None:
+                    continue
+                selected = link in selected_website_links
+                text = ("✅ " if selected else "☑️ ") + title
+                row.append(InlineKeyboardButton(text, callback_data=f"plch_web_{idx}"))
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+            if row:
+                keyboard.append(row)
+        
+        # Control buttons
+        total_selected = len(selected_channel_ids) + len(selected_website_links)
+        total_available = len(channels) + len(websites)
+        
+        if total_available > 0:
+            keyboard.append([InlineKeyboardButton("━━━━━━━━━━━━━", callback_data="separator2")])
+            toggle_text = "انتخاب همه" if total_selected < total_available else "لغو همه"
+            keyboard.append([
+                InlineKeyboardButton(toggle_text, callback_data="plch_all"),
+                InlineKeyboardButton("❌ هیچکدام", callback_data="plch_none"),
+            ])
+        
         keyboard.append([
-             InlineKeyboardButton(toggle_text, callback_data="plch_all"),
-             InlineKeyboardButton("❌ هیچکدام", callback_data="plch_none"),
-         ])
-        keyboard.append([
-             InlineKeyboardButton("✅ تأیید", callback_data="plch_done"),
-         ])
+            InlineKeyboardButton("✅ تأیید", callback_data="plch_done"),
+        ])
         keyboard.append([
             InlineKeyboardButton("🔙 بازگشت", callback_data="fields_back"),
         ])
         return InlineKeyboardMarkup(keyboard)
 
     async def _plan_channel_picker_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle callbacks from plan channel picker."""
+        """Handle callbacks from plan channel and website picker."""
         logger.info(f"CHANNEL_PICKER_CALLBACK: Received callback with data: {update.callback_query.data if update.callback_query else 'NO_QUERY'}")
         
         query = update.callback_query
@@ -479,9 +513,7 @@ class AdminProductHandler:
         context.user_data['processing_plch_callback'] = True
         
         try:
-            # Ensure selected_ids set in user_data
-            selected_ids: Set[int] = context.user_data.get("plch_selected_ids", set())
-            # Parse channels once
+            # Load channels and websites info
             try:
                 channels_info = (
                     json.loads(config.TELEGRAM_CHANNELS_INFO)
@@ -490,55 +522,125 @@ class AdminProductHandler:
                 )
             except Exception:
                 channels_info = []
+            
+            try:
+                website_info_str = getattr(config, "WEBSITE_INFO", "[]")
+                websites_info = (
+                    json.loads(website_info_str)
+                    if isinstance(website_info_str, str)
+                    else website_info_str or []
+                )
+            except Exception:
+                websites_info = []
+
+            # Get current selections
+            selected_channel_ids: Set[int] = context.user_data.get("plch_selected_channel_ids", set())
+            selected_website_links: Set[str] = context.user_data.get("plch_selected_website_links", set())
 
             logger.info(f"CHANNEL_PICKER_CALLBACK: channels_info loaded, count: {len(channels_info)}")
-            logger.info(f"CHANNEL_PICKER_CALLBACK: selected_ids: {selected_ids}")
+            logger.info(f"CHANNEL_PICKER_CALLBACK: websites_info loaded, count: {len(websites_info)}")
+            logger.info(f"CHANNEL_PICKER_CALLBACK: selected_channel_ids: {selected_channel_ids}")
+            logger.info(f"CHANNEL_PICKER_CALLBACK: selected_website_links: {selected_website_links}")
 
-            if data.startswith("plch_") and data not in {"plch_done", "plch_all", "plch_none"}:
+            # Handle channel selection
+            if data.startswith("plch_ch_"):
                 try:
-                    cid = int(data.replace("plch_", ""))
-                    if cid in selected_ids:
-                        selected_ids.remove(cid)
+                    cid = int(data.replace("plch_ch_", ""))
+                    if cid in selected_channel_ids:
+                        selected_channel_ids.remove(cid)
                     else:
-                        selected_ids.add(cid)
-                    logger.info(f"CHANNEL_PICKER_CALLBACK: Updated selected_ids: {selected_ids}")
+                        selected_channel_ids.add(cid)
+                    logger.info(f"CHANNEL_PICKER_CALLBACK: Updated selected_channel_ids: {selected_channel_ids}")
                 except ValueError:
                     logger.error(f"CHANNEL_PICKER_CALLBACK: Invalid channel ID: {data}")
                     pass
+            
+            # Handle website selection
+            elif data.startswith("plch_web_"):
+                try:
+                    web_idx = int(data.replace("plch_web_", ""))
+                    if 0 <= web_idx < len(websites_info):
+                        web_link = websites_info[web_idx].get("link")
+                        if web_link:
+                            if web_link in selected_website_links:
+                                selected_website_links.remove(web_link)
+                            else:
+                                selected_website_links.add(web_link)
+                            logger.info(f"CHANNEL_PICKER_CALLBACK: Updated selected_website_links: {selected_website_links}")
+                except ValueError:
+                    logger.error(f"CHANNEL_PICKER_CALLBACK: Invalid website index: {data}")
+                    pass
+            
+            # Handle header and separator callbacks (do nothing but acknowledge)
+            elif data in {"header_channels", "header_websites", "separator", "separator2"}:
+                await query.answer()
+                return FIELD_VALUE
             elif data == "plch_none":
                 # Clear all selections and immediately finalize (behaves like Done with empty set)
-                selected_ids = set()
+                selected_channel_ids = set()
+                selected_website_links = set()
                 logger.info("CHANNEL_PICKER_CALLBACK: None selected, cleared all selections")
                 # Save empty selection into user_data
                 mode = context.user_data.get("extra_mode", "add")
                 prefix = "new_plan_" if mode == "add" else "edit_plan_"
                 context.user_data[f"{prefix}channels_json"] = json.dumps([], ensure_ascii=False)
-                context.user_data.pop("plch_selected_ids", None)
+                context.user_data.pop("plch_selected_channel_ids", None)
+                context.user_data.pop("plch_selected_website_links", None)
                 # Return to fields menu
-                await query.answer("✅ بدون کانال انتخاب شد.")
+                await query.answer("✅ هیچ کانال یا وبسایتی انتخاب نشد.")
                 await self._show_fields_menu(query, context, mode)
                 return FIELD_VALUE
             elif data == "plch_all":
-
-                if len(selected_ids) < len(channels_info):
-                    selected_ids = {c["id"] for c in channels_info}
+                # Toggle all selections
+                total_selected = len(selected_channel_ids) + len(selected_website_links)
+                total_available = len(channels_info) + len(websites_info)
+                
+                if total_selected < total_available:
+                    # Select all
+                    selected_channel_ids = {c["id"] for c in channels_info}
+                    selected_website_links = {w["link"] for w in websites_info}
                 else:
-                    selected_ids = set()
-                logger.info(f"CHANNEL_PICKER_CALLBACK: Select all toggled, selected_ids: {selected_ids}")
+                    # Deselect all
+                    selected_channel_ids = set()
+                    selected_website_links = set()
+                logger.info(f"CHANNEL_PICKER_CALLBACK: Select all toggled, channels: {selected_channel_ids}, websites: {selected_website_links}")
             elif data == "plch_done":
-                logger.info(f"CHANNEL_PICKER_CALLBACK: Processing plch_done with {len(selected_ids)} selected channels")
-                # Save selection into user_data as JSON string of channel dicts
+                logger.info(f"CHANNEL_PICKER_CALLBACK: Processing plch_done with {len(selected_channel_ids)} channels and {len(selected_website_links)} websites")
+                # Combine selected items into one JSON array
+                selected_items = []
+                
+                # Add selected channels
+                for c in channels_info:
+                    if c["id"] in selected_channel_ids:
+                        selected_items.append(c)
+                
+                # Add selected websites
+                for w in websites_info:
+                    if w["link"] in selected_website_links:
+                        selected_items.append(w)
+                
+                # Save selection into user_data
                 mode = context.user_data.get("extra_mode", "add")
                 prefix = "new_plan_" if mode == "add" else "edit_plan_"
-                selected_channels = [c for c in channels_info if c["id"] in selected_ids]
-                context.user_data[f"{prefix}channels_json"] = json.dumps(selected_channels, ensure_ascii=False)
-                # Cleanup temp
-                context.user_data.pop("plch_selected_ids", None)
+                context.user_data[f"{prefix}channels_json"] = json.dumps(selected_items, ensure_ascii=False)
                 
-                logger.info(f"CHANNEL_PICKER_CALLBACK: Saved {len(selected_channels)} channels to user_data")
+                # Cleanup temp variables
+                context.user_data.pop("plch_selected_channel_ids", None)
+                context.user_data.pop("plch_selected_website_links", None)
+                
+                logger.info(f"CHANNEL_PICKER_CALLBACK: Saved {len(selected_items)} items to user_data")
                 
                 # Show success message and return to fields menu
-                success_msg = f"✅ {len(selected_channels)} کانال انتخاب شد."
+                channel_count = len(selected_channel_ids)
+                website_count = len(selected_website_links)
+                if channel_count > 0 and website_count > 0:
+                    success_msg = f"✅ {channel_count} کانال و {website_count} وبسایت انتخاب شد."
+                elif channel_count > 0:
+                    success_msg = f"✅ {channel_count} کانال انتخاب شد."
+                elif website_count > 0:
+                    success_msg = f"✅ {website_count} وبسایت انتخاب شد."
+                else:
+                    success_msg = "✅ هیچ موردی انتخاب نشد."
                 await query.answer(success_msg)
                 
                 logger.info(f"CHANNEL_PICKER_CALLBACK: Returning to fields menu for mode: {mode}")
@@ -562,10 +664,11 @@ class AdminProductHandler:
                     logger.error(f"CHANNEL_PICKER_CALLBACK: Unexpected error: {e}")
                 return FIELD_VALUE
 
-            # Update set in user_data for non-done actions
-            context.user_data["plch_selected_ids"] = selected_ids
+            # Update sets in user_data for non-done actions
+            context.user_data["plch_selected_channel_ids"] = selected_channel_ids
+            context.user_data["plch_selected_website_links"] = selected_website_links
             # Refresh keyboard
-            keyboard = self._build_channel_select_keyboard(channels_info, selected_ids)
+            keyboard = self._build_combined_access_keyboard(channels_info, websites_info, selected_channel_ids, selected_website_links)
             try:
                 await query.edit_message_reply_markup(reply_markup=keyboard)
                 logger.info("CHANNEL_PICKER_CALLBACK: Updated keyboard successfully")
@@ -799,30 +902,49 @@ class AdminProductHandler:
             await self._show_category_children(query, context, parent_id=None)
             return FIELD_VALUE
 
-        # Special handling for channels field
+        # Special handling for channels field (now includes websites)
         if field_key == "channels_json":
-            # Show channel picker
+            # Show combined channel and website picker
             channels_info = getattr(config, "TELEGRAM_CHANNELS_INFO", [])
-            if not channels_info:
-                await query.edit_message_text("هیچ کانالی در تنظیمات تعریف نشده است.")
+            
+            # Parse website info from config
+            websites_info = []
+            try:
+                website_info_str = getattr(config, "WEBSITE_INFO", "[]")
+                if isinstance(website_info_str, str):
+                    websites_info = json.loads(website_info_str)
+                else:
+                    websites_info = website_info_str or []
+            except Exception as e:
+                logger.error(f"Error parsing WEBSITE_INFO: {e}")
+                websites_info = []
+            
+            if not channels_info and not websites_info:
+                await query.edit_message_text("هیچ کانال یا وبسایتی در تنظیمات تعریف نشده است.")
                 return FIELD_VALUE
             
-            # Initialize selected channels from existing data
+            # Initialize selected items from existing data
             mode = context.user_data.get("extra_mode", "add")
             prefix = "new_plan_" if mode == "add" else "edit_plan_"
             existing_json = context.user_data.get(f"{prefix}channels_json", "[]")
             
             try:
-                existing_channels = json.loads(existing_json)
-                selected_ids = {ch.get("id") for ch in existing_channels if ch.get("id")}
+                existing_items = json.loads(existing_json)
+                # Extract IDs and links for selection tracking
+                selected_channel_ids = {item.get("id") for item in existing_items if item.get("id") and "title" in item}
+                selected_website_links = {item.get("link") for item in existing_items if item.get("link") and "title" in item}
             except:
-                selected_ids = set()
+                selected_channel_ids = set()
+                selected_website_links = set()
             
-            context.user_data["plch_selected_ids"] = selected_ids
-            keyboard = self._build_channel_select_keyboard(channels_info, selected_ids)
+            context.user_data["plch_selected_channel_ids"] = selected_channel_ids
+            context.user_data["plch_selected_website_links"] = selected_website_links
+            keyboard = self._build_combined_access_keyboard(channels_info, websites_info, selected_channel_ids, selected_website_links)
             
             await query.edit_message_text(
-                "کانال‌هایی که پس از خرید این پلن، کاربر به آن‌ها دعوت شود را انتخاب کنید:",
+                "🔗 **انتخاب کانال‌ها و وبسایت‌های دسترسی**\n\n"
+                "کانال‌ها و وبسایت‌هایی که پس از خرید این پلن، کاربر به آن‌ها دسترسی پیدا کند را انتخاب کنید:",
+                parse_mode="Markdown",
                 reply_markup=keyboard
             )
             return FIELD_VALUE
@@ -2408,9 +2530,9 @@ class AdminProductHandler:
             )
             return FIELD_VALUE
 
-        # 4) Channel multi-select
+        # 4) Channel and Website multi-select (Combined UI)
         if field_key == "channels_json":
-            selected_ids: Set[int] = context.user_data.get("plch_selected_ids", set())
+            # Load channels and websites info
             try:
                 channels_info = (
                     json.loads(config.TELEGRAM_CHANNELS_INFO)
@@ -2419,11 +2541,57 @@ class AdminProductHandler:
                 )
             except Exception:
                 channels_info = []
-            keyboard = self._build_channel_select_keyboard(channels_info, selected_ids)
-            await query.edit_message_text(
-                "کانال‌های موردنظر را انتخاب و سپس دکمه تأیید را بزنید:",
-                reply_markup=keyboard,
-            )
+            
+            try:
+                website_info_str = getattr(config, "WEBSITE_INFO", "[]")
+                websites_info = (
+                    json.loads(website_info_str)
+                    if isinstance(website_info_str, str)
+                    else website_info_str or []
+                )
+            except Exception:
+                websites_info = []
+            
+            # Initialize selections from existing data if editing
+            selected_channel_ids: Set[int] = set()
+            selected_website_links: Set[str] = set()
+            
+            # Check if we're editing and have existing channels_json data
+            mode = context.user_data.get("extra_mode", "add")
+            prefix = "new_plan_" if mode == "add" else "edit_plan_"
+            existing_channels_json = context.user_data.get(f"{prefix}channels_json")
+            
+            if existing_channels_json:
+                try:
+                    existing_items = json.loads(existing_channels_json)
+                    for item in existing_items:
+                        if "id" in item:  # This is a channel
+                            selected_channel_ids.add(item["id"])
+                        elif "link" in item and "title" in item:  # This is a website
+                            selected_website_links.add(item["link"])
+                except Exception:
+                    pass
+            
+            # Store selections in user_data for callback handler
+            context.user_data["plch_selected_channel_ids"] = selected_channel_ids
+            context.user_data["plch_selected_website_links"] = selected_website_links
+            
+            # Build combined keyboard
+            keyboard = self._build_combined_access_keyboard(channels_info, websites_info, selected_channel_ids, selected_website_links)
+            
+            channel_count = len(channels_info)
+            website_count = len(websites_info)
+            
+            if channel_count > 0 and website_count > 0:
+                message_text = f"کانال‌ها ({channel_count}) و وبسایت‌ها ({website_count}) را انتخاب کنید:"
+            elif channel_count > 0:
+                message_text = f"کانال‌های موردنظر ({channel_count}) را انتخاب کنید:"
+            elif website_count > 0:
+                message_text = f"وبسایت‌های موردنظر ({website_count}) را انتخاب کنید:"
+            else:
+                message_text = "هیچ کانال یا وبسایتی تعریف نشده است."
+            
+            await query.edit_message_text(message_text, reply_markup=keyboard)
             return FIELD_VALUE
 
         # ---------------- Default: prompt for value ----------------

@@ -541,21 +541,29 @@ class MainBot:
         # Add the 'products' text button as an entry point to the conversation
         payment_conversation.entry_points.append(MessageHandler(filters.TEXT & filters.Regex(r"^🛒 (?:محصولات|خدمات VIP)$"), start_subscription_flow))
         
-        # Add promotional category button as entry point to payment conversation
-        from handlers.promotional_category_integration import promotional_category_text_handler
-        from utils.promotional_category_utils import get_promotional_category_button
+        # Add promotional category buttons as entry points to payment conversation
+        from utils.promotional_category_utils import get_promotional_category_buttons, handle_promotional_category_button
         
-        # Get promotional button text dynamically and add to conversation entry points
+        # Get all promotional buttons and add them to conversation entry points
         try:
-            promo_button = get_promotional_category_button()
-            if promo_button:
-                promo_text = promo_button.text
-                payment_conversation.entry_points.append(
-                    MessageHandler(filters.TEXT & filters.Regex(f"^{promo_text}$"), promotional_category_text_handler)
-                )
+            promo_buttons = get_promotional_category_buttons()
+            if promo_buttons:
+                # Create a general handler for all promotional buttons
+                async def handle_promo_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+                    """Handle all promotional button clicks"""
+                    return await handle_promotional_category_button(update.message.text, update, context)
+                
+                # Add each promotional button text as entry point
+                for promo_button in promo_buttons:
+                    promo_text = promo_button.text
+                    payment_conversation.entry_points.append(
+                        MessageHandler(filters.TEXT & filters.Regex(f"^{re.escape(promo_text)}$"), handle_promo_buttons)
+                    )
+                    self.logger.info(f"Added promotional button to payment conversation: {promo_text}")
+                    
         except Exception as e:
-            logger.error(f"Failed to add promotional button to payment conversation: {e}")
-            
+            logger.error(f"Failed to add promotional buttons to payment conversation: {e}")
+                
         self.application.add_handler(payment_conversation, group=1)
 
         # Handler for back button from payment method selection to plan selection

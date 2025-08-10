@@ -15,39 +15,50 @@ class PromotionalCategoryManager:
     
     @staticmethod
     def get_promotional_category_status():
-        """دریافت وضعیت فعلی دکمه تبلیغاتی"""
+        """دریافت وضعیت فعلی دکمه تبلیغاتی (برای سازگاری با کد قدیمی)"""
+        buttons = PromotionalCategoryManager.get_all_promotional_buttons()
+        if buttons:
+            # برگرداندن اولین دکمه برای سازگاری
+            return buttons[0]
+        else:
+            return {
+                'enabled': False,
+                'item_id': None,
+                'category_id': None,
+                'button_text': None,
+                'item_name': None,
+                'category_name': None,
+                'item_type': None
+            }
+    
+    @staticmethod
+    def get_all_promotional_buttons():
+        """دریافت تمام دکمه‌های تبلیغاتی فعال"""
         try:
             db = Database.get_instance()
-            # اجرای کوئری با کرسر داخلی Singleton
-            db.execute("SELECT * FROM promotional_category_settings ORDER BY id DESC LIMIT 1")
-            result = db.fetchone()
+            # جدیدترین دکمه‌ها ابتدا نمایش داده می‌شوند (newest first)
+            db.execute("SELECT * FROM promotional_category_settings WHERE enabled = 1 ORDER BY id DESC")
+            results = db.fetchall()
             
-            if result:
-                # Convert Row to dict if needed
+            buttons = []
+            for result in results:
                 if hasattr(result, 'keys'):
                     result = dict(result)
-                return {
+                buttons.append({
+                    'id': result['id'],
                     'enabled': bool(result['enabled']),
-                    'item_id': result.get('category_id') or result.get('item_id'),  # Support both old and new schema
-                    'category_id': result.get('category_id'),  # For backward compatibility
+                    'item_id': result.get('category_id') or result.get('item_id'),
+                    'category_id': result.get('category_id'),
                     'button_text': result['button_text'],
                     'item_name': result.get('category_name') or result.get('item_name', 'Unknown'),
-                    'category_name': result.get('category_name'),  # For backward compatibility
-                    'item_type': result.get('item_type', 'category')  # Default to category for old records
-                }
-            else:
-                return {
-                    'enabled': False,
-                    'item_id': None,
-                    'category_id': None,
-                    'button_text': None,
-                    'item_name': None,
-                    'category_name': None,
-                    'item_type': None
-                }
+                    'category_name': result.get('category_name'),
+                    'item_type': result.get('item_type', 'category'),
+                    'display_order': result.get('display_order', 0)
+                })
+            return buttons
         except Exception as e:
-            logger.error(f"Error getting promotional category status: {e}")
-            return {'enabled': False, 'item_id': None, 'category_id': None, 'button_text': None, 'item_name': None, 'category_name': None, 'item_type': None}
+            logger.error(f"Error getting promotional buttons: {e}")
+            return []
     
     @staticmethod
     def set_promotional_category(category_id: int, button_text: str, enabled: bool = True):
@@ -59,11 +70,11 @@ class PromotionalCategoryManager:
             category = DatabaseQueries.get_category_by_id(category_id)
             category_name = category['name'] if category else f"دسته {category_id}"
             
-            # ایجاد یا بروزرسانی تنظیمات
+            # اضافه کردن دکمه جدید (بدون جایگزینی)
             db.execute("""
-                INSERT OR REPLACE INTO promotional_category_settings 
-                (id, category_id, item_id, button_text, category_name, item_name, item_type, enabled, created_at, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                INSERT INTO promotional_category_settings 
+                (category_id, item_id, button_text, category_name, item_name, item_type, enabled, display_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(display_order), 0) + 1 FROM promotional_category_settings), datetime('now'), datetime('now'))
             """, (category_id, category_id, button_text, category_name, category_name, 'category', enabled))
             
             db.commit()
@@ -86,11 +97,11 @@ class PromotionalCategoryManager:
             category_id = item_id  # حتی برای محصول مقداردهی می‌شود تا محدودیت NOT NULL نقض نشود
             category_name = item_name
             
-            # ایجاد یا بروزرسانی تنظیمات
+            # اضافه کردن آیتم جدید (بدون جایگزینی)
             db.execute("""
-                INSERT OR REPLACE INTO promotional_category_settings 
-                (id, category_id, item_id, button_text, category_name, item_name, item_type, enabled, created_at, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                INSERT INTO promotional_category_settings 
+                (category_id, item_id, button_text, category_name, item_name, item_type, enabled, display_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(display_order), 0) + 1 FROM promotional_category_settings), datetime('now'), datetime('now'))
             """, (category_id, item_id, button_text, category_name, item_name, item_type, enabled))
             
             db.commit()
@@ -99,6 +110,86 @@ class PromotionalCategoryManager:
             
         except Exception as e:
             logger.error(f"Error setting promotional {item_type}: {e}")
+            return False
+    
+    @staticmethod
+    def add_promotional_button(item_id: int, button_text: str, item_name: str, item_type: str = "category"):
+        """اضافه کردن دکمه تبلیغاتی جدید"""
+        return PromotionalCategoryManager.set_promotional_item(item_id, button_text, item_name, item_type, enabled=True)
+    
+    @staticmethod
+    def remove_promotional_button(button_id: int):
+        """حذف دکمه تبلیغاتی"""
+        try:
+            db = Database.get_instance()
+            db.execute("DELETE FROM promotional_category_settings WHERE id = ?", (button_id,))
+            db.commit()
+            logger.info(f"Promotional button {button_id} removed")
+            return True
+        except Exception as e:
+            logger.error(f"Error removing promotional button: {e}")
+            return False
+    
+    @staticmethod
+    def get_promotional_button_by_id(button_id: int):
+        """دریافت اطلاعات دکمه تبلیغاتی با ID"""
+        try:
+            db = Database.get_instance()
+            db.execute("""
+                SELECT id, category_id, item_id, button_text, category_name, item_name, 
+                       item_type, enabled, display_order, created_at, updated_at
+                FROM promotional_category_settings 
+                WHERE id = ?
+            """, (button_id,))
+            result = db.fetchone()
+            if result:
+                return {
+                    'id': result[0],
+                    'category_id': result[1],
+                    'item_id': result[2],
+                    'button_text': result[3],
+                    'category_name': result[4],
+                    'item_name': result[5],
+                    'item_type': result[6],
+                    'enabled': bool(result[7]),
+                    'display_order': result[8],
+                    'created_at': result[9],
+                    'updated_at': result[10]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting promotional button by ID: {e}")
+            return None
+    
+    @staticmethod
+    def toggle_promotional_button(button_id: int):
+        """فعال/غیرفعال کردن دکمه تبلیغاتی"""
+        try:
+            db = Database.get_instance()
+            db.execute("SELECT enabled FROM promotional_category_settings WHERE id = ?", (button_id,))
+            result = db.fetchone()
+            if result:
+                new_status = not bool(result[0])
+                db.execute("UPDATE promotional_category_settings SET enabled = ?, updated_at = datetime('now') WHERE id = ?", (new_status, button_id))
+                db.commit()
+                logger.info(f"Promotional button {button_id} toggled to {new_status}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error toggling promotional button: {e}")
+            return False
+    
+    @staticmethod
+    def update_button_order(button_id: int, new_order: int):
+        """تغییر ترتیب نمایش دکمه"""
+        try:
+            db = Database.get_instance()
+            db.execute("UPDATE promotional_category_settings SET display_order = ?, updated_at = datetime('now') WHERE id = ?", (new_order, button_id))
+            db.commit()
+            logger.info(f"Button {button_id} order updated to {new_order}")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating button order: {e}")
             return False
     
     @staticmethod
@@ -125,44 +216,43 @@ class PromotionalCategoryManager:
             return False
 
 async def show_promotional_category_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """نمایش منوی مدیریت دکمه تبلیغاتی"""
+    """نمایش منوی مدیریت دکمه‌های تبلیغاتی"""
     query = update.callback_query
     await query.answer()
     
     # بررسی دسترسی ادمین
-    if not _is_admin(query.from_user.id):
-        await query.edit_message_text("❌ شما دسترسی لازم را ندارید.")
+    if not _is_admin(update.effective_user.id):
+        await query.edit_message_text("❌ شما دسترسی ادمین ندارید.")
         return
     
-    status = PromotionalCategoryManager.get_promotional_category_status()
+    # دریافت تمام دکمه‌های تبلیغاتی
+    buttons = PromotionalCategoryManager.get_all_promotional_buttons()
     
-    status_text = "✅ فعال" if status['enabled'] else "❌ غیرفعال"
-    current_item = status['item_name'] if status['item_id'] else "انتخاب نشده"
-    current_text = status['button_text'] if status['button_text'] else "تعریف نشده"
-    item_type = status.get('item_type', 'category')
-    item_icon = "📂" if item_type == "category" else "📦"
-    item_type_text = "دسته‌بندی" if item_type == "category" else "محصول"
+    # ساخت متن وضعیت
+    if buttons:
+        status_text = f"📊 تعداد دکمه‌های فعال: {len(buttons)}\n\n"
+        for i, button in enumerate(buttons, 1):
+            status_icon = "✅" if button['enabled'] else "❌"
+            status_text += f"{i}. {status_icon} {button['item_name']}\n"
+            status_text += f"   🔤 متن: {button['button_text']}\n\n"
+        status_text += "💡 این دکمه‌ها در کنار دکمه \"🌊 میخوای بدونی آلت‌سیزن چیه؟\" نمایش داده می‌شوند."
+    else:
+        status_text = "📊 وضعیت: ❌ هیچ دکمه تبلیغاتی فعالی وجود ندارد.\n\n💡 برای شروع، یک دکمه تبلیغاتی اضافه کنید."
     
-    message = (
-        "🎯 **مدیریت دکمه تبلیغاتی**\n\n"
-        f"📊 **وضعیت:** {status_text}\n"
-        f"{item_icon} **{item_type_text} انتخابی:** {current_item}\n"
-        f"🔤 **متن دکمه:** {current_text}\n\n"
-        "💡 این دکمه در کنار دکمه \"🌊 میخوای بدونی آلت‌سیزن چیه؟\" نمایش داده می‌شود."
-    )
+    text = f"🎯 مدیریت دکمه‌های تبلیغاتی\n\n{status_text}"
     
+    # ساخت کیبورد
     keyboard = [
-        [InlineKeyboardButton("📂 انتخاب دسته‌بندی یا محصول", callback_data="promo_select_category")],
-        [InlineKeyboardButton("✏️ تغییر متن دکمه", callback_data="promo_change_text")],
-        [InlineKeyboardButton(f"{'❌ غیرفعال کردن' if status['enabled'] else '✅ فعال کردن'}", callback_data="promo_toggle")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_main_menu")]
+        [InlineKeyboardButton("➕ افزودن دکمه جدید", callback_data="promo_select_category")]
     ]
     
-    await query.edit_message_text(
-        message,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
+    # اضافه کردن گزینه مدیریت دکمه‌های موجود اگر دکمه‌ای وجود دارد
+    if buttons:
+        keyboard.append([InlineKeyboardButton("📝 مدیریت دکمه‌های موجود", callback_data="manage_existing_buttons")])
+    
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="admin_settings")])
+    
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def show_category_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """نمایش لیست دسته‌بندی‌ها و محصولات برای انتخاب"""
@@ -509,6 +599,8 @@ def create_promotional_category_table():
                 missing_columns.append('item_name')
             if 'item_type' not in columns:
                 missing_columns.append('item_type')
+            if 'display_order' not in columns:
+                missing_columns.append('display_order')
             
             # اضافه کردن فیلدهای گمشده
             for column in missing_columns:
@@ -518,6 +610,8 @@ def create_promotional_category_table():
                     db.execute("ALTER TABLE promotional_category_settings ADD COLUMN item_name TEXT")
                 elif column == 'item_type':
                     db.execute("ALTER TABLE promotional_category_settings ADD COLUMN item_type TEXT DEFAULT 'category'")
+                elif column == 'display_order':
+                    db.execute("ALTER TABLE promotional_category_settings ADD COLUMN display_order INTEGER DEFAULT 0")
                 logger.info(f"✅ Added missing column: {column}")
             
             # به‌روزرسانی رکوردهای قدیمی
@@ -648,3 +742,270 @@ try:
         logger.info("✅ Successfully recreated table with fixed constraints")
 except Exception as e:
     logger.error(f"❌ Migration failed: {e}")
+
+# ---- Handler های جدید برای مدیریت چندین دکمه تبلیغاتی ----
+
+async def manage_existing_buttons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش لیست دکمه‌های موجود برای مدیریت"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not _is_admin(query.from_user.id):
+        await query.edit_message_text("❌ شما دسترسی ادمین ندارید.")
+        return
+    
+    # دریافت تمام دکمه‌های تبلیغاتی
+    buttons = PromotionalCategoryManager.get_all_promotional_buttons()
+    
+    if not buttons:
+        await query.edit_message_text(
+            "📭 هیچ دکمه تبلیغاتی موجود نیست.\n\n"
+            "برای اضافه کردن دکمه جدید، از گزینه 'افزودن دکمه جدید' استفاده کنید.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="promo_category_admin")]
+            ])
+        )
+        return
+    
+    # ساخت پیام و کیبورد
+    message = "📋 **مدیریت دکمه‌های تبلیغاتی**\n\n"
+    keyboard = []
+    
+    for i, button in enumerate(buttons, 1):
+        status_icon = "✅" if button.get('enabled', True) else "❌"
+        button_text = button.get('button_text', 'نامشخص')
+        button_id = button.get('id')
+        
+        message += f"{i}. {status_icon} **{button.get('item_name', 'نامشخص')}**\n"
+        message += f"   🔤 متن: {button_text}\n"
+        message += f"   🏷️ نوع: {button.get('item_type', 'نامشخص')}\n\n"
+        
+        # دکمه‌های مدیریت برای هر آیتم
+        keyboard.append([
+            InlineKeyboardButton(f"✏️ ویرایش متن #{i}", callback_data=f"edit_button_text_{button_id}"),
+            InlineKeyboardButton(f"🔄 تغییر وضعیت #{i}", callback_data=f"toggle_button_{button_id}")
+        ])
+        keyboard.append([
+            InlineKeyboardButton(f"🗑️ حذف #{i}", callback_data=f"delete_button_{button_id}")
+        ])
+    
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="promo_category_admin")])
+    
+    await query.edit_message_text(
+        message,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+        )
+
+async def edit_button_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ویرایش متن دکمه تبلیغاتی"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not _is_admin(query.from_user.id):
+        await query.edit_message_text("❌ شما دسترسی ادمین ندارید.")
+        return
+    
+    # استخراج ID دکمه از callback_data
+    try:
+        button_id = int(query.data.split('_')[-1])
+    except (ValueError, IndexError):
+        await query.edit_message_text(
+            "❌ خطا در شناسایی دکمه.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="manage_existing_buttons")]
+            ])
+        )
+        return
+    
+    # دریافت اطلاعات دکمه
+    button = PromotionalCategoryManager.get_promotional_button_by_id(button_id)
+    if not button:
+        await query.edit_message_text(
+            "❌ دکمه یافت نشد.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="manage_existing_buttons")]
+            ])
+        )
+        return
+    
+    # ذخیره ID دکمه در context برای استفاده در مرحله بعد
+    context.user_data['editing_button_id'] = button_id
+    
+    await query.edit_message_text(
+        f"✏️ **ویرایش متن دکمه**\n\n"
+        f"📦 **دکمه:** {button.get('item_name', 'نامشخص')}\n"
+        f"🔤 **متن فعلی:** {button.get('button_text', 'نامشخص')}\n\n"
+        f"💬 لطفاً متن جدید دکمه را ارسال کنید:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ لغو", callback_data="manage_existing_buttons")]
+        ]),
+        parse_mode="Markdown"
+    )
+    
+    # Return conversation state for button text editing
+    return 1  # AWAIT_BUTTON_TEXT
+
+async def receive_new_button_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت متن جدید دکمه از کاربر"""
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ شما دسترسی ادمین ندارید.")
+        return
+    
+    # بررسی وجود ID دکمه در context
+    button_id = context.user_data.get('editing_button_id')
+    if not button_id:
+        # اگر در حال ویرایش نیستیم، پیام را نادیده می‌گیریم
+        return
+    
+    new_text = update.message.text.strip()
+    if not new_text:
+        await update.message.reply_text("❌ متن نمی‌تواند خالی باشد.")
+        return
+    
+    # به‌روزرسانی متن دکمه
+    try:
+        db = Database.get_instance()
+        db.execute(
+            "UPDATE promotional_category_settings SET button_text = ?, updated_at = datetime('now') WHERE id = ?",
+            (new_text, button_id)
+        )
+        db.commit()
+        
+        # پاک کردن context
+        context.user_data.pop('editing_button_id', None)
+        
+        # دریافت اطلاعات به‌روزرسانی شده
+        button = PromotionalCategoryManager.get_promotional_button_by_id(button_id)
+        
+        await update.message.reply_text(
+            f"✅ **متن دکمه به‌روزرسانی شد**\n\n"
+            f"📦 **دکمه:** {button.get('item_name', 'نامشخص')}\n"
+            f"🔤 **متن جدید:** {new_text}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 مدیریت دکمه‌ها", callback_data="manage_existing_buttons")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="promo_category_admin")]
+            ]),
+            parse_mode="Markdown"
+        )
+        
+        # End conversation
+        from telegram.ext import ConversationHandler
+        return ConversationHandler.END
+        
+    except Exception as e:
+        logger.error(f"Error updating button text: {e}")
+        await update.message.reply_text(
+            "❌ خطا در به‌روزرسانی متن دکمه.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 مدیریت دکمه‌ها", callback_data="manage_existing_buttons")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="promo_category_admin")]
+            ])
+        )
+        
+        # End conversation even on error
+        from telegram.ext import ConversationHandler
+        return ConversationHandler.END
+
+async def toggle_promotional_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تغییر وضعیت فعال/غیرفعال دکمه تبلیغاتی"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not _is_admin(query.from_user.id):
+        await query.edit_message_text("❌ شما دسترسی ادمین ندارید.")
+        return
+    
+    # استخراج ID دکمه از callback_data
+    try:
+        button_id = int(query.data.split('_')[-1])
+    except (ValueError, IndexError):
+        await query.edit_message_text(
+            "❌ خطا در شناسایی دکمه.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="manage_existing_buttons")]
+            ])
+        )
+        return
+    
+    # تغییر وضعیت دکمه
+    success = PromotionalCategoryManager.toggle_promotional_button(button_id)
+    
+    if success:
+        # دریافت وضعیت جدید
+        button = PromotionalCategoryManager.get_promotional_button_by_id(button_id)
+        if button:
+            status = "فعال" if button.get('enabled', True) else "غیرفعال"
+            await query.edit_message_text(
+                f"✅ **وضعیت دکمه تغییر یافت**\n\n"
+                f"📦 **دکمه:** {button.get('item_name', 'نامشخص')}\n"
+                f"🔄 **وضعیت جدید:** {status}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📋 مدیریت دکمه‌ها", callback_data="manage_existing_buttons")],
+                    [InlineKeyboardButton("🔙 بازگشت", callback_data="promo_category_admin")]
+                ]),
+                parse_mode="Markdown"
+            )
+        else:
+            await query.edit_message_text(
+                "✅ وضعیت دکمه تغییر یافت.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📋 مدیریت دکمه‌ها", callback_data="manage_existing_buttons")],
+                    [InlineKeyboardButton("🔙 بازگشت", callback_data="promo_category_admin")]
+                ])
+            )
+    else:
+        await query.edit_message_text(
+            "❌ خطا در تغییر وضعیت دکمه.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 مدیریت دکمه‌ها", callback_data="manage_existing_buttons")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="promo_category_admin")]
+            ])
+        )
+
+async def delete_promotional_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف دکمه تبلیغاتی"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not _is_admin(query.from_user.id):
+        await query.edit_message_text("❌ شما دسترسی ادمین ندارید.")
+        return
+    
+    # استخراج ID دکمه از callback_data
+    try:
+        button_id = int(query.data.split('_')[-1])
+    except (ValueError, IndexError):
+        await query.edit_message_text(
+            "❌ خطا در شناسایی دکمه.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="manage_existing_buttons")]
+            ])
+        )
+        return
+    
+    # دریافت اطلاعات دکمه قبل از حذف
+    button = PromotionalCategoryManager.get_promotional_button_by_id(button_id)
+    button_name = button.get('item_name', 'نامشخص') if button else 'نامشخص'
+    
+    # حذف دکمه
+    success = PromotionalCategoryManager.remove_promotional_button(button_id)
+    
+    if success:
+        await query.edit_message_text(
+            f"✅ **دکمه حذف شد**\n\n"
+            f"🗑️ **دکمه حذف شده:** {button_name}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 مدیریت دکمه‌ها", callback_data="manage_existing_buttons")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="promo_category_admin")]
+            ]),
+            parse_mode="Markdown"
+        )
+    else:
+        await query.edit_message_text(
+            "❌ خطا در حذف دکمه.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 مدیریت دکمه‌ها", callback_data="manage_existing_buttons")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="promo_category_admin")]
+            ])
+        )

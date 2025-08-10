@@ -3067,13 +3067,20 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         from handlers.admin_promotional_category import (
             show_promotional_category_admin, show_category_selection,
             set_promotional_category_handler, set_promotional_product_handler, toggle_promotional_category_handler,
-            prompt_promotional_change_text_handler, receive_new_promo_text_message
+            prompt_promotional_change_text_handler, receive_new_promo_text_message,
+            manage_existing_buttons_handler, toggle_promotional_button_handler, delete_promotional_button_handler,
+            edit_button_text_handler, receive_new_button_text
         )
         handlers.append(CallbackQueryHandler(show_promotional_category_admin, pattern="^promo_category_admin$"))
         handlers.append(CallbackQueryHandler(show_category_selection, pattern="^promo_select_category$"))
         handlers.append(CallbackQueryHandler(set_promotional_category_handler, pattern="^promo_set_category_\d+$"))
         handlers.append(CallbackQueryHandler(set_promotional_product_handler, pattern="^promo_set_product_\d+$"))
         handlers.append(CallbackQueryHandler(toggle_promotional_category_handler, pattern="^promo_toggle$"))
+        
+        # New handlers for multiple promotional buttons
+        handlers.append(CallbackQueryHandler(manage_existing_buttons_handler, pattern="^manage_existing_buttons$"))
+        handlers.append(CallbackQueryHandler(toggle_promotional_button_handler, pattern="^toggle_button_\d+$"))
+        handlers.append(CallbackQueryHandler(delete_promotional_button_handler, pattern="^delete_button_\d+$"))
 
         # Conversation handler for changing promotional button text
         promo_text_conv_handler = ConversationHandler(
@@ -3086,6 +3093,19 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             per_chat=True,
         )
         handlers.append(promo_text_conv_handler)
+        
+        # Button text editing conversation handler
+        AWAIT_BUTTON_TEXT = 1
+        button_text_conv_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(edit_button_text_handler, pattern="^edit_button_text_\d+$")],
+            states={
+                AWAIT_BUTTON_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_button_text)],
+            },
+            fallbacks=[CallbackQueryHandler(manage_existing_buttons_handler, pattern="^manage_existing_buttons$")],
+            per_user=True,
+            per_chat=True,
+        )
+        handlers.append(button_text_conv_handler)
 
         # ---- Mid-level user management handlers ----
         handlers.append(CallbackQueryHandler(self._settings_mid_level_submenu, pattern='^settings_mid_level$'))

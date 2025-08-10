@@ -7,46 +7,52 @@ from telegram import KeyboardButton
 
 logger = logging.getLogger(__name__)
 
-def get_promotional_category_button():
-    """دریافت دکمه تبلیغاتی دسته‌بندی در صورت فعال بودن"""
+def get_promotional_category_buttons():
+    """دریافت تمام دکمه‌های تبلیغاتی فعال"""
     try:
         from handlers.admin_promotional_category import PromotionalCategoryManager
-        promo_status = PromotionalCategoryManager.get_promotional_category_status()
+        buttons = PromotionalCategoryManager.get_all_promotional_buttons()
         
-        # اگر آیتم تبلیغاتی از نوع «محصول» باشد، دکمهٔ reply-keyboard را نشان ندهیم.
-        # برای محصولات، تنها دکمهٔ inline در منوی اصلی نمایش داده می‌شود تا مستقیماً به مرحلهٔ خرید برود.
-        if promo_status['enabled'] and promo_status['button_text']:
-            return KeyboardButton(promo_status['button_text'])
-        return None
-        return None
+        keyboard_buttons = []
+        for button in buttons:
+            if button['enabled'] and button['button_text']:
+                keyboard_buttons.append(KeyboardButton(button['button_text']))
+        
+        return keyboard_buttons
             
     except Exception as e:
-        logger.error(f"Unable to get promotional category button: {e}")
-        return None
+        logger.error(f"Unable to get promotional category buttons: {e}")
+        return []
+
+def get_promotional_category_button():
+    """دریافت اولین دکمه تبلیغاتی (برای سازگاری با کد قدیمی)"""
+    buttons = get_promotional_category_buttons()
+    return buttons[0] if buttons else None
 
 async def handle_promotional_category_button(text: str, update, context):
-    """پردازش کلیک روی دکمه تبلیغاتی"""
+    """پردازش کلیک روی دکمه‌های تبلیغاتی"""
     try:
         from handlers.admin_promotional_category import PromotionalCategoryManager
-        promo_status = PromotionalCategoryManager.get_promotional_category_status()
+        buttons = PromotionalCategoryManager.get_all_promotional_buttons()
         
-        # بررسی اینکه آیا متن دکمه با دکمه تبلیغاتی مطابقت دارد
-        if (
-            promo_status['enabled'] 
-            and promo_status['button_text'] 
-            and text == promo_status['button_text']
-        ):
-            # هدایت کاربر به آیتم مربوطه (دسته‌بندی یا محصول)
-            item_type = promo_status.get('item_type', 'category')
-            item_id = promo_status.get('item_id') or promo_status.get('category_id')
-            
-            if item_type == 'product':
-                # هدایت به محصول
-                await handle_promotional_product_click(item_id, update, context)
-            else:
-                # هدایت به دسته‌بندی
-                await handle_promotional_category_click(item_id, update, context)
-            return True
+        # بررسی اینکه آیا متن با یکی از دکمه‌های تبلیغاتی مطابقت دارد
+        for button in buttons:
+            if (
+                button['enabled'] 
+                and button['button_text'] 
+                and text == button['button_text']
+            ):
+                # هدایت کاربر به آیتم مربوطه (دسته‌بندی یا محصول)
+                item_type = button.get('item_type', 'category')
+                item_id = button.get('item_id') or button.get('category_id')
+                
+                if item_type == 'product':
+                    # هدایت به محصول
+                    await handle_promotional_product_click(item_id, update, context)
+                else:
+                    # هدایت به دسته‌بندی
+                    await handle_promotional_category_click(item_id, update, context)
+                return True
         
         return False
         

@@ -392,7 +392,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("bc_in_audience", None)
         
         from handlers.admin_menu_handlers import AdminMenuHandler
-        admin_handler = AdminMenuHandler()
+        from database.queries import DatabaseQueries
+        from database.database import DBConnection
+        import config
+        
+        db_connection = DBConnection(config.DATABASE_NAME)
+        db_queries = DatabaseQueries(db_connection)
+        admin_handler = AdminMenuHandler(db_queries)
         await admin_handler.show_admin_menu(update, context)("ارسال پیام همگانی لغو شد.")
         # Clear all broadcast flags
         for key in list(context.user_data.keys()):

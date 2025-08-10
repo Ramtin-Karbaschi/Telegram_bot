@@ -102,7 +102,52 @@ else:
 # if not TELEGRAM_CHANNELS_INFO:
 #     raise ValueError("Configuration error: TELEGRAM_CHANNELS_INFO is empty or invalid. At least one channel/group must be defined.")
 
+# --- Website Information ---
+WEBSITE_INFO_JSON = os.getenv("WEBSITE_INFO")
+WEBSITE_INFO = [] # Default to an empty list
 
+if WEBSITE_INFO_JSON:
+    try:
+        parsed_websites = json.loads(WEBSITE_INFO_JSON)
+        if isinstance(parsed_websites, list):
+            valid_websites = []
+            for website_info in parsed_websites:
+                if isinstance(website_info, dict) and \
+                   'link' in website_info and isinstance(website_info['link'], str) and \
+                   'title' in website_info and isinstance(website_info['title'], str):
+                    valid_websites.append({
+                        "link": website_info['link'],
+                        "title": website_info['title']
+                    })
+                else:
+                    logger.warning(
+                        f"Invalid website entry in WEBSITE_INFO: {website_info}. "
+                        "Each entry must be a dict with 'link' (str) and 'title' (str)."
+                    )
+            WEBSITE_INFO = valid_websites
+            if not WEBSITE_INFO and parsed_websites: # If all entries were invalid but there was data
+                 logger.error(
+                    "WEBSITE_INFO was set in .env but contained no valid website entries after parsing. "
+                    "Please check the format."
+                )
+            elif WEBSITE_INFO:
+                 logger.info(f"Successfully loaded {len(WEBSITE_INFO)} website(s) from WEBSITE_INFO.")
+
+        else:
+            logger.error(
+                "WEBSITE_INFO in .env is not a valid JSON list. "
+                "Please ensure it is a list of website objects."
+            )
+    except json.JSONDecodeError:
+        logger.error(
+            "Failed to parse WEBSITE_INFO from .env. Ensure it is valid JSON. "
+            "Example: '[{\"link\": \"https://example.com\", \"title\": \"Example Site\"}]'"
+        )
+else:
+    logger.info(
+        "WEBSITE_INFO not set in .env. No websites will be available for product access channels. "
+        "To define websites, set WEBSITE_INFO as a JSON string in your .env file."
+    )
 
 # --- Payment Gateway Settings ---
 _URL_NOT_SET_PLACEHOLDER = "URL_NOT_SET_IN_ENV"
