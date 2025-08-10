@@ -2356,11 +2356,26 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
                 )
                 return ConversationHandler.END
 
-            # Send links to the target user
+            # Send links to the target user using main bot (not manager bot)
             link_message = "سلام! لینک‌های دعوت شما برای عضویت در کانال‌ها آماده شد:\n\n" + "\n".join(links)
             try:
+                # Determine which bot instance to use - prioritize main bot
+                if self.main_bot_app:
+                    # Check if main_bot_app has 'application' attribute (for Application object)
+                    if hasattr(self.main_bot_app, "application") and hasattr(self.main_bot_app.application, "bot"):
+                        bot_to_use = self.main_bot_app.application.bot
+                    # Check if main_bot_app has direct 'bot' attribute
+                    elif hasattr(self.main_bot_app, "bot"):
+                        bot_to_use = self.main_bot_app.bot
+                    else:
+                        logger.warning("main_bot_app does not have expected bot attribute structure, falling back to manager bot")
+                        bot_to_use = context.bot
+                else:
+                    logger.warning("main_bot_app not available, using manager bot (may fail)")
+                    bot_to_use = context.bot
+                
                 # Send without parse_mode to avoid entity parsing issues
-                await context.bot.send_message(chat_id=target_user_id, text=link_message, parse_mode=None)
+                await bot_to_use.send_message(chat_id=target_user_id, text=link_message, parse_mode=None)
 
                 # Confirm to admin
                 await admin_user.send_message(
