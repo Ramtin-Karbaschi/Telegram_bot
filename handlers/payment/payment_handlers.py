@@ -1093,6 +1093,48 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             expires_at=expires_at_dt
         )
         logger.info(f"User {telegram_id} (DB ID: {user_db_id}): Crypto payment_request_db_id: {crypto_payment_request_db_id}. Result from Database.create_crypto_payment_request.")
+        
+        # CRITICAL FIX: Create corresponding entry in payments table with plan_id
+        if crypto_payment_request_db_id:
+            try:
+                # Create a payment record in the main payments table with the plan_id
+                conn = Database.get_connection()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO payments (
+                        payment_id,
+                        user_id,
+                        plan_id,
+                        amount,
+                        payment_method,
+                        status,
+                        created_at,
+                        updated_at,
+                        usdt_amount_requested,
+                        wallet_address,
+                        expires_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    crypto_payment_request_db_id,  # Use same ID as crypto_payments
+                    user_db_id,
+                    plan_id,  # THIS IS THE CRITICAL FIX - storing plan_id
+                    rial_plan_price_irr,
+                    'crypto',
+                    'pending',
+                    datetime.now().isoformat(),
+                    datetime.now().isoformat(),
+                    live_calculated_usdt_price,
+                    config.CRYPTO_WALLET_ADDRESS,
+                    expires_at_dt.isoformat()
+                ))
+                conn.commit()
+                logger.info(f"✅ Created payment record with plan_id {plan_id} for crypto payment {crypto_payment_request_db_id}")
+            except Exception as e:
+                logger.error(f"❌ Failed to create payment record with plan_id: {e}")
+                # Don't fail the whole process, but log the error
+            finally:
+                if conn:
+                    conn.close()
 
         # ---- Handle failure in placeholder creation ----
         if not crypto_payment_request_db_id:
@@ -2057,7 +2099,38 @@ async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
             except Exception:
                 pass
             Database.update_crypto_payment_on_success(payment_record['payment_id'], final_tx, amount, late=payment_expired)
-            plan_id = payment_record.get('plan_id')
+            
+            # Get plan_id from payments table (crypto_payments doesn't have plan_id)
+            payment_id = payment_record.get('payment_id')
+            main_payment = Database.get_payment_by_id(payment_id)
+            
+            if not main_payment:
+                logger.error(f"❌ Main payment record not found for {payment_id}")
+                await update.message.reply_text(
+                    "❌ **خطای سیستمی**\n\n"
+                    "اطلاعات پرداخت اصلی یافت نشد.\n"
+                    "لطفاً با پشتیبانی تماس بگیرید.",
+                    parse_mode="Markdown"
+                )
+                return ConversationHandler.END
+            
+            # Extract plan_id from main payment record
+            if hasattr(main_payment, "keys"):
+                plan_id = main_payment["plan_id"]
+            else:
+                plan_id = dict(main_payment).get("plan_id")
+                
+            if not plan_id:
+                logger.error(f"❌ No plan_id found in payment {payment_id}")
+                await update.message.reply_text(
+                    "❌ **خطای سیستمی**\n\n"
+                    "شناسه پلن در پرداخت یافت نشد.\n"
+                    "لطفاً با پشتیبانی تماس بگیرید.",
+                    parse_mode="Markdown"
+                )
+                return ConversationHandler.END
+            
+            logger.info(f"✅ Found plan_id {plan_id} for payment {payment_id}")
             
             try:
                 # Gather plan details for subscription activation
@@ -2212,7 +2285,8 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
     crypto_payment_id = context.user_data.get('crypto_payment_id')
     if not crypto_payment_id:
         await safe_edit_message_text(
-            "❌ **خطای سیستمی**\n\n"
+            query.message,
+            text="❌ **خطای سیستمی**\n\n"
             "پرداختی برای بررسی یافت نشد.\n"
             "لطفاً مجدداً تلاش کنید.",
             parse_mode="Markdown"
@@ -2279,7 +2353,46 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
             except Exception:
                 pass
             Database.update_crypto_payment_on_success(payment_record['payment_id'], final_tx, amount, late=payment_expired)
-            plan_id = payment_record.get('plan_id')
+            
+            # Get plan_id from payments table (crypto_payments doesn't have plan_id)
+            payment_id = payment_record.get('payment_id')
+            main_payment = Database.get_payment_by_id(payment_id)
+            
+            if not main_payment:
+                logger.error(f"❌ Main payment record not found for {payment_id}")
+                await safe_edit_message_text(
+                    query.message,
+                    text="❌ **خطای سیستمی**\n\n"
+                    "اطلاعات پرداخت اصلی یافت نشد.\n"
+                    "لطفاً با پشتیبانی تماس بگیرید.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("💬 پشتیبانی", url="https://t.me/daraeiposhtibani")]
+                    ])
+                )
+                return ConversationHandler.END
+            
+            # Extract plan_id from main payment record
+            if hasattr(main_payment, "keys"):
+                plan_id = main_payment["plan_id"]
+            else:
+                plan_id = dict(main_payment).get("plan_id")
+                
+            if not plan_id:
+                logger.error(f"❌ No plan_id found in payment {payment_id}")
+                await safe_edit_message_text(
+                    query.message,
+                    text="❌ **خطای سیستمی**\n\n"
+                    "شناسه پلن در پرداخت یافت نشد.\n"
+                    "لطفاً با پشتیبانی تماس بگیرید.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("💬 پشتیبانی", url="https://t.me/daraeiposhtibani")]
+                    ])
+                )
+                return ConversationHandler.END
+            
+            logger.info(f"✅ Found plan_id {plan_id} for payment {payment_id}")
             
             # دریافت اطلاعات پلن از دیتابیس
             plan_row = Database.get_plan_by_id(plan_id)
@@ -2296,26 +2409,67 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
                 )
                 return ConversationHandler.END
             
+            # Extract plan name safely (handle both dict and Row objects)
+            if plan_row and hasattr(plan_row, "keys"):
+                plan_name = plan_row["name"]
+                logger.info(f"✅ Plan {plan_id} found as dict with name: {plan_name}")
+            elif plan_row:
+                plan_name = dict(plan_row).get("name", "N/A")
+                logger.info(f"✅ Plan {plan_id} found as Row object with name: {plan_name}")
+            else:
+                plan_name = "N/A"
+                logger.warning(f"⚠️ Plan {plan_id} found but unable to extract name")
+            
             try:
+                # Log before activation attempt
+                logger.info(f"🚀 Attempting to activate subscription for user {telegram_id}, plan {plan_id} ({plan_name}), amount {amount} USDT")
+                
                 # فعال‌سازی اشتراک
-                activation_success, _ = await activate_or_extend_subscription(
+                activation_success, activation_message = await activate_or_extend_subscription(
                     user_id=telegram_id,
                     telegram_id=telegram_id,
                     plan_id=plan_id,
-                    plan_name=plan_row.get('name', 'N/A') if plan_row else 'N/A',
+                    plan_name=plan_name,
                     payment_amount=amount,
                     payment_method="crypto_auto",
                     transaction_id=final_tx,
                     context=context,
                     payment_table_id=payment_record["payment_id"]
                 )
+                
+                # Log activation result
+                if activation_success:
+                    logger.info(f"✅ Subscription activated successfully for user {telegram_id}: {activation_message}")
+                else:
+                    logger.error(f"❌ Subscription activation failed for user {telegram_id}: {activation_message}")
 
-                # Increment discount usage if applicable
-                if 'discount_id' in context.user_data:
+                # Only increment discount usage if activation was successful
+                if activation_success and 'discount_id' in context.user_data:
                     did = context.user_data.get('discount_id')
                     logger.info(f"[payment_verify_crypto_handler] Incrementing usage for discount ID {did}.")
                     Database.increment_discount_usage(did)
                 
+                # Check if activation was successful
+                if not activation_success:
+                    # Payment verified but activation failed
+                    error_message = (
+                        "✅ **پرداخت تایید شد** اما خطا در فعال‌سازی اشتراک:\n\n"
+                        f"🔗 **TX Hash:** `{final_tx[:30]}...`\n"
+                        f"💰 **مبلغ:** {amount:.6f} USDT\n"
+                        f"❌ **خطا:** {activation_message}\n\n"
+                        "💡 لطفاً سریعاً با پشتیبانی تماس بگیرید تا اشتراک شما فعال شود.",
+                    )
+                    await safe_edit_message_text(
+                        query.message,
+                        text=error_message,
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("💬 پشتیبانی فوری", url="https://t.me/daraeiposhtibani")]
+                        ])
+                    )
+                    return ConversationHandler.END
+                
+                # Success message only if activation succeeded
                 success_message = (
                     "🎉 **پرداخت خودکار تایید شد!**\n\n"
                     f"✅ **وضعیت:** تایید شده توسط سیستم\n"
