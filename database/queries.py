@@ -1844,6 +1844,7 @@ class DatabaseQueries:
         usdt_amount_requested: float | None = None,
         wallet_address: str | None = None,
         expires_at: datetime | None = None,
+        plan_id: int | None = None,
         description: str = "Crypto payment",
     ):
         """Create a new *pending* crypto payment request in `crypto_payments` table.
@@ -1871,6 +1872,7 @@ class DatabaseQueries:
                 usdt_amount_requested=usdt_amount_requested or 0,
                 wallet_address=wallet_address or "",
                 expires_at=expires_at,
+                plan_id=plan_id,
             )
             return payment_id
         except Exception as exc:

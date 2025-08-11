@@ -138,16 +138,16 @@ class Database:
         return True
 
     # --- Crypto Payment Management ---
-    def create_crypto_payment_request(self, user_id, rial_amount, usdt_amount_requested, wallet_address, expires_at):
+    def create_crypto_payment_request(self, user_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, plan_id=None):
         """Creates a new crypto payment request and returns its unique payment_id."""
         payment_id = str(uuid.uuid4())
         query = """
             INSERT INTO crypto_payments 
-            (user_id, payment_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (user_id, payment_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, plan_id, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         now = datetime.now()
-        params = (user_id, payment_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, 'pending', now, now)
+        params = (user_id, payment_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, plan_id, 'pending', now, now)
         if self.execute(query, params):
             self.commit()
             return payment_id
@@ -298,6 +298,12 @@ class Database:
                 print("🔧 Adding manual_checks column to crypto_payments…")
                 cursor.execute("ALTER TABLE crypto_payments ADD COLUMN manual_checks INTEGER DEFAULT 0")
                 print("✅ manual_checks column added")
+            
+            # ---------------- Ensure plan_id column in crypto_payments ----------------
+            if 'plan_id' not in cols:
+                print("🔧 Adding plan_id column to crypto_payments…")
+                cursor.execute("ALTER TABLE crypto_payments ADD COLUMN plan_id INTEGER")
+                print("✅ plan_id column added to crypto_payments")
             
             # اضافه کردن تنظیمات پیشفرض
             default_settings = [

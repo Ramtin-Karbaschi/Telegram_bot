@@ -1090,52 +1090,10 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             rial_amount=rial_plan_price_irr,  # Dynamic IRR amount of the plan
             usdt_amount_requested=live_calculated_usdt_price, # This is the base USDT price for the plan
             wallet_address=config.CRYPTO_WALLET_ADDRESS,
-            expires_at=expires_at_dt
+            expires_at=expires_at_dt,
+            plan_id=plan_id  # اضافه کردن plan_id
         )
         logger.info(f"User {telegram_id} (DB ID: {user_db_id}): Crypto payment_request_db_id: {crypto_payment_request_db_id}. Result from Database.create_crypto_payment_request.")
-        
-        # CRITICAL FIX: Create corresponding entry in payments table with plan_id
-        if crypto_payment_request_db_id:
-            conn = None
-            try:
-                # Create a payment record in the main payments table with the plan_id
-                conn = Database.get_connection()
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO payments (
-                        payment_id,
-                        user_id,
-                        plan_id,
-                        amount,
-                        payment_method,
-                        status,
-                        created_at,
-                        updated_at,
-                        usdt_amount_requested,
-                        wallet_address,
-                        expires_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    crypto_payment_request_db_id,  # Use same ID as crypto_payments
-                    user_db_id,
-                    plan_id,  # THIS IS THE CRITICAL FIX - storing plan_id
-                    rial_plan_price_irr,
-                    'crypto',
-                    'pending',
-                    datetime.now().isoformat(),
-                    datetime.now().isoformat(),
-                    live_calculated_usdt_price,
-                    config.CRYPTO_WALLET_ADDRESS,
-                    expires_at_dt.isoformat()
-                ))
-                conn.commit()
-                logger.info(f"✅ Created payment record with plan_id {plan_id} for crypto payment {crypto_payment_request_db_id}")
-            except Exception as e:
-                logger.error(f"❌ Failed to create payment record with plan_id: {e}")
-                # Don't fail the whole process, but log the error
-            finally:
-                if conn:
-                    conn.close()
 
         # ---- Handle failure in placeholder creation ----
         if not crypto_payment_request_db_id:
@@ -2101,28 +2059,11 @@ async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
                 pass
             Database.update_crypto_payment_on_success(payment_record['payment_id'], final_tx, amount, late=payment_expired)
             
-            # Get plan_id from payments table (crypto_payments doesn't have plan_id)
-            payment_id = payment_record.get('payment_id')
-            main_payment = Database.get_payment_by_id(payment_id)
+            # Get plan_id directly from crypto_payments record
+            plan_id = payment_record.get('plan_id')
             
-            if not main_payment:
-                logger.error(f"❌ Main payment record not found for {payment_id}")
-                await update.message.reply_text(
-                    "❌ **خطای سیستمی**\n\n"
-                    "اطلاعات پرداخت اصلی یافت نشد.\n"
-                    "لطفاً با پشتیبانی تماس بگیرید.",
-                    parse_mode="Markdown"
-                )
-                return ConversationHandler.END
-            
-            # Extract plan_id from main payment record
-            if hasattr(main_payment, "keys"):
-                plan_id = main_payment["plan_id"]
-            else:
-                plan_id = dict(main_payment).get("plan_id")
-                
             if not plan_id:
-                logger.error(f"❌ No plan_id found in payment {payment_id}")
+                logger.error(f"❌ No plan_id found in crypto payment {payment_record.get('payment_id')}")
                 await update.message.reply_text(
                     "❌ **خطای سیستمی**\n\n"
                     "شناسه پلن در پرداخت یافت نشد.\n"
@@ -2131,7 +2072,7 @@ async def receive_tx_hash_handler(update: Update, context: ContextTypes.DEFAULT_
                 )
                 return ConversationHandler.END
             
-            logger.info(f"✅ Found plan_id {plan_id} for payment {payment_id}")
+            logger.info(f"✅ Found plan_id {plan_id} for crypto payment {payment_record.get('payment_id')}")
             
             try:
                 # Gather plan details for subscription activation
@@ -2355,32 +2296,11 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
                 pass
             Database.update_crypto_payment_on_success(payment_record['payment_id'], final_tx, amount, late=payment_expired)
             
-            # Get plan_id from payments table (crypto_payments doesn't have plan_id)
-            payment_id = payment_record.get('payment_id')
-            main_payment = Database.get_payment_by_id(payment_id)
+            # Get plan_id directly from crypto_payments record
+            plan_id = payment_record.get('plan_id')
             
-            if not main_payment:
-                logger.error(f"❌ Main payment record not found for {payment_id}")
-                await safe_edit_message_text(
-                    query.message,
-                    text="❌ **خطای سیستمی**\n\n"
-                    "اطلاعات پرداخت اصلی یافت نشد.\n"
-                    "لطفاً با پشتیبانی تماس بگیرید.",
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("💬 پشتیبانی", url="https://t.me/daraeiposhtibani")]
-                    ])
-                )
-                return ConversationHandler.END
-            
-            # Extract plan_id from main payment record
-            if hasattr(main_payment, "keys"):
-                plan_id = main_payment["plan_id"]
-            else:
-                plan_id = dict(main_payment).get("plan_id")
-                
             if not plan_id:
-                logger.error(f"❌ No plan_id found in payment {payment_id}")
+                logger.error(f"❌ No plan_id found in crypto payment {payment_record.get('payment_id')}")
                 await safe_edit_message_text(
                     query.message,
                     text="❌ **خطای سیستمی**\n\n"
@@ -2393,7 +2313,7 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
                 )
                 return ConversationHandler.END
             
-            logger.info(f"✅ Found plan_id {plan_id} for payment {payment_id}")
+            logger.info(f"✅ Found plan_id {plan_id} for crypto payment {payment_record.get('payment_id')}")
             
             # دریافت اطلاعات پلن از دیتابیس
             plan_row = Database.get_plan_by_id(plan_id)
