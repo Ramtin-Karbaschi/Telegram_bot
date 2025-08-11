@@ -1096,6 +1096,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         
         # CRITICAL FIX: Create corresponding entry in payments table with plan_id
         if crypto_payment_request_db_id:
+            conn = None
             try:
                 # Create a payment record in the main payments table with the plan_id
                 conn = Database.get_connection()
