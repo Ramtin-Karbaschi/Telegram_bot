@@ -138,16 +138,16 @@ class Database:
         return True
 
     # --- Crypto Payment Management ---
-    def create_crypto_payment_request(self, user_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, plan_id=None):
+    def create_crypto_payment_request(self, user_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, plan_id=None, discount_id=None):
         """Creates a new crypto payment request and returns its unique payment_id."""
         payment_id = str(uuid.uuid4())
         query = """
             INSERT INTO crypto_payments 
-            (user_id, payment_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, plan_id, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (user_id, payment_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, plan_id, discount_id, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         now = datetime.now()
-        params = (user_id, payment_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, plan_id, 'pending', now, now)
+        params = (user_id, payment_id, rial_amount, usdt_amount_requested, wallet_address, expires_at, plan_id, discount_id, 'pending', now, now)
         if self.execute(query, params):
             self.commit()
             return payment_id
@@ -167,10 +167,11 @@ class Database:
 
     def update_crypto_payment_on_success(self, payment_id, transaction_id, usdt_amount_received, late: bool = False):
         """Updates a crypto payment record upon successful confirmation."""
-        # --- Fetch current status for audit ---
-        self.execute("SELECT status FROM crypto_payments WHERE payment_id = ?", (payment_id,))
+        # --- Fetch current status and discount_id for audit and tracking ---
+        self.execute("SELECT status, discount_id FROM crypto_payments WHERE payment_id = ?", (payment_id,))
         row = self.fetchone()
         old_status = row['status'] if row else None
+        discount_id = row['discount_id'] if row else None
 
         new_status = 'paid-late' if late else 'paid'
         query = """
@@ -185,6 +186,20 @@ class Database:
             if rows:
                 # log status change
                 self.log_payment_status_change(payment_id, old_status, new_status, note=f'Tx {transaction_id}')
+                
+                # Track discount usage for successful crypto payments
+                if discount_id:
+                    try:
+                        from database.queries import DatabaseQueries
+                        DatabaseQueries.increment_discount_usage(discount_id)
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.info(f"[crypto_payment_success] Incremented usage for discount ID {discount_id} (payment_id: {payment_id})")
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"[crypto_payment_success] Failed to increment discount usage for ID {discount_id}: {e}")
+                        
             return rows > 0
         return False
 

@@ -1085,13 +1085,17 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         payment_timeout_minutes = config.CRYPTO_PAYMENT_TIMEOUT_MINUTES
         expires_at_dt = datetime.now() + timedelta(minutes=payment_timeout_minutes)
 
+        # Get discount_id from context for tracking
+        discount_id_for_crypto = context.user_data.get('discount_id')
+        
         crypto_payment_request_db_id = Database.create_crypto_payment_request(
             user_id=user_db_id,
             rial_amount=rial_plan_price_irr,  # Dynamic IRR amount of the plan
             usdt_amount_requested=live_calculated_usdt_price, # This is the base USDT price for the plan
             wallet_address=config.CRYPTO_WALLET_ADDRESS,
             expires_at=expires_at_dt,
-            plan_id=plan_id  # اضافه کردن plan_id
+            plan_id=plan_id,  # اضافه کردن plan_id
+            discount_id=discount_id_for_crypto  # Track discount usage in crypto payments
         )
         logger.info(f"User {telegram_id} (DB ID: {user_db_id}): Crypto payment_request_db_id: {crypto_payment_request_db_id}. Result from Database.create_crypto_payment_request.")
 

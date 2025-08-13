@@ -164,6 +164,7 @@ CREATE TABLE IF NOT EXISTS crypto_payments (
     wallet_address TEXT NOT NULL, -- The wallet address payment was requested to
     transaction_id TEXT UNIQUE, -- Blockchain transaction ID, initially NULL (prevents duplicate hash usage)
     status TEXT NOT NULL DEFAULT 'pending', -- e.g., pending, paid, expired, failed, error, underpaid, overpaid
+    discount_id INTEGER, -- Track discount code usage for crypto payments
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Tracks the last status update
     expires_at TIMESTAMP NOT NULL, -- When this payment request becomes invalid
