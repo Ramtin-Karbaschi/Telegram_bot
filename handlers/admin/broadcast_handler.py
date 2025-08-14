@@ -355,9 +355,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _refresh_selection_message(update, context)
         
     elif data == "broadcast_send":
+        # Allow sending without buttons - just show a warning
         if not buttons:
-            await query.answer("⚠️ ابتدا حداقل یک دکمه اضافه کنید", show_alert=True)
-            return
+            await query.answer("⚠️ پیام بدون دکمه ارسال خواهد شد", show_alert=False)
             
         # Show audience selection
         keyboard = InlineKeyboardMarkup([
@@ -391,19 +391,17 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("bc_in_add_select", None)
         context.user_data.pop("bc_in_audience", None)
         
-        from handlers.admin_menu_handlers import AdminMenuHandler
-        from database.queries import DatabaseQueries
-        from database.database import DBConnection
-        import config
-        
-        db_connection = DBConnection(config.DATABASE_NAME)
-        db_queries = DatabaseQueries(db_connection)
-        admin_handler = AdminMenuHandler(db_queries)
-        await admin_handler.show_admin_menu(update, context)("ارسال پیام همگانی لغو شد.")
         # Clear all broadcast flags
         for key in list(context.user_data.keys()):
             if key.startswith("bc_"):
                 context.user_data.pop(key, None)
+        
+        # Show cancellation message and return to admin menu
+        await query.edit_message_text("❌ ارسال پیام همگانی لغو شد.")
+        
+        from handlers.admin_menu_handlers import AdminMenuHandler
+        admin_handler = AdminMenuHandler()
+        await admin_handler.show_admin_menu(update, context)
         return
 
 
