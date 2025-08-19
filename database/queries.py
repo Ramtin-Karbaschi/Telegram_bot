@@ -4185,8 +4185,8 @@ class DatabaseQueries:
             db.close()
     
     @staticmethod
-    def user_has_access_to_channel(user_id: int, channel_id: int):
-        """Check if a user has purchased a product that grants access to a specific channel.
+    def user_has_access_to_channel(user_id: int, channel_id: int) -> bool:
+        """Check if a user has access to a specific channel based on their active subscriptions.
         
         Args:
             user_id: The user ID to check
@@ -4203,33 +4203,64 @@ class DatabaseQueries:
             import json
             cursor = db.conn.cursor()
             
-            # Get all active subscriptions for the user with their associated channels
-            query = """
-                SELECT p.channels_json
-                FROM subscriptions s
-                JOIN plans p ON s.plan_id = p.id
-                WHERE s.user_id = ? 
-                AND s.status = 'active'
-                AND (s.end_date IS NULL OR s.end_date > datetime('now'))
-            """
-            cursor.execute(query, (user_id,))
-            results = cursor.fetchall()
+            # First check if channels_json column exists
+            cursor.execute("PRAGMA table_info(plans)")
+            columns = [col[1] for col in cursor.fetchall()]
+            has_channels_json = 'channels_json' in columns
             
-            # Check if any of the user's products grant access to this channel
-            for row in results:
-                if row[0]:  # channels_json exists
-                    try:
-                        channels_data = json.loads(row[0])
-                        if isinstance(channels_data, list):
-                            for channel in channels_data:
-                                if isinstance(channel, dict) and channel.get('id') == channel_id:
+            if not has_channels_json:
+                # Legacy mode: if channels_json doesn't exist, 
+                # allow access if user has ANY active subscription
+                query = """
+                    SELECT COUNT(*)
+                    FROM subscriptions s
+                    JOIN plans p ON s.plan_id = p.id
+                    WHERE s.user_id = ? 
+                    AND s.status = 'active'
+                    AND (s.end_date IS NULL OR s.end_date > datetime('now'))
+                """
+                cursor.execute(query, (user_id,))
+                count = cursor.fetchone()[0]
+                return count > 0
+            else:
+                # New mode: check channels_json for specific channel access
+                query = """
+                    SELECT p.channels_json
+                    FROM subscriptions s
+                    JOIN plans p ON s.plan_id = p.id
+                    WHERE s.user_id = ? 
+                    AND s.status = 'active'
+                    AND (s.end_date IS NULL OR s.end_date > datetime('now'))
+                """
+                cursor.execute(query, (user_id,))
+                results = cursor.fetchall()
+                
+                # If user has active subscriptions but no channels defined,
+                # allow access (backward compatibility)
+                has_any_subscription = len(results) > 0
+                has_channel_definitions = False
+                
+                # Check if any of the user's products grant access to this channel
+                for row in results:
+                    if row[0]:  # channels_json exists
+                        has_channel_definitions = True
+                        try:
+                            channels_data = json.loads(row[0])
+                            if isinstance(channels_data, list):
+                                for channel in channels_data:
+                                    if isinstance(channel, dict) and channel.get('id') == channel_id:
+                                        return True
+                            elif isinstance(channels_data, dict):
+                                if channels_data.get('id') == channel_id:
                                     return True
-                        elif isinstance(channels_data, dict):
-                            if channels_data.get('id') == channel_id:
-                                return True
-                    except json.JSONDecodeError:
-                        continue
-                        
+                        except json.JSONDecodeError:
+                            continue
+                
+                # If user has active subscription but no channel definitions, allow access
+                # This protects legacy users
+                if has_any_subscription and not has_channel_definitions:
+                    return True
+                    
             return False
             
         except Exception as e:
@@ -4256,35 +4287,61 @@ class DatabaseQueries:
             import json
             cursor = db.conn.cursor()
             
-            # Get all active subscriptions
-            query = """
-                SELECT s.user_id, p.channels_json
-                FROM subscriptions s
-                JOIN plans p ON s.plan_id = p.id
-                WHERE s.status = 'active'
-                AND (s.end_date IS NULL OR s.end_date > datetime('now'))
-            """
-            cursor.execute(query)
-            results = cursor.fetchall()
+            # First check if channels_json column exists
+            cursor.execute("PRAGMA table_info(plans)")
+            columns = [col[1] for col in cursor.fetchall()]
+            has_channels_json = 'channels_json' in columns
             
-            authorized_users = set()
-            for user_id, channels_json in results:
-                if channels_json:
-                    try:
-                        channels_data = json.loads(channels_json)
-                        # Check if this product grants access to the specified channel
-                        if isinstance(channels_data, list):
-                            for channel in channels_data:
-                                if isinstance(channel, dict) and channel.get('id') == channel_id:
+            if not has_channels_json:
+                # Legacy mode: return ALL users with active subscriptions
+                query = """
+                    SELECT DISTINCT s.user_id
+                    FROM subscriptions s
+                    JOIN plans p ON s.plan_id = p.id
+                    WHERE s.status = 'active'
+                    AND (s.end_date IS NULL OR s.end_date > datetime('now'))
+                """
+                cursor.execute(query)
+                results = cursor.fetchall()
+                return [row[0] for row in results]
+            else:
+                # New mode: check channels_json
+                query = """
+                    SELECT s.user_id, p.channels_json
+                    FROM subscriptions s
+                    JOIN plans p ON s.plan_id = p.id
+                    WHERE s.status = 'active'
+                    AND (s.end_date IS NULL OR s.end_date > datetime('now'))
+                """
+                cursor.execute(query)
+                results = cursor.fetchall()
+                
+                authorized_users = set()
+                legacy_users = set()  # Users with subscriptions but no channel definitions
+                
+                for user_id, channels_json in results:
+                    if channels_json:
+                        try:
+                            channels_data = json.loads(channels_json)
+                            # Check if this product grants access to the specified channel
+                            if isinstance(channels_data, list):
+                                for channel in channels_data:
+                                    if isinstance(channel, dict) and channel.get('id') == channel_id:
+                                        authorized_users.add(user_id)
+                                        break
+                            elif isinstance(channels_data, dict):
+                                if channels_data.get('id') == channel_id:
                                     authorized_users.add(user_id)
-                                    break
-                        elif isinstance(channels_data, dict):
-                            if channels_data.get('id') == channel_id:
-                                authorized_users.add(user_id)
-                    except json.JSONDecodeError:
-                        continue
-                        
-            return list(authorized_users)
+                        except json.JSONDecodeError:
+                            # If JSON is invalid, treat as legacy user
+                            legacy_users.add(user_id)
+                    else:
+                        # No channels defined = legacy user with access
+                        legacy_users.add(user_id)
+                
+                # Combine both authorized users and legacy users
+                all_authorized = authorized_users.union(legacy_users)
+                return list(all_authorized)
             
         except Exception as e:
             logging.error(f"Error getting users with channel access: {e}")
