@@ -649,10 +649,14 @@ async def add_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await _refresh_selection_message(update, context)
             
         elif data == "broadcast_continue":
-            # Continue to message input
-            await query.edit_message_text(
-                "📝 حالا پیام مورد نظر خود را ارسال کنید:"
-            )
+            # Continue to message input (with or without buttons)
+            buttons = context.user_data.get("broadcast_buttons", [])
+            if not buttons:
+                message_text = "📝 پیام مورد نظر خود را ارسال کنید:\n\n⚠️ توجه: هیچ دکمه‌ای انتخاب نشده است."
+            else:
+                message_text = f"📝 پیام مورد نظر خود را ارسال کنید:\n\n✅ {len(buttons)} دکمه انتخاب شده"
+            
+            await query.edit_message_text(message_text)
             context.user_data["bc_waiting_msg"] = True
             
         elif data == "broadcast_cancel":
