@@ -535,22 +535,6 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         data = query.data
         user_id = query.from_user.id
         is_admin_flag = is_user_in_admin_list(user_id, self.admin_config)
-        # If the user is in the custom broadcast flow, let broadcast handler process its own callbacks
-        # This avoids blocking mid-level users from toggling selections (bc_plan_/bc_cat_/bc_chan_/broadcast_* etc.)
-        try:
-            if has_broadcast_access(user_id):
-                bc_prefixes = ("bc_plan_", "bc_cat_", "bc_chan_")
-                bc_tokens = {
-                    "broadcast_continue", "broadcast_cancel",
-                    "header_channels", "header_categories", "header_products",
-                    "separator", "separator2", "sep_ch_cat"
-                }
-                if (data.startswith(bc_prefixes) or data in bc_tokens) and context.user_data.get("bc_flow"):
-                    logging.info("DEBUG: passthrough broadcast callback %s for user %s", data, user_id)
-                    return  # allow ConversationHandler in broadcast_handler to handle it
-        except Exception:
-            # Non-fatal; fall back to regular access handling
-            pass
         support_allowed_callbacks = {
             self.TICKETS_MENU, self.PAYMENTS_MENU,
             "tickets_open", "tickets_all",
