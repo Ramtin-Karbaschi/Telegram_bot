@@ -4203,7 +4203,14 @@ class DatabaseQueries:
             import json
             cursor = db.conn.cursor()
             
-            # First check if channels_json column exists
+            # First check if user exists in database (is a bot member)
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+            user_exists = cursor.fetchone()
+            if not user_exists:
+                # User is not in our database - deny access
+                return False
+            
+            # Check if channels_json column exists
             cursor.execute("PRAGMA table_info(plans)")
             columns = [col[1] for col in cursor.fetchall()]
             has_channels_json = 'channels_json' in columns

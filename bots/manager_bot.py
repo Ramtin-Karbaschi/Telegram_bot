@@ -340,20 +340,8 @@ class ManagerBot:
                         self.logger.error(
                             f"Failed to mark invite link as used for user {user.id}: {e}")
                     has_channel_access = True
-                else:
-                    # Fallback: use invite_link info available in the update object (if bot created link but not stored for some reason)
-                    invite_link_obj = getattr(update.chat_member, 'invite_link', None)
-                    raw_link = getattr(invite_link_obj, 'invite_link', None) if invite_link_obj else None
-                    if raw_link:
-                        self.logger.info(
-                            f"Invite link object present in update for user {user.id}. Treating as valid, marking as used in DB."
-                        )
-                        try:
-                            mark_invite_link_used(raw_link)
-                        except Exception as e:
-                            self.logger.error(
-                                f"Failed to mark invite link from update as used for user {user.id}: {e}")
-                        has_channel_access = True
+                # Note: We NO LONGER trust invite links from the update object
+                # as this can be exploited by unauthorized users
 
             if not has_channel_access:
                 self.logger.warning(
