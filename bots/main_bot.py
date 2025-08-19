@@ -212,13 +212,34 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             # --- Send sales report message to channel ---
                             try:
                                 sales_channel_id = config.SALE_CHANNEL_ID  # گزارشهای فروش
-                                username = update.effective_user.username if update.effective_user and update.effective_user.username else None
-                                user_display = f"@{username}" if username else f"ID:{user_id}"
-                                price_formatted = f"{int(rial_amount):,} تومان"
-                                await context.bot.send_message(
-                                    chat_id=sales_channel_id,
-                                    text=f"🛒 {user_display} محصول {plan_info['name']} را به قیمت {price_formatted} خریداری کرد."
-                                )
+                                if sales_channel_id:
+                                    username = update.effective_user.username if update.effective_user and update.effective_user.username else None
+                                    user_display = f"@{username}" if username else f"ID:{user_id}"
+                                    
+                                    # Get current Persian date
+                                    try:
+                                        import jdatetime
+                                        persian_date = jdatetime.datetime.now().strftime("%Y/%m/%d")
+                                    except Exception:
+                                        persian_date = "تاریخ نامشخص"
+                                    
+                                    # Format price and set hashtag
+                                    price_formatted = f"{int(rial_amount):,} تومان"
+                                    purchase_tag = "#خرید_نقدی"
+                                    
+                                    # Send formatted message
+                                    await context.bot.send_message(
+                                        chat_id=sales_channel_id,
+                                        text=(
+                                            f"{purchase_tag}\n"
+                                            f"━━━━━━━━━━━━━━━\n"
+                                            f"📅 تاریخ: {persian_date}\n"
+                                            f"👤 کاربر: {user_display}\n"
+                                            f"📦 محصول: {plan_info['name']}\n"
+                                            f"💰 مبلغ: {price_formatted}\n"
+                                            f"━━━━━━━━━━━━━━━"
+                                        )
+                                    )
                             except Exception as e:
                                 logger.error(f"Failed to send sales report message: {e}")
 

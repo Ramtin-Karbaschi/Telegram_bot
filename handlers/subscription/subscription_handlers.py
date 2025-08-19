@@ -282,7 +282,9 @@ async def activate_or_extend_subscription(
 
         # --- Immediate sales report to channel ---
         try:
-            channel_id = getattr(config, "PURCHASE_REPORT_CHANNEL_ID", -1002326841125)
+            # Use SALE_CHANNEL_ID from config (unified channel for all sales reports)
+            channel_id = getattr(config, "SALE_CHANNEL_ID", None)
+                
             if channel_id:
                 # Try to fetch username for prettier display
                 username = None
@@ -294,27 +296,57 @@ async def activate_or_extend_subscription(
                     pass  # Ignore lookup failures
                 user_display = username if username else f"ID:{telegram_id}"
 
+                # Get current Persian date
+                try:
+                    persian_date = jdatetime.datetime.now().strftime("%Y/%m/%d")
+                except Exception:
+                    persian_date = "تاریخ نامشخص"
+
                 # Format amount based on method and set hashtag
                 pm_lower = payment_method.lower()
+                
                 if pm_lower in ["rial", "zarinpal"]:
+                    # Rial payment
                     price_formatted = f"{int(payment_amount):,} تومان"
-                    purchase_tag = "#خرید_ریالی"
-                elif pm_lower in ["tether", "usdt"]:
-                    price_formatted = f"{payment_amount} تتر"
+                    purchase_tag = "#خرید_نقدی"
+                    
+                elif pm_lower in ["crypto", "tether", "usdt"]:
+                    # Crypto/Tether payment - calculate Rial equivalent
+                    price_formatted = f"{payment_amount:.2f} تتر"
                     purchase_tag = "#خرید_تتری"
-                else:
+                    
+                    # Try to get current USDT rate and calculate rial equivalent
+                    try:
+                        from utils.price_utils import get_usdt_to_irr_rate
+                        usdt_rate = await get_usdt_to_irr_rate()
+                        if usdt_rate and usdt_rate > 0:
+                            # Convert USDT to Toman (not Rial)
+                            rial_equivalent = int(payment_amount * usdt_rate)
+                            price_formatted = f"{payment_amount:.2f} تتر (معادل {rial_equivalent:,} تومان)"
+                    except Exception as rate_error:
+                        logger.warning(f"Could not calculate rial equivalent for USDT: {rate_error}")
+                        
+                elif payment_amount == 0 or pm_lower in ["free", "رایگان"]:
+                    # Free plan
                     price_formatted = "رایگان"
                     purchase_tag = "#خرید_رایگان"
+                    
+                else:
+                    # Unknown payment method
+                    price_formatted = f"{payment_amount}"
+                    purchase_tag = "#خرید"
 
                 # Send nicely formatted, multi-line notification with hashtag on top
                 await context.bot.send_message(
                     chat_id=channel_id,
                     text=(
                         f"{purchase_tag}\n"
-                        f"🛒 خرید جدید!\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"📅 تاریخ: {persian_date}\n"
                         f"👤 کاربر: {user_display}\n"
                         f"📦 محصول: {plan_name}\n"
-                        f"💰 مبلغ: {price_formatted}"
+                        f"💰 مبلغ: {price_formatted}\n"
+                        f"━━━━━━━━━━━━━━━"
                     )
                 )
         except Exception as e:

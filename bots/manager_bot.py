@@ -305,7 +305,7 @@ class ManagerBot:
         return user_id in active_user_ids
 
     async def handle_chat_member_update(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle chat member updates to kick unauthorized users."""
+        """Handle chat member updates to kick unauthorized users based on product-channel access."""
         result = self.extract_status_change(update.chat_member)
         if result is None:
             return
@@ -316,11 +316,13 @@ class ManagerBot:
 
         if not was_member and is_member:
             self.logger.info(
-                f"User {user.id} ({user.first_name}) joined chat {chat.id} ({chat.title}). Checking authorization..."
+                f"User {user.id} ({user.first_name}) joined chat {chat.id} ({chat.title}). Checking product-based authorization..."
             )
 
-            is_authorized = self.is_user_authorized(user.id)
-            if not is_authorized:
+            # Check if user has purchased a product that grants access to THIS specific channel
+            has_channel_access = DatabaseQueries.user_has_access_to_channel(user.id, chat.id)
+            
+            if not has_channel_access:
                 # Check database for an unused invite link issued to this user
                 active_link = None
                 try:
@@ -337,7 +339,7 @@ class ManagerBot:
                     except Exception as e:
                         self.logger.error(
                             f"Failed to mark invite link as used for user {user.id}: {e}")
-                    is_authorized = True
+                    has_channel_access = True
                 else:
                     # Fallback: use invite_link info available in the update object (if bot created link but not stored for some reason)
                     invite_link_obj = getattr(update.chat_member, 'invite_link', None)
@@ -351,23 +353,31 @@ class ManagerBot:
                         except Exception as e:
                             self.logger.error(
                                 f"Failed to mark invite link from update as used for user {user.id}: {e}")
-                        is_authorized = True
+                        has_channel_access = True
 
-            if not is_authorized:
+            if not has_channel_access:
                 self.logger.warning(
-                    f"User {user.id} is NOT authorized and has no valid invite link. Kicking from {chat.id}."
+                    f"User {user.id} does NOT have access to channel {chat.id} ({chat.title}) based on their purchased products. Kicking."
                 )
                 try:
                     await context.bot.ban_chat_member(chat_id=chat.id, user_id=user.id)
                     await context.bot.unban_chat_member(chat_id=chat.id, user_id=user.id)
                     self.logger.info(
-                        f"Successfully kicked unauthorized user {user.id} from {chat.id}")
+                        f"Successfully kicked user {user.id} from {chat.id} - no product access to this channel")
+                    # Send notification to user
+                    try:
+                        await context.bot.send_message(
+                            chat_id=user.id,
+                            text=f"⚠️ شما به کانال {chat.title} دسترسی ندارید. لطفاً محصول مربوط به این کانال را خریداری کنید."
+                        )
+                    except:
+                        pass
                 except Exception as e:
                     self.logger.error(
                         f"Failed to kick user {user.id} from {chat.id}: {e}")
             else:
                 self.logger.info(
-                    f"User {user.id} is authorized (subscription) or has a valid invite link – allowed to stay.")
+                    f"User {user.id} has valid product access to channel {chat.id} – allowed to stay.")
         
         elif was_member and not is_member:
             status = update.chat_member.new_chat_member.status
@@ -851,24 +861,23 @@ class ManagerBot:
                 if not admin_user_ids:
                      self.logger.warning(f"Admin list for channel '{current_channel_title}' is empty. This might be an issue if bot isn't admin or no admins exist.")
 
-                # Part 1: Check users who SHOULD be members (active subscribers in DB)
-                active_subscriptions_db = DatabaseQueries.get_all_active_subscribers()
-                active_subscriber_ids_db = {sub['user_id'] for sub in active_subscriptions_db}
-                self.logger.info(f"Found {len(active_subscriber_ids_db)} active subscribers in DB (applies to all channels). For channel '{current_channel_title}'.")
+                # Part 1: Check users who SHOULD be members (those who purchased products for this channel)
+                authorized_users_for_channel = DatabaseQueries.get_users_with_channel_access(current_channel_id)
+                self.logger.info(f"Found {len(authorized_users_for_channel)} users with product access to channel '{current_channel_title}'.")
 
-                for user_id_to_check in list(active_subscriber_ids_db):
+                for user_id_to_check in authorized_users_for_channel:
                     if user_id_to_check in admin_user_ids:
                         self.logger.info(f"User {user_id_to_check} is an admin in channel '{current_channel_title}', skipping membership status check.")
                         continue
 
                     try:
                         chat_member = await bot.get_chat_member(chat_id=current_channel_id, user_id=user_id_to_check)
-                        self.logger.debug(f"Status of active DB subscriber {user_id_to_check} in channel '{current_channel_title}': {chat_member.status}")
+                        self.logger.debug(f"Status of authorized user {user_id_to_check} in channel '{current_channel_title}': {chat_member.status}")
                         if chat_member.status in ['left', 'kicked']:
-                            self.logger.warning(f"User {user_id_to_check} has active DB sub but is {chat_member.status} in channel '{current_channel_title}'.")
+                            self.logger.warning(f"User {user_id_to_check} has product access but is {chat_member.status} in channel '{current_channel_title}'.")
                     except BadRequest as e:
                         if "user not found" in str(e).lower() or "participant_id_invalid" in str(e).lower():
-                            self.logger.warning(f"User {user_id_to_check} (active DB subscriber) not found in Telegram (for channel '{current_channel_title}').")
+                            self.logger.warning(f"User {user_id_to_check} (with product access) not found in Telegram (for channel '{current_channel_title}').")
                         else:
                             self.logger.error(f"Error checking member {user_id_to_check} in channel '{current_channel_title}' (BadRequest): {e}.")
                     except Forbidden as e:
@@ -876,23 +885,24 @@ class ManagerBot:
                     except Exception as e:
                         self.logger.error(f"Unexpected error checking member {user_id_to_check} in channel '{current_channel_title}': {e}", exc_info=True)
                 
-                # Part 2: Identify and kick users in channel with non-active/expired/no DB subscription
-                users_with_non_active_subs_db = DatabaseQueries.get_users_with_non_active_subscription_records()
-                if users_with_non_active_subs_db is None:
-                    users_with_non_active_subs_db = []
+                # Part 2: Identify and kick users in channel without product access to THIS channel
+                # Get all users with any subscription (active or not) to check against this specific channel
+                all_users_db = DatabaseQueries.get_all_registered_users()
+                if all_users_db is None:
+                    all_users_db = []
                 
-                self.logger.info(f"Found {len(users_with_non_active_subs_db)} users with non-active/expired DB subscriptions to check in channel '{current_channel_title}'.")
+                self.logger.info(f"Checking {len(all_users_db)} total users for unauthorized access to channel '{current_channel_title}'.")
 
                 kicked_count = 0
-                for record in users_with_non_active_subs_db:
-                    user_id_to_kick_check = record.get('user_id')
+                for user_record in all_users_db:
+                    user_id_to_kick_check = user_record.get('user_id') if isinstance(user_record, dict) else user_record[0]
                     if not user_id_to_kick_check:
-                        self.logger.warning(f"Skipping record due to missing user_id: {record} (for channel '{current_channel_title}')")
+                        self.logger.warning(f"Skipping record due to missing user_id: {user_record} (for channel '{current_channel_title}')")
                         continue
 
-                    if user_id_to_kick_check in active_subscriber_ids_db:
-                        self.logger.info(f"User {user_id_to_kick_check} appeared in non-active list but is active in DB. Skipping kick for channel '{current_channel_title}'.")
-                        continue 
+                    # Check if user has product access to THIS specific channel
+                    if user_id_to_kick_check in authorized_users_for_channel:
+                        continue  # User has valid access to this channel
                     
                     if user_id_to_kick_check in admin_user_ids:
                         self.logger.info(f"User {user_id_to_kick_check} is an admin in channel '{current_channel_title}', skipping kick check.")
@@ -901,7 +911,7 @@ class ManagerBot:
                     try:
                         chat_member = await bot.get_chat_member(chat_id=current_channel_id, user_id=user_id_to_kick_check)
                         if chat_member.status not in ['left', 'kicked']:
-                            self.logger.info(f"User {user_id_to_kick_check} (DB status: {record.get('status', 'N/A')}) is in channel '{current_channel_title}' (TG status: {chat_member.status}). Attempting kick.")
+                            self.logger.info(f"User {user_id_to_kick_check} is in channel '{current_channel_title}' without product access (TG status: {chat_member.status}). Attempting kick.")
                             try:
                                 await bot.ban_chat_member(chat_id=current_channel_id, user_id=user_id_to_kick_check, until_date=None)
                                 await bot.unban_chat_member(chat_id=current_channel_id, user_id=user_id_to_kick_check)

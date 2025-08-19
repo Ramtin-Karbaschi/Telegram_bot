@@ -4104,3 +4104,190 @@ class DatabaseQueries:
             return []
         finally:
             db.close()
+    
+    @staticmethod
+    def get_user_purchased_products(user_id: int):
+        """Get all products purchased by a user with active subscriptions.
+        
+        Args:
+            user_id: The user ID to check
+            
+        Returns:
+            list of plan/product IDs that the user has active subscriptions for
+        """
+        db = Database()
+        if not db.connect():
+            return []
+            
+        try:
+            cursor = db.conn.cursor()
+            query = """
+                SELECT DISTINCT s.plan_id
+                FROM subscriptions s
+                WHERE s.user_id = ? 
+                AND s.status = 'active'
+                AND (s.end_date IS NULL OR s.end_date > datetime('now'))
+            """
+            cursor.execute(query, (user_id,))
+            results = cursor.fetchall()
+            return [row[0] for row in results]
+            
+        except Exception as e:
+            logging.error(f"Error getting user purchased products: {e}")
+            return []
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_product_channels(plan_id: int):
+        """Get all channel IDs associated with a specific product/plan.
+        
+        Args:
+            plan_id: The plan/product ID
+            
+        Returns:
+            list of channel IDs that this product grants access to
+        """
+        db = Database()
+        if not db.connect():
+            return []
+            
+        try:
+            import json
+            cursor = db.conn.cursor()
+            query = "SELECT channels_json FROM plans WHERE id = ?"
+            cursor.execute(query, (plan_id,))
+            result = cursor.fetchone()
+            
+            if result and result[0]:
+                try:
+                    channels_data = json.loads(result[0])
+                    # Extract channel IDs from the JSON structure
+                    channel_ids = []
+                    if isinstance(channels_data, list):
+                        for channel in channels_data:
+                            if isinstance(channel, dict) and 'id' in channel:
+                                channel_ids.append(channel['id'])
+                    elif isinstance(channels_data, dict):
+                        # Handle single channel as dict
+                        if 'id' in channels_data:
+                            channel_ids.append(channels_data['id'])
+                    return channel_ids
+                except json.JSONDecodeError:
+                    logging.error(f"Invalid JSON in channels_json for plan {plan_id}")
+                    return []
+            return []
+            
+        except Exception as e:
+            logging.error(f"Error getting product channels: {e}")
+            return []
+        finally:
+            db.close()
+    
+    @staticmethod
+    def user_has_access_to_channel(user_id: int, channel_id: int):
+        """Check if a user has purchased a product that grants access to a specific channel.
+        
+        Args:
+            user_id: The user ID to check
+            channel_id: The channel ID to check access for
+            
+        Returns:
+            bool: True if user has access, False otherwise
+        """
+        db = Database()
+        if not db.connect():
+            return False
+            
+        try:
+            import json
+            cursor = db.conn.cursor()
+            
+            # Get all active subscriptions for the user with their associated channels
+            query = """
+                SELECT p.channels_json
+                FROM subscriptions s
+                JOIN plans p ON s.plan_id = p.id
+                WHERE s.user_id = ? 
+                AND s.status = 'active'
+                AND (s.end_date IS NULL OR s.end_date > datetime('now'))
+            """
+            cursor.execute(query, (user_id,))
+            results = cursor.fetchall()
+            
+            # Check if any of the user's products grant access to this channel
+            for row in results:
+                if row[0]:  # channels_json exists
+                    try:
+                        channels_data = json.loads(row[0])
+                        if isinstance(channels_data, list):
+                            for channel in channels_data:
+                                if isinstance(channel, dict) and channel.get('id') == channel_id:
+                                    return True
+                        elif isinstance(channels_data, dict):
+                            if channels_data.get('id') == channel_id:
+                                return True
+                    except json.JSONDecodeError:
+                        continue
+                        
+            return False
+            
+        except Exception as e:
+            logging.error(f"Error checking user channel access: {e}")
+            return False
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_users_with_channel_access(channel_id: int):
+        """Get all users who have valid access to a specific channel through their purchases.
+        
+        Args:
+            channel_id: The channel ID to check
+            
+        Returns:
+            list of user IDs who have valid access to this channel
+        """
+        db = Database()
+        if not db.connect():
+            return []
+            
+        try:
+            import json
+            cursor = db.conn.cursor()
+            
+            # Get all active subscriptions
+            query = """
+                SELECT s.user_id, p.channels_json
+                FROM subscriptions s
+                JOIN plans p ON s.plan_id = p.id
+                WHERE s.status = 'active'
+                AND (s.end_date IS NULL OR s.end_date > datetime('now'))
+            """
+            cursor.execute(query)
+            results = cursor.fetchall()
+            
+            authorized_users = set()
+            for user_id, channels_json in results:
+                if channels_json:
+                    try:
+                        channels_data = json.loads(channels_json)
+                        # Check if this product grants access to the specified channel
+                        if isinstance(channels_data, list):
+                            for channel in channels_data:
+                                if isinstance(channel, dict) and channel.get('id') == channel_id:
+                                    authorized_users.add(user_id)
+                                    break
+                        elif isinstance(channels_data, dict):
+                            if channels_data.get('id') == channel_id:
+                                authorized_users.add(user_id)
+                    except json.JSONDecodeError:
+                        continue
+                        
+            return list(authorized_users)
+            
+        except Exception as e:
+            logging.error(f"Error getting users with channel access: {e}")
+            return []
+        finally:
+            db.close()

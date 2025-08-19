@@ -400,7 +400,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ ارسال پیام همگانی لغو شد.")
         
         from handlers.admin_menu_handlers import AdminMenuHandler
-        admin_handler = AdminMenuHandler()
+        admin_handler = AdminMenuHandler(_DB())
         await admin_handler.show_admin_menu(update, context)
         return
 
@@ -662,7 +662,7 @@ async def add_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.user_data.pop("bc_waiting_msg", None)
             
             from handlers.admin_menu_handlers import AdminMenuHandler
-            admin_handler = AdminMenuHandler()
+            admin_handler = AdminMenuHandler(_DB())
             await admin_handler.show_admin_menu(update, context)
             
     except Exception as e:
