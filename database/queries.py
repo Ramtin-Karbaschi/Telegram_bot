@@ -3682,16 +3682,21 @@ class DatabaseQueries:
     @staticmethod
     def get_user_status(user_id: int) -> Optional[str]:
         """Get the status of a user (e.g., 'active', 'banned')."""
-        sql = "SELECT status FROM users WHERE user_id = ?"
+        db = Database()
+        if not db.connect():
+            return None
+            
         try:
-            with sqlite3.connect(db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(sql, (user_id,))
-                result = cursor.fetchone()
-                return result[0] if result else None
+            cursor = db.conn.cursor()
+            sql = "SELECT status FROM users WHERE user_id = ?"
+            cursor.execute(sql, (user_id,))
+            result = cursor.fetchone()
+            return result[0] if result else None
         except sqlite3.Error as e:
             logger.error(f"Database error in get_user_status for user {user_id}: {e}")
             return None
+        finally:
+            db.disconnect()
 
     @staticmethod
     def set_user_status(user_id: int, status: str) -> bool:
@@ -3699,16 +3704,22 @@ class DatabaseQueries:
         if status not in ['active', 'banned']:
             logger.warning(f"Invalid status '{status}' provided for set_user_status.")
             return False
-        sql = "UPDATE users SET status = ? WHERE user_id = ?"
+            
+        db = Database()
+        if not db.connect():
+            return False
+            
         try:
-            with sqlite3.connect(db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(sql, (status, user_id))
-                conn.commit()
-                return cursor.rowcount > 0
+            cursor = db.conn.cursor()
+            sql = "UPDATE users SET status = ? WHERE user_id = ?"
+            cursor.execute(sql, (status, user_id))
+            db.conn.commit()
+            return cursor.rowcount > 0
         except sqlite3.Error as e:
             logger.error(f"Database error in set_user_status for user {user_id}: {e}")
             return False
+        finally:
+            db.disconnect()
 
     @staticmethod
     def extend_subscription_duration(user_id: int, additional_days: int) -> bool:
