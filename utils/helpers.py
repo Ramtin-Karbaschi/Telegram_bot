@@ -205,16 +205,25 @@ def generate_qr_code(data: str) -> io.BytesIO:
 async def safe_edit_message_text(target, text=None, reply_markup=None, parse_mode=None):
     """
     Safely edit a message's text while handling common Telegram API edge-cases.
-
-    - If only ``reply_markup`` is provided (empty or None text), performs a safe
-      reply_markup-only edit to avoid "There is no text in the message to edit".
-    - If editing text fails with "There is no text in the message to edit",
-      attempts to edit the caption instead.
-    - Silently ignores "Message is not modified" errors.
-
-    Supports both CallbackQuery-like targets (with ``edit_message_text`` / ``edit_message_caption``)
-    and Message-like targets (with ``edit_text`` / ``edit_caption`` / ``edit_reply_markup``).
+    
+    Args:
+        target: CallbackQuery or Message object
+        text: New text content (if None or empty, only reply_markup will be updated)
+        reply_markup: New keyboard markup (optional)
+        parse_mode: Parse mode for the text (optional)
+    
+    Returns:
+        The result of the edit operation, or None if an error occurred
     """
+    # Validate reply_markup - ensure it's either None or a valid keyboard object
+    from telegram import InlineKeyboardMarkup, ReplyKeyboardMarkup
+    if reply_markup is not None:
+        if not isinstance(reply_markup, (InlineKeyboardMarkup, ReplyKeyboardMarkup)):
+            logger.warning(f"Invalid reply_markup type: {type(reply_markup)}. Setting to None.")
+            reply_markup = None
+        elif isinstance(reply_markup, str):
+            logger.warning(f"reply_markup is a string: '{reply_markup}'. Setting to None.")
+            reply_markup = None
     # Helper to detect empty text (None or whitespace)
     def _is_empty(val):
         return val is None or (isinstance(val, str) and val.strip() == "")

@@ -260,13 +260,18 @@ async def unknown_message_handler(update: Update, context: ContextTypes.DEFAULT_
 
     # اگر کاربر در واقع قصد خرید محصولات را داشته ولی پیام توسط Unknown handler پردازش شده، او را به فلو صحیح هدایت کنیم
     text = (update.message.text or '').strip()
-    from utils import constants
-    if text in (constants.TEXT_MAIN_MENU_BUY_SUBSCRIPTION, '🛒 محصولات', '🛒 خدمات VIP', '🛒 خرید محصولات'):
-        # این پیام توسط Handler دیگری مدیریت می‌شود؛ نیازی به پاسخ اینجا نیست.
-        return
-
-    # اگر در حالت انتظار TxHash هستیم، پیام را نادیده بگیریم تا هندلر پرداخت آن را پردازش کند
-    if context.user_data.get('awaiting_tx_hash'):
+    
+    # Check if message text is a known button text that should be handled elsewhere
+    known_button_texts = [
+        "👤 پروفایل کاربری",
+        "🛒 محصولات",
+        "🛒 خدمات VIP",
+        "📞 پشتیبانی",
+        "✏️ ویرایش پروفایل",
+        "📥 بسته رایگان"
+    ]
+    if update.message.text in known_button_texts:
+        # This is a known button text, don't treat it as unknown
         return
     
     # Check if user is in any conversation state - if so, don't show unknown message
