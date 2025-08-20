@@ -13,12 +13,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database.queries import DatabaseQueries as Database # Added Database import
 import datetime
 from typing import Optional # Added for type hinting
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from typing import Optional, Tuple
 from telegram import ChatMember, ChatMemberUpdated
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters, ContextTypes, 
-    CallbackQueryHandler, ConversationHandler, TypeHandler, ChatMemberHandler # Added ChatMemberHandler
+    CallbackQueryHandler, ConversationHandler, TypeHandler, ChatMemberHandler, # Added ChatMemberHandler
+    ApplicationHandlerStop
 )
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, Forbidden
@@ -115,6 +116,61 @@ class DummyQuery:
         return None
 
 
+# --- Global banned user guard for ManagerBot ---
+# Rate limiting for banned users
+from collections import defaultdict
+import time as time_module
+
+banned_user_attempts = defaultdict(lambda: {'count': 0, 'last_time': 0})
+
+async def banned_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Prevent banned users from interacting with the manager bot."""
+    try:
+        tg_user = update.effective_user if hasattr(update, 'effective_user') else None
+        if not tg_user:
+            return
+        user_id = tg_user.id
+        
+        # Get user status (None means user not in DB, which is allowed)
+        status = DatabaseQueries.get_user_status(user_id)
+        
+        if status == 'banned':
+            # Rate limiting - log only first attempt and then every 100 attempts
+            current_time = time_module.time()
+            user_attempts = banned_user_attempts[user_id]
+            user_attempts['count'] += 1
+            
+            # Log only first attempt or every 100th attempt
+            if user_attempts['count'] == 1 or user_attempts['count'] % 100 == 0:
+                logger.warning(f"Banned user {user_id} attempted interaction (attempt #{user_attempts['count']})")
+            
+            # Reset counter every hour to prevent memory bloat
+            if current_time - user_attempts['last_time'] > 3600:
+                user_attempts['count'] = 1
+                user_attempts['last_time'] = current_time
+            
+            # Remove keyboard for banned users on first attempt
+            if user_attempts['count'] == 1 and update.effective_chat:
+                try:
+                    # Silently remove keyboard without any text
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text="\u200B",  # Zero-width space (invisible)
+                        reply_markup=ReplyKeyboardRemove()
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not remove keyboard for banned user {user_id}: {e}")
+            
+            # Completely silent - no further response for banned users
+            raise ApplicationHandlerStop()
+    except ApplicationHandlerStop:
+        # Re-raise to stop processing
+        raise
+    except Exception as e:
+        # Log unexpected errors but don't stop the bot
+        logger.error(f"Unexpected error in ManagerBot banned_guard: {e}")
+        # Don't block non-banned users due to errors
+
 class ManagerBot:
     """Manager Telegram bot for Daraei Academy"""
     
@@ -124,6 +180,8 @@ class ManagerBot:
         self.admin_config = admin_users_config  # Store admin configuration from parameters
         builder = Application.builder().token(manager_bot_token)  # Use token from parameters
         self.application = builder.build()
+        # Register banned user guard at highest priority
+        self.application.add_handler(TypeHandler(Update, banned_guard), group=-100)
         # Register Video Upload conversation handler for admins (high priority)
         self.application.add_handler(get_video_upload_conv(), group=-1)
         # Register Survey Builder conversation handler

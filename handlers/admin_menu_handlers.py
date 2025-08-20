@@ -535,6 +535,7 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         data = query.data
         user_id = query.from_user.id
         is_admin_flag = is_user_in_admin_list(user_id, self.admin_config)
+        is_mid_level = is_mid_level_user(user_id)
         support_allowed_callbacks = {
             self.TICKETS_MENU, self.PAYMENTS_MENU,
             "tickets_open", "tickets_all",
@@ -543,9 +544,28 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             self.TICKETS_HISTORY,
             self.BACK_MAIN
         }
+        
+        # Broadcast-related callbacks for mid-level users
+        broadcast_callbacks = {
+            "broadcast_custom", "broadcast_continue", "broadcast_cancel",
+            self.BROADCAST_MENU, self.BROADCAST_WITH_LINK,
+            self.BROADCAST_WL_ACTIVE, self.BROADCAST_WL_ALL
+        }
+        
         # Check if user has access to this callback
-        has_access = is_admin_flag or data in support_allowed_callbacks or data.startswith("product_sales_")
-        logging.info(f"DEBUG: user_id={user_id}, is_admin={is_admin_flag}, data={data}, has_access={has_access}")
+        has_access = (
+            is_admin_flag or 
+            data in support_allowed_callbacks or 
+            data.startswith("product_sales_") or
+            (is_mid_level and (
+                data in broadcast_callbacks or
+                data.startswith("bc_plan_") or
+                data.startswith("bc_cat_") or
+                data.startswith("bc_chan_") or
+                data.startswith("broadcast_")
+            ))
+        )
+        logging.info(f"DEBUG: user_id={user_id}, is_admin={is_admin_flag}, is_mid_level={is_mid_level}, data={data}, has_access={has_access}")
         if not has_access:
             await query.answer("دسترسی محدود است.", show_alert=True)
             return
@@ -2500,7 +2520,9 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         user_id = int(user_id_str)
         new_status = 'banned' if action == 'ban' else 'active'
         
-        if DatabaseQueries.set_user_status(user_id, new_status):
+        # Pass bot instance for chat history deletion when banning
+        bot_instance = context.bot if new_status == 'banned' else None
+        if DatabaseQueries.set_user_status(user_id, new_status, bot_instance):
             status_text = "مسدود شد" if new_status == 'banned' else "آزاد شد"
             await query.edit_message_text(f"کاربر با شناسه {user_id} با موفقیت {status_text}.")
         else:
@@ -2566,7 +2588,9 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         user_id = int(user_id_str)
         new_status = 'banned' if action == 'ban' else 'active'
         
-        if DatabaseQueries.set_user_status(user_id, new_status):
+        # Pass bot instance for chat history deletion when banning
+        bot_instance = context.bot if new_status == 'banned' else None
+        if DatabaseQueries.set_user_status(user_id, new_status, bot_instance):
             status_text = "مسدود شد" if new_status == 'banned' else "آزاد شد"
             await query.edit_message_text(f"کاربر با شناسه {user_id} با موفقیت {status_text}.")
         else:

@@ -146,12 +146,13 @@ def admin_only_decorator(func):
         else:
             user = getattr(update, 'effective_user', None)
 
-        # Determine if user is admin or support
+        # Determine if user is admin, mid-level or support
         is_admin_flag = user is not None and is_user_in_admin_list(user.id, self.admin_config)
         from database.queries import DatabaseQueries
         is_support_flag = user is not None and DatabaseQueries.is_support_user(user.id)
+        is_mid_level_flag = user is not None and DatabaseQueries.is_mid_level_user(user.id)
 
-        if not (is_admin_flag or is_support_flag):
+        if not (is_admin_flag or is_support_flag or is_mid_level_flag):
             # Unauthorized – show appropriate message / alert
             if update.effective_message:
                 await update.effective_message.reply_text("پیام های پشتیبانی در این ربات برای شما ارسال می شود.")

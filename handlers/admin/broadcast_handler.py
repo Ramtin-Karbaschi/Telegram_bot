@@ -678,20 +678,41 @@ async def _broadcast_send(query, context):
         await query.edit_message_text("متن پیام یافت نشد. ابتدا متن را ارسال کنید.")
         return MENU
 
+    # Get main bot instance to send broadcasts
+    from telegram import Bot
+    try:
+        from config import MAIN_BOT_TOKEN
+    except ImportError:
+        MAIN_BOT_TOKEN = None
+    
+    # Use main bot for broadcast, not manager bot
+    if context.application.bot_data.get("main_bot_bot"):
+        bot_to_use = context.application.bot_data["main_bot_bot"]
+    elif MAIN_BOT_TOKEN:
+        bot_to_use = Bot(token=MAIN_BOT_TOKEN)
+        # Cache for subsequent calls
+        context.application.bot_data["main_bot_bot"] = bot_to_use
+    else:
+        await query.edit_message_text("❌ ارسال لغو شد: توکن ربات اصلی (MAIN_BOT_TOKEN) پیکربندی نشده است.")
+        return
+
     buttons = context.user_data.get("broadcast_buttons", [])
     markup = None
     if buttons:
-        # two buttons per row
+        # Build keyboard with proper callback data
         rows = []
-        current = []
         for btn in buttons:
-            current.append(InlineKeyboardButton(btn["text"], callback_data=btn["callback_data"]))
-            if len(current) == 2:
-                rows.append(current)
-                current = []
-        if current:
-            rows.append(current)
-        markup = InlineKeyboardMarkup(rows)
+            if btn.get("type") == "plan":
+                rows.append([InlineKeyboardButton(btn["text"], callback_data=f"plan_{btn.get('id')}")])
+            elif btn.get("type") == "category":
+                rows.append([InlineKeyboardButton(btn["text"], callback_data=f"products_menu_{btn.get('id')}")])
+            elif btn.get("type") == "channel":
+                rows.append([InlineKeyboardButton(btn["text"], url=btn.get("url"))])
+            else:
+                # Fallback for any other button types
+                if btn.get("callback_data"):
+                    rows.append([InlineKeyboardButton(btn["text"], callback_data=btn["callback_data"])])
+        markup = InlineKeyboardMarkup(rows) if rows else None
 
     # Determine audience
     audience = context.user_data.get("audience", "all")
@@ -705,14 +726,19 @@ async def _broadcast_send(query, context):
         user_rows = db.get_all_registered_users()
     success = 0
     failed = 0
-    bot = query.bot
+    
     for row in user_rows:
         try:
-            await bot.send_message(chat_id=row["telegram_id"], text=text, reply_markup=markup)
+            await bot_to_use.send_message(chat_id=row["telegram_id"], text=text, reply_markup=markup, parse_mode="HTML")
             success += 1
         except Exception as e:
-            logger.warning("Failed to broadcast to %s: %s", row, e)
-            failed += 1
+            # Try without HTML parsing if it fails
+            try:
+                await bot_to_use.send_message(chat_id=row["telegram_id"], text=text, reply_markup=markup)
+                success += 1
+            except Exception as e2:
+                logger.warning("Failed to broadcast to %s: %s", row, e2)
+                failed += 1
     await query.edit_message_text(f"✅ پیام به {success} کاربر ارسال شد. ❌ ناموفق: {failed}")
 
 

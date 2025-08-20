@@ -3696,11 +3696,17 @@ class DatabaseQueries:
             logger.error(f"Database error in get_user_status for user {user_id}: {e}")
             return None
         finally:
-            db.disconnect()
+            db.close()
 
     @staticmethod
-    def set_user_status(user_id: int, status: str) -> bool:
-        """Set the status of a user (e.g., 'active', 'banned')."""
+    def set_user_status(user_id: int, status: str, bot_instance=None) -> bool:
+        """Set the status of a user (e.g., 'active', 'banned').
+        
+        Args:
+            user_id: Telegram user ID
+            status: New status ('active' or 'banned')
+            bot_instance: Optional bot instance to delete chat history when banning
+        """
         if status not in ['active', 'banned']:
             logger.warning(f"Invalid status '{status}' provided for set_user_status.")
             return False
@@ -3714,12 +3720,55 @@ class DatabaseQueries:
             sql = "UPDATE users SET status = ? WHERE user_id = ?"
             cursor.execute(sql, (status, user_id))
             db.conn.commit()
-            return cursor.rowcount > 0
+            success = cursor.rowcount > 0
+            
+            # If successfully banned and bot instance provided, delete chat history
+            if success and status == 'banned' and bot_instance:
+                try:
+                    import asyncio
+                    asyncio.create_task(DatabaseQueries.delete_user_chat_history(user_id, bot_instance))
+                except Exception as e:
+                    logger.error(f"Failed to delete chat history for banned user {user_id}: {e}")
+            
+            return success
         except sqlite3.Error as e:
             logger.error(f"Database error in set_user_status for user {user_id}: {e}")
             return False
         finally:
-            db.disconnect()
+            db.close()
+    
+    @staticmethod
+    async def delete_user_chat_history(user_id: int, bot):
+        """Delete all chat history with a banned user.
+        
+        Args:
+            user_id: Telegram user ID
+            bot: Bot instance to use for deletion
+        """
+        try:
+            # Delete all messages from/to this user in private chat
+            # Note: Telegram API doesn't provide a bulk delete for private chats
+            # We can only delete messages the bot has sent
+            logger.info(f"Attempting to delete chat history for banned user {user_id}")
+            
+            # Try to delete any active conversations/keyboards
+            try:
+                from telegram import ReplyKeyboardRemove
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=".",  # Send minimal message
+                    reply_markup=ReplyKeyboardRemove(remove_keyboard=True)
+                )
+                # Immediately delete the message we just sent
+                sent_msg = await bot.send_message(chat_id=user_id, text=".")
+                await bot.delete_message(chat_id=user_id, message_id=sent_msg.message_id)
+            except Exception:
+                pass  # User may have blocked the bot
+            
+            logger.info(f"Chat history cleanup completed for banned user {user_id}")
+            
+        except Exception as e:
+            logger.error(f"Error deleting chat history for user {user_id}: {e}")
 
     @staticmethod
     def extend_subscription_duration(user_id: int, additional_days: int) -> bool:

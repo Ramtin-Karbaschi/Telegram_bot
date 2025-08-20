@@ -94,12 +94,13 @@ async def error_handler(update: object, context: "telegram.ext.CallbackContext")
         except Exception as e:
             logger.error(f"Failed to send error message to user: {e}")
 
-from telegram import Update, BotCommand, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, BotCommand, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from telegram.error import Forbidden
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ConversationHandler, filters, ContextTypes, TypeHandler, # Added TypeHandler
-    PicklePersistence  # Added for application persistence
+    PicklePersistence,  # Added for application persistence
+    ApplicationHandlerStop
 )
 from telegram.request import HTTPXRequest
 from utils.text_utils import buttonize_markdown
@@ -436,6 +437,63 @@ async def log_all_updates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Failed to persist user activity log: {e}")
 
+# --- Global banned user guard ---
+# Rate limiting for banned users
+from collections import defaultdict
+import time as time_module
+
+banned_user_attempts = defaultdict(lambda: {'count': 0, 'last_time': 0})
+
+async def banned_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Prevent banned users from interacting with the bot.
+    Should run at the highest priority before other handlers.
+    """
+    try:
+        tg_user = update.effective_user if hasattr(update, 'effective_user') else None
+        if not tg_user:
+            return  # System/bot updates
+        user_id = tg_user.id
+        
+        # Get user status (None means user not in DB, which is allowed)
+        status = DatabaseQueries.get_user_status(user_id)
+        
+        if status == 'banned':
+            # Rate limiting - log only first attempt and then every 100 attempts
+            current_time = time_module.time()
+            user_attempts = banned_user_attempts[user_id]
+            user_attempts['count'] += 1
+            
+            # Log only first attempt or every 100th attempt
+            if user_attempts['count'] == 1 or user_attempts['count'] % 100 == 0:
+                logger.warning(f"Banned user {user_id} attempted interaction (attempt #{user_attempts['count']})")
+            
+            # Reset counter every hour to prevent memory bloat
+            if current_time - user_attempts['last_time'] > 3600:
+                user_attempts['count'] = 1
+                user_attempts['last_time'] = current_time
+            
+            # Remove keyboard for banned users on first attempt
+            if user_attempts['count'] == 1 and update.effective_chat:
+                try:
+                    # Silently remove keyboard without any text
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text="\u200B",  # Zero-width space (invisible)
+                        reply_markup=ReplyKeyboardRemove()
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not remove keyboard for banned user {user_id}: {e}")
+            
+            # Completely silent - no further response for banned users
+            raise ApplicationHandlerStop()
+    except ApplicationHandlerStop:
+        # Re-raise to stop processing
+        raise
+    except Exception as e:
+        # Log unexpected errors but don't stop the bot
+        logger.error(f"Unexpected error in banned_guard: {e}")
+        # Don't block non-banned users due to errors
+
 class MainBot:
     """Main Telegram bot for Daraei Academy"""
 
@@ -514,6 +572,10 @@ class MainBot:
     # setup_handlers should be defined here, at the class level indentation
     def setup_handlers(self):
         """Setup all handlers for the bot"""
+        # --- Global banned guard (must be first; highest priority) ---
+        # Runs before all other handlers and stops processing when user is banned
+        self.application.add_handler(TypeHandler(Update, banned_guard), group=-100)
+
         # Generic callback_query logger (should be in a high group to run after specific ones)
         # async def generic_callback_logger(update: Update, context: ContextTypes.DEFAULT_TYPE):
         #     if update.callback_query:
