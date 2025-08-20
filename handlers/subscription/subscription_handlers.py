@@ -286,6 +286,27 @@ async def activate_or_extend_subscription(
             channel_id = getattr(config, "SALE_CHANNEL_ID", None)
                 
             if channel_id:
+                # Get user full name and discount info
+                user_info = Database.get_user_info(user_id)
+                full_name = user_info.get('full_name', 'نامشخص') if user_info else 'نامشخص'
+                
+                # Get discount_id from payment record if available
+                discount_id = None
+                if payment_table_id:
+                    # Check payment method to determine which table to query
+                    pm_lower = payment_method.lower() if payment_method else ""
+                    if 'crypto' in pm_lower or 'tether' in pm_lower or 'usdt' in pm_lower:
+                        # For crypto payments, get from crypto_payments table
+                        from database.models import Database as DBModel
+                        db_instance = DBModel.get_instance()
+                        payment_record = db_instance.get_crypto_payment_by_payment_id(payment_table_id)
+                    else:
+                        # For regular payments, get from payments table
+                        payment_record = Database.get_payment_by_id(payment_table_id)
+                    
+                    if payment_record:
+                        discount_id = payment_record.get('discount_id')
+                
                 # Try to fetch username for prettier display
                 username = None
                 try:
@@ -336,18 +357,27 @@ async def activate_or_extend_subscription(
                     price_formatted = f"{payment_amount}"
                     purchase_tag = "#خرید"
 
+                # Build message with optional fields
+                message_parts = [
+                    purchase_tag,
+                    "━━━━━━━━━━━━━━━",
+                    f"📅 تاریخ: {persian_date}",
+                    f"👤 کاربر: {user_display}",
+                    f"👤 نام کامل: {full_name}",
+                    f"📦 محصول: {plan_name}",
+                    f"💰 مبلغ: {price_formatted}"
+                ]
+                
+                # Add discount code if used
+                if discount_id:
+                    message_parts.insert(-1, f"🎫 کد تخفیف: #{discount_id}")
+                
+                message_parts.append("━━━━━━━━━━━━━━━")
+                
                 # Send nicely formatted, multi-line notification with hashtag on top
                 await context.bot.send_message(
                     chat_id=channel_id,
-                    text=(
-                        f"{purchase_tag}\n"
-                        f"━━━━━━━━━━━━━━━\n"
-                        f"📅 تاریخ: {persian_date}\n"
-                        f"👤 کاربر: {user_display}\n"
-                        f"📦 محصول: {plan_name}\n"
-                        f"💰 مبلغ: {price_formatted}\n"
-                        f"━━━━━━━━━━━━━━━"
-                    )
+                    text="\n".join(message_parts)
                 )
         except Exception as e:
             logger.error(f"Failed to send immediate purchase report: {e}")
