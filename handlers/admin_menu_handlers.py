@@ -2728,7 +2728,13 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
 
     async def cancel_extend_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("عملیات لغو شد.")
-        await self._users_submenu(update)
+        # Create a DummyQuery wrapper for _users_submenu
+        class _DummyQuery:
+            def __init__(self, message):
+                self.message = message
+            async def edit_message_text(self, *args, **kwargs):
+                await self.message.reply_text(*args, **kwargs)
+        await self._users_submenu(_DummyQuery(update.message))
         return ConversationHandler.END
 
     # ---- Extend Subscription Duration for All Users (Bulk) ----
@@ -2805,7 +2811,13 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
 
     async def cancel_extend_subscription_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("عملیات لغو شد.")
-        await self._users_submenu(update)
+        # Create a DummyQuery wrapper for _users_submenu
+        class _DummyQuery:
+            def __init__(self, message):
+                self.message = message
+            async def edit_message_text(self, *args, **kwargs):
+                await self.message.reply_text(*args, **kwargs)
+        await self._users_submenu(_DummyQuery(update.message))
         return ConversationHandler.END
 
     # ---- Check Subscription Status Flow ----
@@ -2841,7 +2853,13 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         sub_row = DatabaseQueries.get_user_active_subscription(user_id)
         if not sub_row:
             await update.message.reply_text("این کاربر اشتراک فعالی ندارد.")
-            await self._users_submenu(update)
+            # Create a DummyQuery wrapper for _users_submenu
+            class _DummyQuery:
+                def __init__(self, message):
+                    self.message = message
+                async def edit_message_text(self, *args, **kwargs):
+                    await self.message.reply_text(*args, **kwargs)
+            await self._users_submenu(_DummyQuery(update.message))
             return ConversationHandler.END
 
         end_date_str = sub_row["end_date"] if isinstance(sub_row, dict) else sub_row[5]  # assuming column order
