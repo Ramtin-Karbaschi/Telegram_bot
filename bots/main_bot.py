@@ -217,6 +217,10 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     username = update.effective_user.username if update.effective_user and update.effective_user.username else None
                                     user_display = f"@{username}" if username else f"ID:{user_id}"
                                     
+                                    # Get user full name
+                                    user_info = DatabaseQueries.get_user_details(user_id)
+                                    full_name = user_info.get('full_name', 'نامشخص') if user_info else 'نامشخص'
+                                    
                                     # Get current Persian date
                                     try:
                                         import jdatetime
@@ -228,18 +232,28 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     price_formatted = f"{int(rial_amount):,} تومان"
                                     purchase_tag = "#خرید_نقدی"
                                     
+                                    # Build message with optional fields
+                                    message_parts = [
+                                        purchase_tag,
+                                        "━━━━━━━━━━━━━━━",
+                                        f"📅 تاریخ: {persian_date}",
+                                        f"👤 کاربر: {user_display}",
+                                        f"👤 نام کامل: {full_name}",
+                                        f"📦 محصول: {plan_info['name']}",
+                                        f"💰 مبلغ: {price_formatted}"
+                                    ]
+                                    
+                                    # Add discount code if used
+                                    discount_id = context.user_data.get('discount_id') if 'discount_id' in context.user_data else payment.get('discount_id')
+                                    if discount_id:
+                                        message_parts.insert(-1, f"🎫 کد تخفیف: #{discount_id}")
+                                    
+                                    message_parts.append("━━━━━━━━━━━━━━━")
+                                    
                                     # Send formatted message
                                     await context.bot.send_message(
                                         chat_id=sales_channel_id,
-                                        text=(
-                                            f"{purchase_tag}\n"
-                                            f"━━━━━━━━━━━━━━━\n"
-                                            f"📅 تاریخ: {persian_date}\n"
-                                            f"👤 کاربر: {user_display}\n"
-                                            f"📦 محصول: {plan_info['name']}\n"
-                                            f"💰 مبلغ: {price_formatted}\n"
-                                            f"━━━━━━━━━━━━━━━"
-                                        )
+                                        text="\n".join(message_parts)
                                     )
                             except Exception as e:
                                 logger.error(f"Failed to send sales report message: {e}")
