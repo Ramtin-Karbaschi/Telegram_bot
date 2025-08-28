@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from telegram.ext import ContextTypes, ConversationHandler
 import config # Added for TELEGRAM_CHANNELS_INFO
 from database.queries import DatabaseQueries as Database
+from database.queries import DatabaseQueries
 from utils.keyboards import get_main_menu_keyboard, get_subscription_plans_keyboard
 from utils.constants import (
     SUBSCRIPTION_STATUS_NONE, SUBSCRIPTION_STATUS_ACTIVE,
@@ -284,25 +285,37 @@ async def activate_or_extend_subscription(
         try:
             # Use SALE_CHANNEL_ID from config (unified channel for all sales reports)
             channel_id = getattr(config, "SALE_CHANNEL_ID", None)
+            logger.info(f"DEBUG: Subscription handler - attempting to send sales report. Channel ID: {channel_id}")
                 
             if channel_id:
                 # Get user full name and discount info
-                user_info = Database.get_user_info(user_id)
-                full_name = user_info.get('full_name', 'نامشخص') if user_info else 'نامشخص'
+                try:
+                    from database.queries import DatabaseQueries as DQ
+                    user_info = DQ.get_user_details(user_id)
+                    full_name = user_info.get('full_name', 'نامشخص') if user_info else 'نامشخص'
+                except Exception:
+                    full_name = 'نامشخص'
                 
                 # Get discount_id from payment record if available
                 discount_id = None
-                if payment_table_id:
+                if payment_table_id and payment_table_id > 0:
                     # Check payment method to determine which table to query
                     pm_lower = payment_method.lower() if payment_method else ""
                     if 'crypto' in pm_lower or 'tether' in pm_lower or 'usdt' in pm_lower:
                         # For crypto payments, get from crypto_payments table
-                        from database.models import Database as DBModel
-                        db_instance = DBModel.get_instance()
-                        payment_record = db_instance.get_crypto_payment_by_payment_id(payment_table_id)
+                        try:
+                            from database.models import Database as DBModel
+                            db_instance = DBModel.get_instance()
+                            payment_record = db_instance.get_crypto_payment_by_payment_id(payment_table_id)
+                        except Exception:
+                            payment_record = None
                     else:
                         # For regular payments, get from payments table
-                        payment_record = Database.get_payment_by_id(payment_table_id)
+                        try:
+                            from database.queries import DatabaseQueries as DQ
+                            payment_record = DQ.get_payment_by_id(payment_table_id)
+                        except Exception:
+                            payment_record = None
                     
                     if payment_record:
                         discount_id = payment_record.get('discount_id')
@@ -375,10 +388,14 @@ async def activate_or_extend_subscription(
                 message_parts.append("━━━━━━━━━━━━━━━")
                 
                 # Send nicely formatted, multi-line notification with hashtag on top
+                logger.info(f"DEBUG: Subscription handler - sending sales message to channel {channel_id}")
                 await context.bot.send_message(
                     chat_id=channel_id,
                     text="\n".join(message_parts)
                 )
+                logger.info(f"DEBUG: Subscription handler - sales message sent successfully to channel {channel_id}")
+            else:
+                logger.warning(f"DEBUG: Subscription handler - SALE_CHANNEL_ID is None or empty: {channel_id}")
         except Exception as e:
             logger.error(f"Failed to send immediate purchase report: {e}")
 

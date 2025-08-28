@@ -213,6 +213,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             # --- Send sales report message to channel ---
                             try:
                                 sales_channel_id = config.SALE_CHANNEL_ID  # گزارشهای فروش
+                                logger.info(f"DEBUG: Attempting to send sales report. Channel ID: {sales_channel_id}")
                                 if sales_channel_id:
                                     username = update.effective_user.username if update.effective_user and update.effective_user.username else None
                                     user_display = f"@{username}" if username else f"ID:{user_id}"
@@ -251,10 +252,14 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     message_parts.append("━━━━━━━━━━━━━━━")
                                     
                                     # Send formatted message
+                                    logger.info(f"DEBUG: Sending sales message to channel {sales_channel_id}")
                                     await context.bot.send_message(
                                         chat_id=sales_channel_id,
                                         text="\n".join(message_parts)
                                     )
+                                    logger.info(f"DEBUG: Sales message sent successfully to channel {sales_channel_id}")
+                                else:
+                                    logger.warning(f"DEBUG: SALE_CHANNEL_ID is None or empty: {sales_channel_id}")
                             except Exception as e:
                                 logger.error(f"Failed to send sales report message: {e}")
 
