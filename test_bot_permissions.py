@@ -34,15 +34,18 @@ async def check_bot_permissions():
             print(f"❌ Error checking bot in channel: {e}")
             print("This usually means the bot is not added to the channel")
             
-        # Try to send a test message
-        try:
-            test_msg = await bot.send_message(
-                chat_id=channel_id,
-                text="🔧 تست دسترسی ربات به کانال فروش"
-            )
-            print(f"✅ Test message sent successfully: {test_msg.message_id}")
-        except Exception as e:
-            print(f"❌ Failed to send test message: {e}")
+        # Send a test message only if explicitly enabled via env var
+        if os.getenv("ENABLE_SALES_CHANNEL_TEST_MESSAGE", "0") == "1":
+            try:
+                test_msg = await bot.send_message(
+                    chat_id=channel_id,
+                    text=f"🔧 تست دسترسی ربات - {datetime.now().strftime('%H:%M:%S')}\n\nاین پیام برای تست عملکرد سیستم گزارش فروش ارسال شده است."
+                )
+                print(f"✅ Test message sent successfully: {test_msg.message_id}")
+            except Exception as e:
+                print(f"❌ Failed to send test message: {e}")
+        else:
+            print("ℹ️ Skipping test message send (ENABLE_SALES_CHANNEL_TEST_MESSAGE != 1)")
             
     finally:
         await bot.shutdown()
