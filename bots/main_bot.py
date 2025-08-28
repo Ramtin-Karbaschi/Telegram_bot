@@ -312,7 +312,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 # تورم شکن - پیام سازماندهی
                                 keyboard = [[InlineKeyboardButton(constants.TEXT_BACK_TO_MAIN_MENU, callback_data=constants.CALLBACK_BACK_TO_MAIN_MENU)]]
                                 reply_markup = InlineKeyboardMarkup(keyboard)
-                                text = "🎉 عالی! اشتراک شما با موفقیت فعال شد.\n\n💼 به زودی سازماندهی خواهید شد. برای کسب اطلاعات بیشتر با آیدی پشتیبان @daraeiposhtibani تماس بگیرید.\n\n⚠️ این پیام پس از ۵ دقیقه منقضی می‌شود."
+                                text = "🎉 عالی! اشتراک شما با موفقیت فعال شد.\n\n💼 به زودی همکاران ما با شما تماس خواهند گرفت. لطفاً برای هماهنگی، اسکرین‌شاتی از خرید خود را به همراه شماره تماس خود، به آیدی پشتیبان @daraeiposhtibani ارسال کنید.\n\n⚠️ این پیام پس از ۵ دقیقه منقضی می‌شود."
                                 
                                 await send_and_schedule_deletion(update, context, text, reply_markup, 300)
                                 
@@ -930,7 +930,7 @@ class MainBot:
             message = (
                 "اشتراک شما امروز به پایان می‌رسد! 🎯" if days_left == 0 else f"تنها {days_left} روز تا پایان اشتراک شما باقی‌ست ⏰"
             )
-            message += "\n\n💡 برای تمدید اشتراک یکی از گزینه‌های زیر را انتخاب کنید:"
+            message += "\n\n💡 برای تمدید اشتراک یکی از گزینه‌های زیر را انتخاب کنید:\n\nکد تخفیف: `off40`\n\nکد تخفیف فقط برای شما و مشترکین تمدیدی قابل اجراست."
             from database.queries import DatabaseQueries
             # Build renew buttons keyboard based on dynamic visibility settings
             visibility = DatabaseQueries.get_renew_visibility()
