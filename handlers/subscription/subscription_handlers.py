@@ -292,8 +292,14 @@ async def activate_or_extend_subscription(
                 try:
                     from database.queries import DatabaseQueries as DQ
                     user_info = DQ.get_user_details(user_id)
-                    full_name = user_info.get('full_name', 'نامشخص') if user_info else 'نامشخص'
-                except Exception:
+                    # Convert sqlite3.Row to dict if needed
+                    if user_info:
+                        user_info = dict(user_info) if hasattr(user_info, 'keys') else user_info
+                        full_name = user_info.get('full_name', 'نامشخص')
+                    else:
+                        full_name = 'نامشخص'
+                except Exception as e:
+                    logger.warning(f"Could not get user details: {e}")
                     full_name = 'نامشخص'
                 
                 # Get discount_id from payment record if available
@@ -307,14 +313,22 @@ async def activate_or_extend_subscription(
                             from database.models import Database as DBModel
                             db_instance = DBModel.get_instance()
                             payment_record = db_instance.get_crypto_payment_by_payment_id(payment_table_id)
-                        except Exception:
+                            # Convert sqlite3.Row to dict if needed
+                            if payment_record and hasattr(payment_record, 'keys'):
+                                payment_record = dict(payment_record)
+                        except Exception as e:
+                            logger.warning(f"Could not get crypto payment record: {e}")
                             payment_record = None
                     else:
                         # For regular payments, get from payments table
                         try:
                             from database.queries import DatabaseQueries as DQ
                             payment_record = DQ.get_payment_by_id(payment_table_id)
-                        except Exception:
+                            # Convert sqlite3.Row to dict if needed
+                            if payment_record and hasattr(payment_record, 'keys'):
+                                payment_record = dict(payment_record)
+                        except Exception as e:
+                            logger.warning(f"Could not get payment record: {e}")
                             payment_record = None
                     
                     if payment_record:
