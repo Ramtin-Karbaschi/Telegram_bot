@@ -34,14 +34,14 @@ if SHARED_CHANNEL_ID:
         logger.warning("SHARED_CHANNEL_ID must be a valid integer (channel ID)")
         SHARED_CHANNEL_ID = None
 
-# Sales reports channel
+# Sales reports channel (accepts numeric ID or channel username)
 SALE_CHANNEL_ID = os.getenv("SALE_CHANNEL_ID")
 if SALE_CHANNEL_ID:
     try:
+        # Convert to int if numeric; if not numeric assume username string (e.g. "@mychannel")
         SALE_CHANNEL_ID = int(SALE_CHANNEL_ID)
     except ValueError:
-        logger.warning("SALE_CHANNEL_ID must be a valid integer (channel ID)")
-        SALE_CHANNEL_ID = None
+        logger.info("SALE_CHANNEL_ID is not numeric; treating it as channel username.")
 
 # Ensure tokens are set
 if not MAIN_BOT_TOKEN:
