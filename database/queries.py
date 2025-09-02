@@ -2382,6 +2382,14 @@ class DatabaseQueries:
         Returns:
             The ID of the created or updated subscription record, or None on failure.
         """
+        # Check 120-day limit before adding subscription
+        current_remaining_days = DatabaseQueries.get_user_remaining_subscription_days(user_id)
+        total_days_after_purchase = current_remaining_days + plan_duration_days
+        
+        if total_days_after_purchase > 120:
+            logging.error(f"add_subscription blocked for user {user_id}: would exceed 120-day limit. Current: {current_remaining_days}, Plan: {plan_duration_days}, Total: {total_days_after_purchase}")
+            return None
+        
         db = Database()
         if not db.connect():
             print(f"Failed to connect to database in add_subscription for user {user_id}")
@@ -2819,6 +2827,41 @@ class DatabaseQueries:
             finally:
                 db.close()
         return None
+
+    @staticmethod
+    def get_user_remaining_subscription_days(user_id: int):
+        """Calculate total remaining subscription days for a user.
+        Returns the number of days from now until the latest subscription end date.
+        Returns 0 if no active subscription.
+        """
+        db = Database()
+        if db.connect():
+            from datetime import datetime
+            now_str = get_current_time().strftime("%Y-%m-%d %H:%M:%S")
+            
+            try:
+                # Get the latest active subscription end date
+                db.execute(
+                    """SELECT MAX(end_date) as latest_end_date
+                       FROM subscriptions 
+                       WHERE user_id = ? AND status = 'active' AND end_date > ?""",
+                    (user_id, now_str)
+                )
+                result = db.fetchone()
+                
+                if result and result['latest_end_date']:
+                    # Calculate days between now and end date
+                    end_date = datetime.strptime(result['latest_end_date'], "%Y-%m-%d %H:%M:%S")
+                    now = datetime.strptime(now_str, "%Y-%m-%d %H:%M:%S")
+                    remaining_days = (end_date - now).days
+                    return max(0, remaining_days)  # Return 0 if negative
+                return 0
+            except sqlite3.Error as e:
+                logging.error(f"Error calculating remaining subscription days for user {user_id}: {e}")
+                return 0
+            finally:
+                db.close()
+        return 0
 
     @staticmethod
     def get_open_tickets():
@@ -3840,6 +3883,14 @@ class DatabaseQueries:
         """
         if additional_days <= 0:
             logging.warning("extend_subscription_duration called with non-positive days: %s", additional_days)
+            return False
+        
+        # Check 120-day limit before extension
+        current_remaining_days = Database.get_user_remaining_subscription_days(user_id)
+        total_days_after_extension = current_remaining_days + additional_days
+        
+        if total_days_after_extension > 120:
+            logging.warning(f"User {user_id} extension blocked: would exceed 120-day limit. Current: {current_remaining_days}, Extension: {additional_days}, Total: {total_days_after_extension}")
             return False
 
         db = Database()

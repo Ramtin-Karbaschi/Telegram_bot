@@ -733,6 +733,32 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     plan_dict = dict(selected_plan)
     context.user_data['selected_plan'] = plan_dict
 
+    # Check 120-day subscription limit
+    plan_duration = plan_dict.get('days', 0)  # Get plan duration in days
+    if plan_duration > 0:  # Only check for plans with duration
+        # Get user's current remaining subscription days
+        current_remaining_days = Database.get_user_remaining_subscription_days(user_id)
+        total_days_after_purchase = current_remaining_days + plan_duration
+        
+        logger.info(f"User {user_id}: Current remaining days: {current_remaining_days}, Plan duration: {plan_duration}, Total after purchase: {total_days_after_purchase}")
+        
+        if total_days_after_purchase > 120:
+            logger.warning(f"User {user_id} attempted to purchase plan {plan_id} but would exceed 120-day limit")
+            await safe_edit_message_text(
+                query.message,
+                text=f"❌ **محدودیت خرید**\n\n"
+                     f"شما در حال حاضر {current_remaining_days} روز اشتراک فعال دارید.\n"
+                     f"با خرید این پلن {plan_duration} روزه، مجموع اشتراک شما به {total_days_after_purchase} روز می‌رسد.\n\n"
+                     f"⚠️ حداکثر مجاز اشتراک فعال 120 روز می‌باشد.\n\n"
+                     f"لطفاً پلن کوتاه‌تری انتخاب کنید یا پس از اتمام بخشی از اشتراک فعلی، اقدام به خرید نمایید.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 بازگشت به لیست محصولات", callback_data="products_menu")],
+                    [InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]
+                ]),
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return ConversationHandler.END
+
     # Check remaining capacity slots (capacity stores remaining slots).
     plan_capacity = plan_dict.get('capacity')
     if plan_capacity is not None:
