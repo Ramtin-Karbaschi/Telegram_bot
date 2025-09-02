@@ -1737,7 +1737,9 @@ class DatabaseQueries:
         """Get user details."""
         try:
             self.db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-            return self.db.fetchone()
+            row = self.db.fetchone()
+            # Convert Row to dictionary for easier access
+            return dict(row) if row else None
         except sqlite3.Error as e:
             logging.error(f"Error getting user details: {e}")
             return None

@@ -2006,10 +2006,66 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
                 await update.message.reply_text(f"❌ کاربری با مشخصات `{search_query}` یافت نشد.", parse_mode="Markdown")
                 return
 
-            lines = [f"🔎 نتایج جستجو برای `{search_query}`:"]
+            # Get detailed info for each user
             for user in users:
-                lines.append(f"• نام: {user.full_name}, آیدی: `{user.user_id}`, یوزرنیم: @{user.username}")
-            await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+                user_id = user['user_id']
+                # Get complete user details
+                db_queries = DatabaseQueries()
+                user_details = db_queries.get_user_details(user_id)
+                
+                if user_details:
+                    # Build comprehensive user info message
+                    info_lines = [
+                        f"👤 **اطلاعات کامل کاربر**",
+                        f"━━━━━━━━━━━━━━━━━━━━",
+                        f"🆔 آیدی: `{user_details['user_id']}`",
+                        f"👤 نام کامل: {user_details['full_name'] or 'ثبت نشده'}",
+                        f"📱 شماره تلفن: {user_details['phone'] or 'ثبت نشده'}",
+                        f"👥 نام کاربری: @{user_details['username'] or 'ندارد'}",
+                        f"📧 ایمیل: {user_details['email'] or 'ثبت نشده'}",
+                        f"🎂 تاریخ تولد: {user_details['birth_date'] or 'ثبت نشده'}",
+                        f"🎓 تحصیلات: {user_details['education'] or 'ثبت نشده'}",
+                        f"💼 شغل: {user_details['occupation'] or 'ثبت نشده'}",
+                        f"🏙 شهر: {user_details['city'] or 'ثبت نشده'}",
+                        f"📅 تاریخ ثبت نام: {user_details['registration_date'] or 'نامشخص'}",
+                        f"🕐 آخرین فعالیت: {user_details['last_activity'] or 'نامشخص'}",
+                        f"📊 وضعیت: {user_details['status'] or 'active'}",
+                    ]
+                    
+                    # Check subscription status
+                    subscription_info = DatabaseQueries.get_user_subscription_summary(user_id)
+                    if subscription_info:
+                        info_lines.append(f"━━━━━━━━━━━━━━━━━━━━")
+                        info_lines.append(f"💳 **وضعیت اشتراک**")
+                        if subscription_info['subscription_expiration_date']:
+                            info_lines.append(f"📆 انقضای اشتراک: {subscription_info['subscription_expiration_date']}")
+                        if subscription_info['total_subscription_days']:
+                            info_lines.append(f"📊 مجموع روزهای اشتراک: {subscription_info['total_subscription_days']} روز")
+                    
+                    # Check if user is banned
+                    user_status = DatabaseQueries.get_user_status(user_id)
+                    if user_status == 'banned':
+                        info_lines.append(f"🚫 **کاربر مسدود شده است**")
+                    
+                    # Add action buttons
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("➕ افزایش اشتراک", callback_data=f"extend_sub_{user_id}"),
+                         InlineKeyboardButton("🔗 لینک دعوت", callback_data=f"create_invite_{user_id}")],
+                        [InlineKeyboardButton("🛑 مسدود/آزاد کردن", callback_data=f"ban_toggle_{user_id}"),
+                         InlineKeyboardButton("📋 تاریخچه خرید", callback_data=f"purchase_history_{user_id}")],
+                        [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_users_menu")]
+                    ])
+                    
+                    await update.message.reply_text(
+                        "\n".join(info_lines),
+                        parse_mode="Markdown",
+                        reply_markup=keyboard
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"❌ خطا در دریافت جزئیات کاربر با آیدی `{user_id}`",
+                        parse_mode="Markdown"
+                    )
 
         # --- Free 30-Day Activation Flow ---
         elif context.user_data.get("awaiting_free20_user"):
