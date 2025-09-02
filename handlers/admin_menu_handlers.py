@@ -2015,21 +2015,24 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
                 
                 if user_details:
                     # Build comprehensive user info message
+                    # Format username properly to avoid parse_entities error
+                    username_display = f"@{user_details['username']}" if user_details.get('username') else 'ندارد'
+                    
                     info_lines = [
                         f"👤 **اطلاعات کامل کاربر**",
                         f"━━━━━━━━━━━━━━━━━━━━",
                         f"🆔 آیدی: `{user_details['user_id']}`",
-                        f"👤 نام کامل: {user_details['full_name'] or 'ثبت نشده'}",
-                        f"📱 شماره تلفن: {user_details['phone'] or 'ثبت نشده'}",
-                        f"👥 نام کاربری: @{user_details['username'] or 'ندارد'}",
-                        f"📧 ایمیل: {user_details['email'] or 'ثبت نشده'}",
-                        f"🎂 تاریخ تولد: {user_details['birth_date'] or 'ثبت نشده'}",
-                        f"🎓 تحصیلات: {user_details['education'] or 'ثبت نشده'}",
-                        f"💼 شغل: {user_details['occupation'] or 'ثبت نشده'}",
-                        f"🏙 شهر: {user_details['city'] or 'ثبت نشده'}",
-                        f"📅 تاریخ ثبت نام: {user_details['registration_date'] or 'نامشخص'}",
-                        f"🕐 آخرین فعالیت: {user_details['last_activity'] or 'نامشخص'}",
-                        f"📊 وضعیت: {user_details['status'] or 'active'}",
+                        f"👤 نام کامل: {user_details.get('full_name') or 'ثبت نشده'}",
+                        f"📱 شماره تلفن: {user_details.get('phone') or 'ثبت نشده'}",
+                        f"👥 نام کاربری: {username_display}",
+                        f"📧 ایمیل: {user_details.get('email') or 'ثبت نشده'}",
+                        f"🎂 تاریخ تولد: {user_details.get('birth_date') or 'ثبت نشده'}",
+                        f"🎓 تحصیلات: {user_details.get('education') or 'ثبت نشده'}",
+                        f"💼 شغل: {user_details.get('occupation') or 'ثبت نشده'}",
+                        f"🏙 شهر: {user_details.get('city') or 'ثبت نشده'}",
+                        f"📅 تاریخ ثبت نام: {user_details.get('registration_date') or 'نامشخص'}",
+                        f"🕐 آخرین فعالیت: {user_details.get('last_activity') or 'نامشخص'}",
+                        f"📊 وضعیت: {user_details.get('status') or 'active'}",
                     ]
                     
                     # Check subscription status
