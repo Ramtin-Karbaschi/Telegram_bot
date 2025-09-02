@@ -403,7 +403,31 @@ async def activate_or_extend_subscription(
                 
                 # Send nicely formatted, multi-line notification with hashtag on top
                 logger.info(f"DEBUG: Subscription handler - sending sales message to channel {channel_id}")
-                await context.bot.send_message(
+                
+                # Try to use context.bot first, fallback to creating new bot instance
+                bot_instance = None
+                try:
+                    if context and hasattr(context, 'bot') and context.bot:
+                        bot_instance = context.bot
+                        logger.info("Using context.bot for sales notification")
+                    else:
+                        logger.warning("context.bot not available, creating new bot instance")
+                except:
+                    logger.warning("Error accessing context.bot, will create new instance")
+                
+                if not bot_instance:
+                    # Create independent bot instance for sales notifications
+                    from telegram import Bot
+                    bot_token = getattr(config, "MAIN_BOT_TOKEN", None)
+                    if bot_token:
+                        bot_instance = Bot(token=bot_token)
+                        logger.info("Created new bot instance for sales notification")
+                    else:
+                        logger.error("MAIN_BOT_TOKEN not available, cannot send sales notification")
+                        raise Exception("Bot token not configured")
+                
+                # Send the message
+                await bot_instance.send_message(
                     chat_id=channel_id,
                     text="\n".join(message_parts)
                 )
