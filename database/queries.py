@@ -240,38 +240,60 @@ class DatabaseQueries:
     @staticmethod
     def get_category_by_id(category_id: int) -> dict | None:
         """Return a single category row as dict or None."""
-        db = Database()
-        if not db.connect():
-            return None
+        from database.connection_pool import get_pool
         try:
-            cursor = db.conn.cursor()
-            cursor.execute("SELECT * FROM categories WHERE id = ?", (category_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+            with get_pool().get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM categories WHERE id = ?", (category_id,))
+                row = cursor.fetchone()
+                return dict(row) if row else None
         except Exception as e:
             logging.error(f"Error fetching category {category_id}: {e}")
-            return None
-        finally:
-            db.close()
+            # Fallback to old method if pool fails
+            db = Database()
+            if not db.connect():
+                return None
+            try:
+                cursor = db.conn.cursor()
+                cursor.execute("SELECT * FROM categories WHERE id = ?", (category_id,))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+            except Exception as e2:
+                logging.error(f"Fallback also failed for category {category_id}: {e2}")
+                return None
+            finally:
+                db.close()
 
     @staticmethod
     def get_children_categories(parent_id: int | None = None) -> list[dict]:
         """Return direct children of a parent category (root if None)."""
-        db = Database()
-        if not db.connect():
-            return []
+        from database.connection_pool import get_pool
         try:
-            cursor = db.conn.cursor()
-            if parent_id is None:
-                cursor.execute("SELECT * FROM categories WHERE parent_id IS NULL ORDER BY display_order, id")
-            else:
-                cursor.execute("SELECT * FROM categories WHERE parent_id = ? ORDER BY display_order, id", (parent_id,))
-            return [dict(r) for r in cursor.fetchall()]
+            with get_pool().get_connection() as conn:
+                cursor = conn.cursor()
+                if parent_id is None:
+                    cursor.execute("SELECT * FROM categories WHERE parent_id IS NULL ORDER BY display_order, id")
+                else:
+                    cursor.execute("SELECT * FROM categories WHERE parent_id = ? ORDER BY display_order, id", (parent_id,))
+                return [dict(r) for r in cursor.fetchall()]
         except Exception as e:
             logging.error(f"Error fetching children for parent {parent_id}: {e}")
-            return []
-        finally:
-            db.close()
+            # Fallback to old method if pool fails
+            db = Database()
+            if not db.connect():
+                return []
+            try:
+                cursor = db.conn.cursor()
+                if parent_id is None:
+                    cursor.execute("SELECT * FROM categories WHERE parent_id IS NULL ORDER BY display_order, id")
+                else:
+                    cursor.execute("SELECT * FROM categories WHERE parent_id = ? ORDER BY display_order, id", (parent_id,))
+                return [dict(r) for r in cursor.fetchall()]
+            except Exception as e2:
+                logging.error(f"Fallback also failed for parent {parent_id}: {e2}")
+                return []
+            finally:
+                db.close()
 
     @staticmethod
     def create_category(name: str, parent_id: int | None = None, display_order: int = 0) -> int | None:

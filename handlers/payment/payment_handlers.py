@@ -273,10 +273,21 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
         if category_id is None:
             # No valid category id found; ignore and exit handler gracefully
             return
-
-        from database.queries import DatabaseQueries as _DB
-        parent_cat = _DB.get_category_by_id(category_id)
-        children = _DB.get_children_categories(category_id)
+        
+        try:
+            from database.queries import DatabaseQueries as _DB
+            parent_cat = _DB.get_category_by_id(category_id)
+            children = _DB.get_children_categories(category_id)
+        except Exception as e:
+            logger.error(f"Database error for user {user_id} accessing category {category_id}: {e}")
+            await safe_edit_message_text(
+                query.message,
+                text="⚠️ خطایی در دریافت اطلاعات رخ داد. لطفاً دوباره تلاش کنید.",
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode=ParseMode.HTML,
+            )
+            return ConversationHandler.END
+            
         if children:
             # Store current parent category for back navigation
             context.user_data['current_parent_category_id'] = category_id
@@ -292,7 +303,17 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
             # Leaf: show plans
             # Store parent category id (if any) for back navigation
             context.user_data['current_parent_category_id'] = parent_cat.get('parent_id') if parent_cat else None
-            keyboard = get_subscription_plans_keyboard(user_id, category_id=category_id)
+            try:
+                keyboard = get_subscription_plans_keyboard(user_id, category_id=category_id)
+            except Exception as e:
+                logger.error(f"Error creating plans keyboard for user {user_id}, category {category_id}: {e}")
+                await safe_edit_message_text(
+                    query.message,
+                    text="⚠️ خطایی در نمایش محصولات رخ داد. لطفاً دوباره تلاش کنید.",
+                    reply_markup=get_main_menu_keyboard(),
+                    parse_mode=ParseMode.HTML,
+                )
+                return ConversationHandler.END
             category_name = parent_cat.get('name', 'محصولات') if parent_cat else 'محصولات'
             await safe_edit_message_text(
                 query.message,
