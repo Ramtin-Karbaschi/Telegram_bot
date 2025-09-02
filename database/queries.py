@@ -3128,7 +3128,8 @@ class DatabaseQueries:
             )
             result = db.fetchone()
             db.close()
-            return result
+            # Convert Row to dictionary for .get() method compatibility
+            return dict(result) if result else None
         return None
     
     @staticmethod

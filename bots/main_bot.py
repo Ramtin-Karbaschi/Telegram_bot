@@ -219,7 +219,8 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     user_display = f"@{username}" if username else f"ID:{user_id}"
                                     
                                     # Get user full name
-                                    user_info = DatabaseQueries.get_user_details(user_id)
+                                    dq_instance = DatabaseQueries()
+                                    user_info = dq_instance.get_user_details(user_id)
                                     full_name = user_info.get('full_name', 'نامشخص') if user_info else 'نامشخص'
                                     
                                     # Get current Persian date

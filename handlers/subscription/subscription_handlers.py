@@ -299,7 +299,8 @@ async def activate_or_extend_subscription(
                 # Get user full name and discount info
                 try:
                     from database.queries import DatabaseQueries as DQ
-                    user_info = DQ.get_user_details(user_id)
+                    dq_instance = DQ()
+                    user_info = dq_instance.get_user_details(user_id)
                     # Convert sqlite3.Row to dict if needed
                     if user_info:
                         user_info = dict(user_info) if hasattr(user_info, 'keys') else user_info
