@@ -231,7 +231,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         persian_date = "تاریخ نامشخص"
                                     
                                     # Format price and set hashtag
-                                    price_formatted = f"{int(rial_amount):,} تومان"
+                                    price_formatted = f"{int(rial_amount):,} ریال"
                                     purchase_tag = "#خرید_نقدی"
                                     
                                     # Build message with optional fields

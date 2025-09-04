@@ -364,7 +364,7 @@ async def activate_or_extend_subscription(
                 
                 if pm_lower in ["rial", "zarinpal"]:
                     # Rial payment
-                    price_formatted = f"{int(payment_amount):,} تومان"
+                    price_formatted = f"{int(payment_amount):,} ریال"
                     purchase_tag = "#خرید_نقدی"
                     
                 elif pm_lower in ["crypto", "tether", "usdt"]:
@@ -378,8 +378,8 @@ async def activate_or_extend_subscription(
                         usdt_rate = await get_usdt_to_irr_rate()
                         if usdt_rate and usdt_rate > 0:
                             # Convert USDT to Toman (not Rial)
-                            rial_equivalent = int(payment_amount * usdt_rate)
-                            price_formatted = f"{payment_amount:.2f} تتر (معادل {rial_equivalent:,} تومان)"
+                            rial_equivalent = int(payment_amount * usdt_rate * 10)
+                            price_formatted = f"{payment_amount:.2f} تتر (معادل {rial_equivalent:,} ریال)"
                     except Exception as rate_error:
                         logger.warning(f"Could not calculate rial equivalent for USDT: {rate_error}")
                         
