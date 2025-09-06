@@ -2406,13 +2406,15 @@ class DatabaseQueries:
         Returns:
             The ID of the created or updated subscription record, or None on failure.
         """
-        # Check 120-day limit before adding subscription
-        current_remaining_days = DatabaseQueries.get_user_remaining_subscription_days(user_id)
-        total_days_after_purchase = current_remaining_days + plan_duration_days
-        
-        if total_days_after_purchase > 120:
-            logging.error(f"add_subscription blocked for user {user_id}: would exceed 120-day limit. Current: {current_remaining_days}, Plan: {plan_duration_days}, Total: {total_days_after_purchase}")
-            return None
+        # Check 120-day limit before adding subscription if enabled
+        limit_enabled = DatabaseQueries.get_setting("enable_120_day_limit", "1") == "1"
+        if limit_enabled:
+            current_remaining_days = DatabaseQueries.get_user_remaining_subscription_days(user_id)
+            total_days_after_purchase = current_remaining_days + plan_duration_days
+            
+            if total_days_after_purchase > 120:
+                logging.error(f"add_subscription blocked for user {user_id}: would exceed 120-day limit. Current: {current_remaining_days}, Plan: {plan_duration_days}, Total: {total_days_after_purchase}")
+                return None
         
         db = Database()
         if not db.connect():
@@ -3910,13 +3912,15 @@ class DatabaseQueries:
             logging.warning("extend_subscription_duration called with non-positive days: %s", additional_days)
             return False
         
-        # Check 120-day limit before extension
-        current_remaining_days = Database.get_user_remaining_subscription_days(user_id)
-        total_days_after_extension = current_remaining_days + additional_days
-        
-        if total_days_after_extension > 120:
-            logging.warning(f"User {user_id} extension blocked: would exceed 120-day limit. Current: {current_remaining_days}, Extension: {additional_days}, Total: {total_days_after_extension}")
-            return False
+        # Check 120-day limit before extension if enabled
+        limit_enabled = Database.get_setting("enable_120_day_limit", "1") == "1"
+        if limit_enabled:
+            current_remaining_days = Database.get_user_remaining_subscription_days(user_id)
+            total_days_after_extension = current_remaining_days + additional_days
+            
+            if total_days_after_extension > 120:
+                logging.warning(f"User {user_id} extension blocked: would exceed 120-day limit. Current: {current_remaining_days}, Extension: {additional_days}, Total: {total_days_after_extension}")
+                return False
 
         db = Database()
         if not db.connect():

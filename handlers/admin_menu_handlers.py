@@ -811,7 +811,14 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             current = DatabaseQueries.get_setting("enable_discount_code_step", "1")
             new_value = "0" if current == "1" else "1"
             DatabaseQueries.set_setting("enable_discount_code_step", new_value)
-            await query.answer("به‌روزرسانی شد")
+            await query.answer("تنظیمات ذخیره شد")
+            await self._settings_submenu(query)
+        elif data == "settings_toggle_120_day_limit":
+            current = DatabaseQueries.get_setting("enable_120_day_limit", "1")
+            new_value = "0" if current == "1" else "1"
+            DatabaseQueries.set_setting("enable_120_day_limit", new_value)
+            status_text = "فعال" if new_value == "1" else "غیرفعال"
+            await query.answer(f"محدودیت 120 روز {status_text} شد")
             await self._settings_submenu(query)
         elif data == "settings_misc":
             await self._settings_misc_submenu(query)
@@ -1141,12 +1148,17 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         # Determine current status of discount code step
         discount_step_enabled = DatabaseQueries.get_setting("enable_discount_code_step", "1") == "1"
         discount_toggle_text = ("🏷️ مرحله کد تخفیف : ✅" if discount_step_enabled else "🏷️ مرحله کد تخفیف : ❌")
+        
+        # Determine current status of 120-day subscription limit
+        subscription_limit_enabled = DatabaseQueries.get_setting("enable_120_day_limit", "1") == "1"
+        limit_toggle_text = ("📅 محدودیت 120 روز : ✅" if subscription_limit_enabled else "📅 محدودیت 120 روز : ❌")
 
         keyboard = [
             [InlineKeyboardButton("🔐 مدیران", callback_data="settings_admins"), InlineKeyboardButton("👥 مدیریت پشتیبان‌ها", callback_data=self.SUPPORT_MENU)],
             [InlineKeyboardButton("🏅 مدیریت میان‌رده‌ها", callback_data="settings_mid_level"), InlineKeyboardButton("🔘 دکمه‌های تمدید", callback_data="settings_renew_buttons")],
             [InlineKeyboardButton("💸 مدیریت کدهای تخفیف", callback_data="discounts_menu"), InlineKeyboardButton(discount_toggle_text, callback_data="settings_toggle_discount_step")],
-            [InlineKeyboardButton("🎯 دکمه تبلیغاتی", callback_data="promo_category_admin"), InlineKeyboardButton("⚙️ سایر تنظیمات", callback_data="settings_misc")],
+            [InlineKeyboardButton(limit_toggle_text, callback_data="settings_toggle_120_day_limit"), InlineKeyboardButton("⚙️ سایر تنظیمات", callback_data="settings_misc")],
+            [InlineKeyboardButton("🎯 دکمه تبلیغاتی", callback_data="promo_category_admin")],
             [InlineKeyboardButton("💾 بکاپ JSON دیتابیس", callback_data=self.BACKUP_CALLBACK), InlineKeyboardButton("📆 بکاپ Excel دیتابیس", callback_data=self.BACKUP_XLSX_CALLBACK)],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
         ]

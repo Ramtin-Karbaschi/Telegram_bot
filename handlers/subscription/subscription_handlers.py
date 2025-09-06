@@ -267,13 +267,17 @@ async def activate_or_extend_subscription(
             logger.error(f"Plan duration not found for plan_id: {plan_id}, user_id: {user_id}.")
             return False, "مدت زمان طرح اشتراک مشخص نشده است."
         
-        # Check 120-day subscription limit before activation
-        current_remaining_days = Database.get_user_remaining_subscription_days(user_id)
-        total_days_after_purchase = current_remaining_days + plan_duration_days
-        
-        if total_days_after_purchase > 120:
-            logger.warning(f"User {user_id} attempted to activate subscription but would exceed 120-day limit. Current: {current_remaining_days}, Plan: {plan_duration_days}, Total: {total_days_after_purchase}")
-            return False, f"❌ محدودیت اشتراک: با فعال‌سازی این پلن {plan_duration_days} روزه، مجموع اشتراک شما به {total_days_after_purchase} روز می‌رسد که بیش از حد مجاز 120 روز است."
+        # Check 120-day subscription limit if enabled
+        from database.queries import DatabaseQueries
+        limit_enabled = DatabaseQueries.get_setting("enable_120_day_limit", "1") == "1"
+        if limit_enabled:
+            if plan_duration_days > 0:
+                current_remaining_days = DatabaseQueries.get_user_remaining_subscription_days(user_id)
+                total_days_after_purchase = current_remaining_days + plan_duration_days
+                
+                if total_days_after_purchase > 120:
+                    logger.warning(f"Subscription activation blocked for user {user_id}: would exceed 120-day limit. Current: {current_remaining_days}, Plan: {plan_duration_days}, Total: {total_days_after_purchase}")
+                    return False, "محدودیت 120 روز: مجموع اشتراک فعال شما نمی‌تواند بیش از 120 روز باشد"
 
         # Add the subscription to the 'subscriptions' table first
         subscription_id = Database.add_subscription(

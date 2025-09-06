@@ -754,31 +754,33 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     plan_dict = dict(selected_plan)
     context.user_data['selected_plan'] = plan_dict
 
-    # Check 120-day subscription limit
-    plan_duration = plan_dict.get('days', 0)  # Get plan duration in days
-    if plan_duration > 0:  # Only check for plans with duration
-        # Get user's current remaining subscription days
-        current_remaining_days = Database.get_user_remaining_subscription_days(user_id)
-        total_days_after_purchase = current_remaining_days + plan_duration
-        
-        logger.info(f"User {user_id}: Current remaining days: {current_remaining_days}, Plan duration: {plan_duration}, Total after purchase: {total_days_after_purchase}")
-        
-        if total_days_after_purchase > 120:
-            logger.warning(f"User {user_id} attempted to purchase plan {plan_id} but would exceed 120-day limit")
-            await safe_edit_message_text(
-                query.message,
-                text=f"❌ **محدودیت خرید**\n\n"
-                     f"شما در حال حاضر {current_remaining_days} روز اشتراک فعال دارید.\n"
-                     f"با خرید این پلن {plan_duration} روزه، مجموع اشتراک شما به {total_days_after_purchase} روز می‌رسد.\n\n"
-                     f"⚠️ حداکثر مجاز اشتراک فعال 120 روز می‌باشد.\n\n"
-                     f"لطفاً پلن کوتاه‌تری انتخاب کنید یا پس از اتمام بخشی از اشتراک فعلی، اقدام به خرید نمایید.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 بازگشت به لیست محصولات", callback_data="products_menu")],
-                    [InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]
-                ]),
-                parse_mode=ParseMode.MARKDOWN
-            )
-            return ConversationHandler.END
+    # Check 120-day subscription limit if enabled
+    limit_enabled = Database.get_setting("enable_120_day_limit", "1") == "1"
+    if limit_enabled:
+        plan_duration = plan_dict.get('days', 0)  # Get plan duration in days
+        if plan_duration > 0:  # Only check for plans with duration
+            # Get user's current remaining subscription days
+            current_remaining_days = Database.get_user_remaining_subscription_days(user_id)
+            total_days_after_purchase = current_remaining_days + plan_duration
+            
+            logger.info(f"User {user_id}: Current remaining days: {current_remaining_days}, Plan duration: {plan_duration}, Total after purchase: {total_days_after_purchase}")
+            
+            if total_days_after_purchase > 120:
+                logger.warning(f"User {user_id} attempted to purchase plan {plan_id} but would exceed 120-day limit")
+                await safe_edit_message_text(
+                    query.message,
+                    text=f"❌ **محدودیت خرید**\n\n"
+                         f"شما در حال حاضر {current_remaining_days} روز اشتراک فعال دارید.\n"
+                         f"با خرید این پلن {plan_duration} روزه، مجموع اشتراک شما به {total_days_after_purchase} روز می‌رسد.\n\n"
+                         f"⚠️ حداکثر مجاز اشتراک فعال 120 روز می‌باشد.\n\n"
+                         f"لطفاً پلن کوتاه‌تری انتخاب کنید یا پس از اتمام بخشی از اشتراک فعلی، اقدام به خرید نمایید.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 بازگشت به لیست محصولات", callback_data="products_menu")],
+                        [InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]
+                    ]),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return ConversationHandler.END
 
     # Check remaining capacity slots (capacity stores remaining slots).
     plan_capacity = plan_dict.get('capacity')
@@ -2426,42 +2428,26 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
                     # Payment verified but activation failed
                     error_message = (
                         "✅ **پرداخت تایید شد** اما خطا در فعال‌سازی اشتراک:\n\n"
-                        f"🔗 **TX Hash:** `{final_tx[:30]}...`\n"
-                        f"💰 **مبلغ:** {amount:.6f} USDT\n"
-                        f"❌ **خطا:** {activation_message}\n\n"
-                        "💡 لطفاً سریعاً با پشتیبانی تماس بگیرید تا اشتراک شما فعال شود.",
                     )
+                    
                     await safe_edit_message_text(
                         query.message,
-                        text=error_message,
+                        text=no_payment_message,
                         parse_mode="Markdown",
                         reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("💬 پشتیبانی فوری", url="https://t.me/daraeiposhtibani")]
+                            [InlineKeyboardButton("🔄 تلاش مجدد", callback_data="verify_crypto_payment")],
+                            [InlineKeyboardButton("🔗 ورود TX Hash دستی", callback_data="payment_send_tx")],
+                            [InlineKeyboardButton("💬 پشتیبانی", url="https://t.me/daraeiposhtibani")]
                         ])
                     )
-                    return ConversationHandler.END
+                    
+                    # ثبت لاگ عدم یافتن پرداخت
+                    logger.info(
+                        f"🔍 Auto-verification: No payment found for user {telegram_id}, payment {crypto_payment_id}"
+                    )
+                    
+                    return VERIFY_PAYMENT
                 
-                # Success message only if activation succeeded
-                success_message = (
-                    "🎉 **پرداخت خودکار تایید شد!**\n\n"
-                    f"✅ **وضعیت:** تایید شده توسط سیستم\n"
-                    f"🔗 **TX Hash:** `{final_tx[:30]}...`\n"
-                    f"💰 **مبلغ:** {amount:.6f} USDT\n"
-                    f"🔍 **روش:** جستجوی خودکار هوشمند\n"
-                    f"🎯 **اشتراک:** فعال گردید\n\n"
-                    f"🔒 این پرداخت توسط سیستم امنیتی پیشرفته تایید شده است."
-                )
-                
-                await safe_edit_message_text(
-                    success_message,
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("👤 مشاهده پروفایل", callback_data="show_status")],
-                        [InlineKeyboardButton("📚 دسترسی به محتوا", callback_data="start_subscription_flow")]
-                    ])
-                )
-                
-                # ثبت لاگ موفقیت
                 logger.info(
                     f"✅ Auto-verification successful for user {telegram_id}, "
                     f"payment {crypto_payment_id}, TX: {final_tx}, Amount: {amount} USDT"
@@ -2472,6 +2458,7 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
             except Exception as e:
                 logger.error(f"💥 Error activating subscription for user {telegram_id}: {e}")
                 await safe_edit_message_text(
+                    query.message,
                     f"✅ **پرداخت تایید شد** اما خطا در فعال‌سازی:\n\n"
                     f"❌ **خطا:** {e}\n\n"
                     f"💡 لطفاً با پشتیبانی تماس بگیرید.",
