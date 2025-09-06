@@ -2522,6 +2522,20 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
         )
         return ConversationHandler.END
 
+# Import promotional button handler
+from utils.promotional_category_utils import handle_promotional_category_button
+
+# Handler for promotional buttons
+async def handle_promo_button_in_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle promotional button clicks and return appropriate state"""
+    result = await handle_promotional_category_button(update.message.text, update, context)
+    if result in [ASK_DISCOUNT, SELECT_PAYMENT_METHOD]:
+        return result
+    elif result == True:
+        return SELECT_PLAN
+    else:
+        return ConversationHandler.END
+
 payment_conversation = ConversationHandler(
     entry_points=[
         # Main menu buttons
@@ -2536,6 +2550,8 @@ payment_conversation = ConversationHandler(
         CallbackQueryHandler(select_plan_handler, pattern='^plan_\\d+$'),
         # Text menu buttons
         MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 (?:محصولات|خدمات VIP))$"), start_subscription_flow),
+        # Promotional buttons - will be added dynamically
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_promo_button_in_payment),
     ],
     states={
         SELECT_PLAN: [

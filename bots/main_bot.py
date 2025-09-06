@@ -646,19 +646,35 @@ class MainBot:
         
         # Add promotional category buttons as entry points to payment conversation
         from utils.promotional_category_utils import get_promotional_category_buttons, handle_promotional_category_button
+        from handlers.payment import SELECT_PLAN, ASK_DISCOUNT, SELECT_PAYMENT_METHOD
+        
+        # Create handler function for promotional buttons (outside try block for proper scope)
+        async def handle_promo_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """Handle all promotional button clicks"""
+            result = await handle_promotional_category_button(update.message.text, update, context)
+            # Ensure we return a valid conversation state or ConversationHandler.END
+            if result in [ASK_DISCOUNT, SELECT_PAYMENT_METHOD]:
+                return result
+            elif result == True:
+                # For category buttons that don't return a specific state
+                return SELECT_PLAN
+            else:
+                # If handling failed, stay in current state
+                return ConversationHandler.END
         
         # Get all promotional buttons and add them to conversation entry points
         try:
             promo_buttons = get_promotional_category_buttons()
             if promo_buttons:
-                # Create a general handler for all promotional buttons
-                async def handle_promo_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-                    """Handle all promotional button clicks"""
-                    return await handle_promotional_category_button(update.message.text, update, context)
-                
                 # Add each promotional button text as entry point
                 for promo_button in promo_buttons:
-                    promo_text = promo_button.text
+                    # Extract text from KeyboardButton object
+                    if hasattr(promo_button, 'text'):
+                        promo_text = promo_button.text
+                    else:
+                        promo_text = str(promo_button)
+                    
+                    # Create a specific handler for this button text
                     payment_conversation.entry_points.append(
                         MessageHandler(filters.TEXT & filters.Regex(f"^{re.escape(promo_text)}$"), handle_promo_buttons)
                     )

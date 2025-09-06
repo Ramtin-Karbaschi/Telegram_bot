@@ -66,7 +66,8 @@ async def handle_promotional_product_click(product_id: int, update, context):
         from database.queries import DatabaseQueries
         from utils.keyboards import get_payment_methods_keyboard
 
-        from handlers.payment.payment_handlers import CRYPTO_PAYMENT_TIMEOUT_MINUTES
+        from handlers.payment import SELECT_PAYMENT_METHOD, ASK_DISCOUNT
+        from config import CRYPTO_PAYMENT_TIMEOUT_MINUTES
         from utils.price_utils import get_usdt_to_irr_rate
         import math
         from datetime import datetime, timedelta
@@ -140,7 +141,6 @@ async def handle_promotional_product_click(product_id: int, update, context):
                 parse_mode="HTML"
             )
             
-            from handlers.payment.payment_handlers import ASK_DISCOUNT
             return ASK_DISCOUNT
         else:
             # رد کردن مرحله کد تخفیف و نمایش مستقیم روش‌های پرداخت
@@ -163,7 +163,6 @@ async def handle_promotional_product_click(product_id: int, update, context):
                 parse_mode="HTML"
             )
             
-            from handlers.payment.payment_handlers import SELECT_PAYMENT_METHOD
             return SELECT_PAYMENT_METHOD
 
     except Exception as e:
