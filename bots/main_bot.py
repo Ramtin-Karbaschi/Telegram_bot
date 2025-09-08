@@ -201,69 +201,21 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     user_record = DatabaseQueries.get_user_details(user_id) # Fetch user record to get internal DB ID
                     if plan_info and user_record:
                         user_db_id = user_record['user_id']
-                        subscription_id = DatabaseQueries.add_subscription(
-                            user_id=user_db_id, # Use internal DB user_id
+                        
+                        # Use activate_or_extend_subscription which includes sales report
+                        success, error_msg = await activate_or_extend_subscription(
+                            user_id=user_db_id,
+                            telegram_id=user_id,
                             plan_id=plan_id,
-                            payment_id=payment_db_id,
-                            plan_duration_days=plan_info['days'],
-                            amount_paid=rial_amount,
-                            payment_method='zarinpal'
+                            plan_name=plan_info['name'],
+                            payment_amount=rial_amount,
+                            payment_method='zarinpal',
+                            transaction_id=str(ref_id),
+                            context=context,
+                            payment_table_id=payment_db_id
                         )
-                        if subscription_id:
-                            # --- Send sales report message to channel ---
-                            try:
-                                sales_channel_id = config.SALE_CHANNEL_ID  # گزارشهای فروش
-                                logger.info(f"DEBUG: Attempting to send sales report. Channel ID: {sales_channel_id}")
-                                if sales_channel_id:
-                                    username = update.effective_user.username if update.effective_user and update.effective_user.username else None
-                                    user_display = f"@{username}" if username else f"ID:{user_id}"
-                                    
-                                    # Get user full name
-                                    dq_instance = DatabaseQueries()
-                                    user_info = dq_instance.get_user_details(user_id)
-                                    full_name = user_info.get('full_name', 'نامشخص') if user_info else 'نامشخص'
-                                    
-                                    # Get current Persian date
-                                    try:
-                                        import jdatetime
-                                        persian_date = jdatetime.datetime.now().strftime("%Y/%m/%d")
-                                    except Exception:
-                                        persian_date = "تاریخ نامشخص"
-                                    
-                                    # Format price and set hashtag
-                                    price_formatted = f"{int(rial_amount):,} ریال"
-                                    purchase_tag = "#خرید_نقدی"
-                                    
-                                    # Build message with optional fields
-                                    message_parts = [
-                                        purchase_tag,
-                                        "━━━━━━━━━━━━━━━",
-                                        f"📅 تاریخ: {persian_date}",
-                                        f"👤 کاربر: {user_display}",
-                                        f"👤 نام کامل: {full_name}",
-                                        f"📦 محصول: {plan_info['name']}",
-                                        f"💰 مبلغ: {price_formatted}"
-                                    ]
-                                    
-                                    # Add discount code if used
-                                    discount_id = context.user_data.get('discount_id') if 'discount_id' in context.user_data else payment.get('discount_id')
-                                    if discount_id:
-                                        message_parts.insert(-1, f"🎫 کد تخفیف: #{discount_id}")
-                                    
-                                    message_parts.append("━━━━━━━━━━━━━━━")
-                                    
-                                    # Send formatted message
-                                    logger.info(f"DEBUG: Sending sales message to channel {sales_channel_id}")
-                                    await context.bot.send_message(
-                                        chat_id=sales_channel_id,
-                                        text="\n".join(message_parts)
-                                    )
-                                    logger.info(f"DEBUG: Sales message sent successfully to channel {sales_channel_id}")
-                                else:
-                                    logger.warning(f"DEBUG: SALE_CHANNEL_ID is None or empty: {sales_channel_id}")
-                            except Exception as e:
-                                logger.error(f"Failed to send sales report message: {e}")
-
+                        
+                        if success:
                             # Increment discount usage count if a discount was applied
                             did = context.user_data.get('discount_id') if 'discount_id' in context.user_data else payment.get('discount_id')
                             if did:
@@ -333,7 +285,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 
                                 await send_and_schedule_deletion(update, context, text, reply_markup, 300)
                         else:
-                            await update.message.reply_text(ZARINPAL_PAYMENT_VERIFIED_SUCCESS_SUB_ACTIVATION_FAILED_MESSAGE_USER.format(ref_id=ref_id))
+                            await update.message.reply_text(f"❌ خطا در فعال‌سازی اشتراک: {error_msg}")
                     else:
                         await update.message.reply_text(ZARINPAL_PAYMENT_VERIFIED_SUCCESS_PLAN_NOT_FOUND_MESSAGE_USER.format(ref_id=ref_id))
                 else:
