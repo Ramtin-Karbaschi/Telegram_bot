@@ -2,13 +2,12 @@
 Subscription handlers for the Daraei Academy Telegram bot
 """
 
-from datetime import datetime # Added this import
-import jdatetime
+import asyncio
 from datetime import datetime, timedelta
+import jdatetime
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ParseMode # Added for message formatting
 from telegram.error import BadRequest  # To handle 'Message is not modified' gracefully
-from datetime import datetime, timedelta
 from telegram.ext import ContextTypes, ConversationHandler
 import config # Added for TELEGRAM_CHANNELS_INFO
 from database.queries import DatabaseQueries as Database
@@ -439,12 +438,20 @@ async def activate_or_extend_subscription(
                         logger.error("MAIN_BOT_TOKEN not available, cannot send sales notification")
                         raise Exception("Bot token not configured")
                 
-                # Send the message
-                await bot_instance.send_message(
-                    chat_id=channel_id,
-                    text="\n".join(message_parts)
-                )
-                logger.info(f"DEBUG: Subscription handler - sales message sent successfully to channel {channel_id}")
+                # Send the message with timeout handling
+                try:
+                    await asyncio.wait_for(
+                        bot_instance.send_message(
+                            chat_id=channel_id,
+                            text="\n".join(message_parts)
+                        ),
+                        timeout=5.0  # 5 second timeout
+                    )
+                    logger.info(f"DEBUG: Subscription handler - sales message sent successfully to channel {channel_id}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout sending sales message to channel {channel_id} - continuing anyway")
+                except Exception as send_err:
+                    logger.error(f"Error sending sales message to channel: {send_err} - continuing anyway")
             else:
                 logger.warning(f"DEBUG: Subscription handler - SALE_CHANNEL_ID is None or empty: {channel_id}")
         except Exception as e:
@@ -486,7 +493,16 @@ async def activate_or_extend_subscription(
                     plan_id,
                 )
 
-        # 5. Update the users table
+        # 5. Ensure user exists in users table before updating
+        from database.queries import DatabaseQueries
+        db_queries = DatabaseQueries()
+        user_exists = DatabaseQueries.get_user_by_telegram_id(user_id)
+        if not user_exists:
+            # Create user if doesn't exist
+            logger.info(f"User {user_id} not found in users table, creating...")
+            db_queries.add_user(user_id, username=None)
+        
+        # Now update the users table
         update_success = Database.update_user_subscription_summary(
             user_id=user_id,
             total_days=new_total_days,
@@ -494,8 +510,8 @@ async def activate_or_extend_subscription(
         )
 
         if not update_success:
-            # Critical error: subscription was added but user summary failed.
-            logger.critical(f"CRITICAL: Failed to update user subscription summary for user_id: {user_id} after adding subscription_id: {subscription_id}. Manual check required.")
+            # This is less critical now since we ensure user exists
+            logger.warning(f"Failed to update user subscription summary for user_id: {user_id} after adding subscription_id: {subscription_id}. Will continue anyway.")
 
         logger.info(f"Successfully activated/extended subscription_id: {subscription_id} for user_id: {user_id}.")
         
