@@ -156,7 +156,11 @@ class CryptoPanelMethods:
     
     async def _show_crypto_verify_payments(self, query):
         """Display pending cryptocurrency payments for verification"""
-        await query.answer()
+        await query.answer("در حال بروزرسانی...")
+        
+        # Add timestamp to make content unique on refresh
+        from datetime import datetime
+        import jdatetime
         
         # Mock pending payments - in real implementation, query from database
         text = "✅ **تایید پرداخت‌های کریپتو**\n\n"
@@ -176,7 +180,9 @@ class CryptoPanelMethods:
         else:
             text += "✨ هیچ پرداختی در انتظار تایید نیست!\n\n"
         
-        text += "🔄 **آخرین بروزرسانی:** الان\n"
+        # Use current time to make message unique
+        current_time = jdatetime.datetime.now().strftime("%H:%M:%S")
+        text += f"🔄 **آخرین بروزرسانی:** {current_time}\n"
         text += "⚡ **بروزرسانی خودکار:** هر 30 ثانیه"
         
         keyboard = [
@@ -185,4 +191,11 @@ class CryptoPanelMethods:
             [InlineKeyboardButton("🔙 بازگشت", callback_data="crypto_panel")]
         ]
         
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        # Use try-except to handle BadRequest when message is not modified
+        from telegram.error import BadRequest
+        try:
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        except BadRequest as e:
+            if "Message is not modified" not in str(e):
+                # Only re-raise if it's not the "not modified" error
+                raise
