@@ -2523,12 +2523,28 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
         return ConversationHandler.END
 
 # Import promotional button handler
-from utils.promotional_category_utils import handle_promotional_category_button
+from utils.promotional_category_utils import handle_promotional_category_button, get_promotional_category_buttons
 
 # Handler for promotional buttons
 async def handle_promo_button_in_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle promotional button clicks and return appropriate state"""
-    result = await handle_promotional_category_button(update.message.text, update, context)
+    # First check if this text is actually a promotional button
+    from handlers.admin_promotional_category import PromotionalCategoryManager
+    buttons = PromotionalCategoryManager.get_all_promotional_buttons()
+    
+    text = update.message.text
+    is_promo_button = False
+    
+    for button in buttons:
+        if button['enabled'] and button['button_text'] == text:
+            is_promo_button = True
+            break
+    
+    if not is_promo_button:
+        # Not a promotional button, don't handle
+        return
+    
+    result = await handle_promotional_category_button(text, update, context)
     if result in [ASK_DISCOUNT, SELECT_PAYMENT_METHOD]:
         return result
     elif result == True:
@@ -2536,23 +2552,50 @@ async def handle_promo_button_in_payment(update: Update, context: ContextTypes.D
     else:
         return ConversationHandler.END
 
+# Create a regex pattern for all promotional buttons
+def get_promotional_buttons_regex():
+    """Create regex pattern for all active promotional buttons"""
+    from handlers.admin_promotional_category import PromotionalCategoryManager
+    buttons = PromotionalCategoryManager.get_all_promotional_buttons()
+    
+    if not buttons:
+        return None
+    
+    button_texts = []
+    for button in buttons:
+        if button['enabled'] and button['button_text']:
+            import re
+            button_texts.append(re.escape(button['button_text']))
+    
+    if button_texts:
+        return "^(" + "|".join(button_texts) + ")$"
+    return None
+
+# Get promotional buttons pattern
+promo_pattern = get_promotional_buttons_regex()
+
+# Build entry points list
+entry_points_list = [
+    # Main menu buttons
+    CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'),
+    # Retry auto verification
+    CallbackQueryHandler(payment_verify_crypto_handler, pattern='^verify_crypto_payment$'),
+    # Manual TX hash submission (after restarts/end)
+    CallbackQueryHandler(ask_for_tx_hash_handler, pattern='^payment_send_tx$'),
+    CallbackQueryHandler(start_subscription_flow, pattern='^products_menu(?:_\\d+)?$'),
+    CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
+    # Direct plan selection (starts conversation and triggers select_plan_handler)
+    CallbackQueryHandler(select_plan_handler, pattern='^plan_\\d+$'),
+    # Text menu buttons
+    MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 (?:محصولات|خدمات VIP))$"), start_subscription_flow),
+]
+
+# Add promotional button handler if pattern exists
+if promo_pattern:
+    entry_points_list.append(MessageHandler(filters.Regex(promo_pattern), handle_promo_button_in_payment))
+
 payment_conversation = ConversationHandler(
-    entry_points=[
-        # Main menu buttons
-        CallbackQueryHandler(start_subscription_flow, pattern='^start_subscription_flow$'),
-        # Retry auto verification
-        CallbackQueryHandler(payment_verify_crypto_handler, pattern='^verify_crypto_payment$'),
-        # Manual TX hash submission (after restarts/end)
-        CallbackQueryHandler(ask_for_tx_hash_handler, pattern='^payment_send_tx$'),
-        CallbackQueryHandler(start_subscription_flow, pattern='^products_menu(?:_\\d+)?$'),
-        CallbackQueryHandler(start_subscription_flow, pattern='^back_to_plans$'),
-        # Direct plan buttons (e.g., from reminder messages)
-        CallbackQueryHandler(select_plan_handler, pattern='^plan_\\d+$'),
-        # Text menu buttons
-        MessageHandler(filters.Regex(r"^(🎫 عضویت رایگان|🛒 (?:محصولات|خدمات VIP))$"), start_subscription_flow),
-        # Promotional buttons - will be added dynamically
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_promo_button_in_payment),
-    ],
+    entry_points=entry_points_list,
     states={
         SELECT_PLAN: [
             CallbackQueryHandler(select_plan_handler, pattern='^plan_'),
@@ -2595,8 +2638,9 @@ payment_conversation = ConversationHandler(
     ],
     conversation_timeout=config.PAYMENT_CONVERSATION_TIMEOUT,
     name="payment_flow_conversation",
-    persistent=True,
+    persistent=False,
     per_user=True,
     per_chat=True,
+    per_message=False,
     allow_reentry=True
 )

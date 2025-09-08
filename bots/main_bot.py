@@ -631,14 +631,8 @@ class MainBot:
         from handlers.payment.payment_handlers import back_to_main_menu_from_categories
         self.application.add_handler(CallbackQueryHandler(back_to_main_menu_from_categories, pattern=r"^back_to_main_menu_from_categories$"), group=0)
         # Callback entry for AltSeason is handled by conversation handler
-        # Standalone plan handler for free plans outside conversation (higher group to avoid conflict)
-        from handlers.payment.payment_handlers import select_plan_handler, prompt_for_discount_code, show_payment_methods
-        self.application.add_handler(CallbackQueryHandler(select_plan_handler, pattern=r'^plan_\d+$'), group=2)
-        # Standalone handlers for discount step when flow started outside conversation
-        self.application.add_handler(CallbackQueryHandler(prompt_for_discount_code, pattern=r'^have_discount_code$'), group=2)
-        self.application.add_handler(CallbackQueryHandler(show_payment_methods, pattern=r'^skip_discount_code$'), group=2)
-        # Back to plans from discount/payment step outside conversation
-        self.application.add_handler(CallbackQueryHandler(start_subscription_flow, pattern=r'^back_to_plans$'), group=2)
+        # NOTE: All payment-related callbacks are now handled by payment_conversation ConversationHandler
+        # Do not add standalone handlers for plan/discount/payment callbacks to avoid conflicts
 
         # ---------------- Payment conversation AFTER free package ----------------
         # Add the 'products' text button as an entry point to the conversation
