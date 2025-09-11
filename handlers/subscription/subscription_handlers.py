@@ -291,12 +291,14 @@ async def activate_or_extend_subscription(
         if not subscription_id:
             logger.error(f"Failed to add subscription to DB for user_id: {user_id}, plan_id: {plan_id}.")
             return False, "خطا در ثبت اولیه اشتراک در پایگاه داده."
+        
+        logger.info(f"✅ Subscription {subscription_id} created for user {user_id}, now sending sales report...")
 
         # --- Immediate sales report to channel ---
         try:
             # Use SALE_CHANNEL_ID from config (unified channel for all sales reports)
             channel_id = getattr(config, "SALE_CHANNEL_ID", None)
-            logger.info(f"DEBUG: Subscription handler - attempting to send sales report. Channel ID: {channel_id}")
+            logger.info(f"📊 SALES REPORT START: User {telegram_id}, Plan {plan_name}, Method {payment_method}, Amount {payment_amount}")
                 
             if channel_id:
                 # Get user full name and discount info
@@ -440,22 +442,23 @@ async def activate_or_extend_subscription(
                 
                 # Send the message with timeout handling
                 try:
-                    await asyncio.wait_for(
+                    sent_message = await asyncio.wait_for(
                         bot_instance.send_message(
                             chat_id=channel_id,
                             text="\n".join(message_parts)
                         ),
                         timeout=5.0  # 5 second timeout
                     )
-                    logger.info(f"DEBUG: Subscription handler - sales message sent successfully to channel {channel_id}")
+                    # Log successful send with message ID for verification
+                    logger.info(f"✅ SALES REPORT SENT: Message ID {sent_message.message_id} to channel {channel_id} for user {telegram_id}, plan: {plan_name}, amount: {price_formatted}, method: {payment_method}")
                 except asyncio.TimeoutError:
-                    logger.warning(f"Timeout sending sales message to channel {channel_id} - continuing anyway")
+                    logger.error(f"⏱️ SALES REPORT TIMEOUT: Channel {channel_id}, User {telegram_id}, Plan {plan_name} - subscription saved but report not sent")
                 except Exception as send_err:
-                    logger.error(f"Error sending sales message to channel: {send_err} - continuing anyway")
+                    logger.error(f"❌ SALES REPORT ERROR: {send_err} - Channel {channel_id}, User {telegram_id}, Plan {plan_name} - subscription saved but report not sent")
             else:
-                logger.warning(f"DEBUG: Subscription handler - SALE_CHANNEL_ID is None or empty: {channel_id}")
+                logger.error(f"❌ SALES REPORT FAILED: SALE_CHANNEL_ID is None or empty - User {telegram_id}, Plan {plan_name}")
         except Exception as e:
-            logger.error(f"Failed to send immediate purchase report: {e}")
+            logger.error(f"❌ SALES REPORT EXCEPTION: {e} - User {telegram_id}, Plan {plan_name}")
 
         # --- New Logic: Update user's subscription summary ---
         logger.info(f"Updating user subscription summary for user_id: {user_id}")
