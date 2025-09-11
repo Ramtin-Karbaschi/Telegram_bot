@@ -3,10 +3,15 @@ Provides a simple, localized admin panel with inline keyboards
 so administrators can quickly access management features
 (tickets, users, payments, broadcasts, settings)."""
 
+from telegram.helpers import escape_markdown
+from telegram.ext import ContextTypes
+import json
 import logging
-from typing import Any
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ConversationHandler
+import os
+import re
+import sqlite3
+from datetime import datetime
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ContextTypes,
     CallbackQueryHandler, CommandHandler, MessageHandler, filters, ConversationHandler
@@ -2101,18 +2106,24 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
                 await update.message.reply_text("❌ خطا در یافتن یا ایجاد پلن رایگان در دیتابیس.")
                 return
 
-            # Add the subscription
-            sub_id = DatabaseQueries.add_subscription(
+            # Import activate_or_extend_subscription for sales reporting
+            from handlers.subscription.subscription_handlers import activate_or_extend_subscription
+            
+            # Use activate_or_extend_subscription which includes sales report
+            success, error_msg = await activate_or_extend_subscription(
                 user_id=target_user_id,
+                telegram_id=target_user_id,
                 plan_id=plan_id,
-                payment_id=None,  # No payment for a free plan
-                plan_duration_days=20,
-                amount_paid=0,
+                plan_name="اشتراک رایگان 20 روزه (ادمین)",
+                payment_amount=0,
                 payment_method="manual_free",
+                transaction_id=f"ADMIN_FREE_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                context=context,
+                payment_table_id=None
             )
 
-            if not sub_id:
-                await update.message.reply_text("❌ خطا در فعال‌سازی اشتراک رایگان برای کاربر.")
+            if not success:
+                await update.message.reply_text(f"❌ خطا در فعال‌سازی اشتراک رایگان: {error_msg}")
                 return
 
             # Notify admin

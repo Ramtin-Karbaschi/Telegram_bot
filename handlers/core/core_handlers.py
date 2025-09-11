@@ -80,22 +80,30 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             
                             plan_info = DatabaseQueries.get_plan_by_id(payment_details['plan_id'])
                             if plan_info:
-                                subscription_id = DatabaseQueries.add_subscription(
+                                # Import activate_or_extend_subscription for sales reporting
+                                from handlers.subscription.subscription_handlers import activate_or_extend_subscription
+                                
+                                # Use activate_or_extend_subscription which includes sales report
+                                success, error_msg = await activate_or_extend_subscription(
                                     user_id=user_id,
+                                    telegram_id=user_id,
                                     plan_id=payment_details['plan_id'],
-                                    payment_id=payment_details['payment_id'],
-                                    plan_duration_days=plan_info['days'],
-                                    amount_paid=payment_details['amount'],
-                                    payment_method='zarinpal'
+                                    plan_name=plan_info['name'],
+                                    payment_amount=payment_details['amount'],
+                                    payment_method='zarinpal',
+                                    transaction_id=str(ref_id),
+                                    context=context,
+                                    payment_table_id=payment_details['payment_id']
                                 )
-                                if subscription_id:
+                                
+                                if success:
                                     # Increment discount usage count if a discount was applied
                                     did = context.user_data.get('discount_id') if 'discount_id' in context.user_data else payment_details.get('discount_id')
                                     if did:
                                         DatabaseQueries.increment_discount_usage(did)
                                     await update.message.reply_text(ZARINPAL_PAYMENT_VERIFIED_SUCCESS_AND_SUB_ACTIVATED_MESSAGE_USER.format(ref_id=ref_id, plan_name=plan_info['name']))
                                 else:
-                                    await update.message.reply_text(ZARINPAL_PAYMENT_VERIFIED_SUCCESS_SUB_ACTIVATION_FAILED_MESSAGE_USER.format(ref_id=ref_id))
+                                    await update.message.reply_text(f"❌ خطا در فعال‌سازی اشتراک: {error_msg}")
                             else:
                                 # Plan info not found, should not happen if data integrity is maintained
                                 await update.message.reply_text(ZARINPAL_PAYMENT_VERIFIED_SUCCESS_PLAN_NOT_FOUND_MESSAGE_USER.format(ref_id=ref_id))
