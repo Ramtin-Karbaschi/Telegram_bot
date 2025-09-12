@@ -2394,18 +2394,33 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
                 plan_name = "N/A"
                 logger.warning(f"⚠️ Plan {plan_id} found but unable to extract name")
             
+            # Get correct database user_id
+            user_row = Database.get_user_by_telegram_id(telegram_id)
+            user_db_id = telegram_id  # fallback
+            try:
+                if user_row:
+                    if hasattr(user_row, "keys") and "user_id" in user_row.keys():
+                        user_db_id = user_row["user_id"]
+                    elif hasattr(user_row, "keys") and "id" in user_row.keys():
+                        user_db_id = user_row["id"]
+                    else:
+                        # Try to access as tuple/list
+                        user_db_id = user_row[0] if user_row else telegram_id
+            except Exception as uid_exc:
+                logger.warning(f"Could not derive user_db_id for telegram {telegram_id}: {uid_exc}")
+            
             try:
                 # Log before activation attempt
-                logger.info(f"🚀 Attempting to activate subscription for user {telegram_id}, plan {plan_id} ({plan_name}), amount {amount} USDT")
+                logger.info(f"🚀 Attempting to activate subscription for user_db_id={user_db_id}, telegram_id={telegram_id}, plan {plan_id} ({plan_name}), amount {amount} USDT")
                 
                 # فعال‌سازی اشتراک
                 activation_success, activation_message = await activate_or_extend_subscription(
-                    user_id=telegram_id,
+                    user_id=user_db_id,  # Use database user_id
                     telegram_id=telegram_id,
                     plan_id=plan_id,
                     plan_name=plan_name,
                     payment_amount=amount,
-                    payment_method="crypto_auto",
+                    payment_method="crypto",  # Use "crypto" for proper reporting
                     transaction_id=final_tx,
                     context=context,
                     payment_table_id=payment_record["payment_id"]
