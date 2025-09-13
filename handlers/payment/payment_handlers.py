@@ -2410,8 +2410,12 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
                 logger.warning(f"Could not derive user_db_id for telegram {telegram_id}: {uid_exc}")
             
             try:
+                # Get the correct payment_id for crypto payments
+                crypto_payment_id = payment_record.get("payment_id")
+                logger.info(f"🔑 Crypto payment_id from record: {crypto_payment_id}, Type: {type(crypto_payment_id)}")
+                
                 # Log before activation attempt
-                logger.info(f"🚀 Attempting to activate subscription for user_db_id={user_db_id}, telegram_id={telegram_id}, plan {plan_id} ({plan_name}), amount {amount} USDT")
+                logger.info(f"🚀 Attempting to activate subscription for user_db_id={user_db_id}, telegram_id={telegram_id}, plan {plan_id} ({plan_name}), amount {amount} USDT, payment_table_id={crypto_payment_id}")
                 
                 # فعال‌سازی اشتراک
                 activation_success, activation_message = await activate_or_extend_subscription(
@@ -2423,7 +2427,7 @@ async def payment_verify_crypto_handler(update: Update, context: ContextTypes.DE
                     payment_method="crypto",  # Use "crypto" for proper reporting
                     transaction_id=final_tx,
                     context=context,
-                    payment_table_id=payment_record["payment_id"]
+                    payment_table_id=crypto_payment_id  # Pass the crypto payment ID
                 )
                 
                 # Log activation result

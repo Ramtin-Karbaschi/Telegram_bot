@@ -295,10 +295,20 @@ async def activate_or_extend_subscription(
         logger.info(f"✅ Subscription {subscription_id} created for user {user_id}, now sending sales report...")
 
         # --- Immediate sales report to channel ---
+        # CRITICAL: Always try to send sales report for successful subscriptions
         try:
             # Use SALE_CHANNEL_ID from config (unified channel for all sales reports)
             channel_id = getattr(config, "SALE_CHANNEL_ID", None)
-            logger.info(f"📊 SALES REPORT START: User {telegram_id}, Plan {plan_name}, Method {payment_method}, Amount {payment_amount}")
+            logger.info(f"📊 SALES REPORT START: User {telegram_id}, Plan {plan_name}, Method {payment_method}, Amount {payment_amount}, PaymentTableID: {payment_table_id}, ChannelID: {channel_id}")
+            
+            # Force report for crypto payments even without payment_table_id
+            pm_lower = (payment_method or "").lower()
+            is_crypto_payment = any(x in pm_lower for x in ["crypto", "tether", "usdt"])
+            
+            if not channel_id:
+                logger.error(f"❌ SALE_CHANNEL_ID not configured! Cannot send sales report for {payment_method} payment")
+            elif is_crypto_payment and not payment_table_id:
+                logger.warning(f"⚠️ Crypto payment without payment_table_id, forcing sales report anyway")
                 
             if channel_id:
                 # Get user full name and discount info
@@ -318,10 +328,30 @@ async def activate_or_extend_subscription(
                 
                 # Get discount_id from payment record if available
                 discount_id = None
-                if payment_table_id and payment_table_id > 0:
+                # Check if payment_table_id exists (can be integer for regular payments or string for crypto)
+                logger.info(f"🔍 Checking payment_table_id: {payment_table_id}, Type: {type(payment_table_id)}")
+                
+                # Determine if we have a valid payment_table_id
+                has_valid_payment_id = False
+                if payment_table_id is not None:
+                    if isinstance(payment_table_id, str):
+                        # String IDs are valid for crypto payments
+                        has_valid_payment_id = bool(payment_table_id.strip())
+                        logger.info(f"✅ String payment_id detected (crypto): {payment_table_id}")
+                    elif isinstance(payment_table_id, (int, float)):
+                        # Integer IDs must be positive
+                        has_valid_payment_id = payment_table_id > 0
+                        if not has_valid_payment_id:
+                            logger.warning(f"❌ Invalid integer payment_id (<=0): {payment_table_id}")
+                    else:
+                        logger.warning(f"⚠️ Unknown payment_id type: {type(payment_table_id)}")
+                
+                if has_valid_payment_id:
                     # Check payment method to determine which table to query
                     pm_lower = payment_method.lower() if payment_method else ""
-                    if 'crypto' in pm_lower or 'tether' in pm_lower or 'usdt' in pm_lower:
+                    logger.info(f"📝 Payment method: {payment_method}, Looking up payment record...")
+                    
+                    if 'crypto' in pm_lower or 'tether' in pm_lower or 'usdt' in pm_lower or 'crypto_auto' in pm_lower:
                         # For crypto payments, get from crypto_payments table
                         try:
                             from database.models import Database as DBModel
@@ -365,14 +395,23 @@ async def activate_or_extend_subscription(
                     persian_date = "تاریخ نامشخص"
 
                 # Format amount based on method and set hashtag
-                pm_lower = payment_method.lower()
+                pm_lower = payment_method.lower() if payment_method else ""
                 
-                if pm_lower in ["rial", "zarinpal"]:
+                # CRITICAL FIX: More comprehensive crypto detection
+                crypto_keywords = ["crypto", "tether", "usdt", "تتر", "کریپتو", "crypto_auto"]
+                is_crypto = any(keyword in pm_lower for keyword in crypto_keywords)
+                
+                # Also check if amount looks like USDT (typically < 1000 for crypto vs > 10000 for rial)
+                if not is_crypto and payment_amount and payment_amount < 1000 and payment_amount > 0:
+                    logger.warning(f"⚠️ Detected possible crypto payment by amount: {payment_amount}")
+                    is_crypto = True
+                
+                if pm_lower in ["rial", "zarinpal"] and not is_crypto:
                     # Rial payment
                     price_formatted = f"{int(payment_amount):,} ریال"
                     purchase_tag = "#خرید_نقدی"
                     
-                elif pm_lower in ["crypto", "tether", "usdt"]:
+                elif is_crypto:
                     # Crypto/Tether payment - calculate Rial equivalent
                     price_formatted = f"{payment_amount:.2f} تتر"
                     purchase_tag = "#خرید_تتری"
@@ -415,8 +454,13 @@ async def activate_or_extend_subscription(
                 
                 message_parts.append("━━━━━━━━━━━━━━━")
                 
+                # Add transaction ID for tracking
+                if transaction_id:
+                    message_parts.append(f"🔗 TX: {transaction_id[:20]}..." if len(str(transaction_id)) > 20 else f"🔗 TX: {transaction_id}")
+                
                 # Send nicely formatted, multi-line notification with hashtag on top
-                logger.info(f"DEBUG: Subscription handler - sending sales message to channel {channel_id}")
+                final_message = "\n".join(message_parts)
+                logger.info(f"📤 SENDING SALES REPORT: Channel={channel_id}, User={telegram_id}, Method={payment_method}, Message Length={len(final_message)}")
                 
                 # Try to use context.bot first, fallback to creating new bot instance
                 bot_instance = None
@@ -445,7 +489,7 @@ async def activate_or_extend_subscription(
                     sent_message = await asyncio.wait_for(
                         bot_instance.send_message(
                             chat_id=channel_id,
-                            text="\n".join(message_parts)
+                            text=final_message
                         ),
                         timeout=5.0  # 5 second timeout
                     )
