@@ -245,7 +245,8 @@ CREATE TABLE IF NOT EXISTS discounts (
     end_date TIMESTAMP,
     max_uses INTEGER,
     uses_count INTEGER DEFAULT 0,
-    is_active BOOLEAN DEFAULT 1
+    is_active BOOLEAN DEFAULT 1,
+    single_use_per_user BOOLEAN DEFAULT 0
 );
 '''
 
@@ -256,6 +257,24 @@ CREATE TABLE IF NOT EXISTS plan_discounts (
     PRIMARY KEY (plan_id, discount_id),
     FOREIGN KEY (plan_id) REFERENCES plans(id),
     FOREIGN KEY (discount_id) REFERENCES discounts(id)
+);
+'''
+
+DISCOUNT_USAGE_HISTORY_TABLE = '''
+CREATE TABLE IF NOT EXISTS discount_usage_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    discount_id INTEGER NOT NULL,
+    plan_id INTEGER,
+    payment_id INTEGER,
+    used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    amount_discounted REAL,
+    payment_method TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    FOREIGN KEY (discount_id) REFERENCES discounts(id),
+    FOREIGN KEY (plan_id) REFERENCES plans(id),
+    FOREIGN KEY (payment_id) REFERENCES payments(payment_id),
+    UNIQUE(user_id, discount_id)
 );
 '''
 
@@ -388,6 +407,7 @@ ALL_TABLES = [
     CRYPTO_PAYMENTS_TABLE,
     DISCOUNTS_TABLE,
     PLAN_DISCOUNTS_TABLE,
+    DISCOUNT_USAGE_HISTORY_TABLE,  # new table for tracking discount usage
     USER_ACTIVITY_LOGS_TABLE,
     NOTIFICATIONS_TABLE,
     FREE_PACKAGE_WAITLIST_TABLE,

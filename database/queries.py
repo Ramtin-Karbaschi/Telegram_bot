@@ -3462,20 +3462,18 @@ class DatabaseQueries:
     # --- Discount Management ---
 
     @staticmethod
-    def create_discount(code: str, discount_type: str, value: float, start_date: str = None, end_date: str = None, max_uses: int = None, is_active: bool = True) -> int:
+    def create_discount(code: str, discount_type: str, value: float, start_date: str = None, end_date: str = None, max_uses: int = None, is_active: bool = True, single_use_per_user: bool = False) -> int:
         """Creates a new discount code and returns its ID."""
         db = Database()
         if db.connect():
             try:
-                query = """
-                    INSERT INTO discounts (code, type, value, start_date, end_date, max_uses, is_active)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """
-                params = (code, discount_type, value, start_date, end_date, max_uses, is_active)
+                query = """INSERT INTO discounts 
+                    (code, type, value, start_date, end_date, max_uses, is_active, single_use_per_user) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
+                params = (code, discount_type, value, start_date, end_date, max_uses, is_active, single_use_per_user)
                 if db.execute(query, params):
-                    discount_id = db.cursor.lastrowid
                     db.commit()
-                    return discount_id
+                    return db.cursor.lastrowid
             except sqlite3.Error as e:
                 print(f"SQLite error in create_discount: {e}")
             finally:
@@ -3722,6 +3720,77 @@ class DatabaseQueries:
             finally:
                 db.close()
         return False
+    
+    @staticmethod
+    def has_user_used_discount(user_id: int, discount_id: int) -> bool:
+        """Check if a user has already used a specific discount code."""
+        db = Database()
+        if db.connect():
+            try:
+                query = "SELECT id FROM discount_usage_history WHERE user_id = ? AND discount_id = ?"
+                if db.execute(query, (user_id, discount_id)):
+                    result = db.fetchone()
+                    return result is not None
+            except sqlite3.Error as e:
+                print(f"SQLite error in has_user_used_discount: {e}")
+            finally:
+                db.close()
+        return False
+    
+    @staticmethod
+    def record_discount_usage(user_id: int, discount_id: int, plan_id: int = None, payment_id: int = None, amount_discounted: float = None, payment_method: str = None) -> bool:
+        """Record that a user has used a discount code."""
+        db = Database()
+        if db.connect():
+            try:
+                query = """INSERT INTO discount_usage_history 
+                    (user_id, discount_id, plan_id, payment_id, amount_discounted, payment_method) 
+                    VALUES (?, ?, ?, ?, ?, ?)"""
+                params = (user_id, discount_id, plan_id, payment_id, amount_discounted, payment_method)
+                if db.execute(query, params):
+                    db.commit()
+                    return True
+            except sqlite3.IntegrityError:
+                # This means the user has already used this discount (UNIQUE constraint)
+                print(f"User {user_id} has already used discount {discount_id}")
+                return False
+            except sqlite3.Error as e:
+                print(f"SQLite error in record_discount_usage: {e}")
+            finally:
+                db.close()
+        return False
+    
+    @staticmethod
+    def get_discount_usage_history(discount_id: int = None, user_id: int = None) -> list:
+        """Get discount usage history, optionally filtered by discount_id or user_id."""
+        db = Database()
+        if db.connect():
+            try:
+                query = """SELECT duh.*, u.username, u.full_name, d.code as discount_code, p.name as plan_name
+                    FROM discount_usage_history duh
+                    LEFT JOIN users u ON duh.user_id = u.user_id
+                    LEFT JOIN discounts d ON duh.discount_id = d.id
+                    LEFT JOIN plans p ON duh.plan_id = p.id
+                    WHERE 1=1"""
+                params = []
+                
+                if discount_id:
+                    query += " AND duh.discount_id = ?"
+                    params.append(discount_id)
+                
+                if user_id:
+                    query += " AND duh.user_id = ?"
+                    params.append(user_id)
+                
+                query += " ORDER BY duh.used_at DESC"
+                
+                if db.execute(query, params):
+                    return db.fetchall()
+            except sqlite3.Error as e:
+                print(f"SQLite error in get_discount_usage_history: {e}")
+            finally:
+                db.close()
+        return []
 
     @staticmethod
     def get_all_plans():

@@ -14,7 +14,7 @@ from utils import keyboards, constants
 logger = logging.getLogger(__name__)
 
 # States for conversation
-(CODE, TYPE, VALUE, START_DATE, END_DATE, MAX_USES, PLANS, CONFIRM) = range(8)
+(CODE, TYPE, VALUE, START_DATE, END_DATE, MAX_USES, SINGLE_USE, PLANS, CONFIRM) = range(9)
 
 async def create_discount_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Starts the conversation to create a new discount code."""
@@ -64,7 +64,7 @@ async def get_end_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     return MAX_USES
 
 async def get_max_uses(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Gets max uses and asks for applicable plans."""
+    """Gets max uses and asks about single use per user."""
     if update.message.text.lower() != 'skip':
         try:
             from utils.locale_utils import to_int
@@ -74,8 +74,30 @@ async def get_max_uses(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             await update.message.reply_text("مقدار نامعتبر. لطفا یک عدد صحیح وارد کنید.")
             return MAX_USES
     
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    keyboard = [
+        [InlineKeyboardButton("بله - هر کاربر فقط یکبار", callback_data="single_use_yes")],
+        [InlineKeyboardButton("خیر - کاربران می‌توانند چندبار استفاده کنند", callback_data="single_use_no")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "آیا این کد تخفیف باید فقط یکبار توسط هر کاربر قابل استفاده باشد؟",
+        reply_markup=reply_markup
+    )
+    return SINGLE_USE
+
+async def get_single_use(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Gets the single use preference and asks for applicable plans."""
+    query = update.callback_query
+    await query.answer()
+    
+    context.user_data['discount_info']['single_use_per_user'] = (query.data == "single_use_yes")
+    
     plans = DatabaseQueries.get_active_plans()
-    await update.message.reply_text("این تخفیف برای کدام پلن‌ها اعمال شود؟", reply_markup=keyboards.plans_for_discount_keyboard(plans))
+    await query.edit_message_text(
+        "این تخفیف برای کدام پلن‌ها اعمال شود؟",
+        reply_markup=keyboards.plans_for_discount_keyboard(plans)
+    )
     return PLANS
 
 async def get_plans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -94,7 +116,8 @@ async def get_plans(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # This can be improved to allow multiple selections.
     
     info = context.user_data['discount_info']
-    summary = f"کد: {info['code']}\nنوع: {info['type']}\nمقدار: {info['value']}\nپلن‌ها: {info['plan_ids']}"
+    single_use_text = "بله" if info.get('single_use_per_user', False) else "خیر"
+    summary = f"کد: {info['code']}\nنوع: {info['type']}\nمقدار: {info['value']}\nفقط یکبار برای هر کاربر: {single_use_text}\nپلن‌ها: {info['plan_ids']}"
     await query.edit_message_text(f"خلاصه تخفیف:\n{summary}\n\nآیا تایید می‌کنید؟", reply_markup=keyboards.confirm_discount_keyboard())
     return CONFIRM
 
@@ -107,11 +130,12 @@ async def confirm_creation(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         info = context.user_data['discount_info']
         discount_id = DatabaseQueries.create_discount(
             code=info['code'],
-            type=info['type'],
+            discount_type=info['type'],
             value=info['value'],
             start_date=info.get('start_date'),
             end_date=info.get('end_date'),
-            max_uses=info.get('max_uses')
+            max_uses=info.get('max_uses'),
+            single_use_per_user=info.get('single_use_per_user', False)
         )
         if discount_id:
             DatabaseQueries.link_discount_to_plans(discount_id, info['plan_ids'])
@@ -141,6 +165,7 @@ def get_create_discount_conv_handler() -> ConversationHandler:
             START_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_start_date)],
             END_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_end_date)],
             MAX_USES: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_max_uses)],
+            SINGLE_USE: [CallbackQueryHandler(get_single_use, pattern='^single_use_(yes|no)$')],
             PLANS: [CallbackQueryHandler(get_plans, pattern='^select_plan_for_discount_')],
             CONFIRM: [CallbackQueryHandler(confirm_creation, pattern='^(confirm_discount|cancel_discount)$')]
         },

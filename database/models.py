@@ -305,6 +305,46 @@ class Database:
                 print("🔧 Adding discount_id column to payments…")
                 cursor.execute("ALTER TABLE payments ADD COLUMN discount_id INTEGER")
                 print("✅ discount_id column added")
+            
+            # ---------------- Ensure single_use_per_user column in discounts ----------------
+            cursor.execute("PRAGMA table_info(discounts)")
+            discount_cols = [row[1] for row in cursor.fetchall()]
+            if 'single_use_per_user' not in discount_cols:
+                print("🔧 Adding single_use_per_user column to discounts…")
+                cursor.execute("ALTER TABLE discounts ADD COLUMN single_use_per_user BOOLEAN DEFAULT 0")
+                print("✅ single_use_per_user column added")
+            
+            # ---------------- Ensure discount_usage_history table exists ----------------
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='discount_usage_history'
+            """)
+            
+            if not cursor.fetchone():
+                print("🔧 Creating discount_usage_history table...")
+                cursor.execute("""
+                    CREATE TABLE discount_usage_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        discount_id INTEGER NOT NULL,
+                        plan_id INTEGER,
+                        payment_id INTEGER,
+                        used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        amount_discounted REAL,
+                        payment_method TEXT,
+                        FOREIGN KEY (user_id) REFERENCES users(user_id),
+                        FOREIGN KEY (discount_id) REFERENCES discounts(id),
+                        FOREIGN KEY (plan_id) REFERENCES plans(id),
+                        FOREIGN KEY (payment_id) REFERENCES payments(payment_id),
+                        UNIQUE(user_id, discount_id)
+                    )
+                """)
+                
+                # اضافه کردن ایندکس‌ها
+                cursor.execute("CREATE INDEX idx_discount_usage_user_discount ON discount_usage_history(user_id, discount_id)")
+                cursor.execute("CREATE INDEX idx_discount_usage_used_at ON discount_usage_history(used_at)")
+                
+                print("✅ discount_usage_history table created")
 
             # ---------------- Ensure manual_checks column in crypto_payments ----------------
             cursor.execute("PRAGMA table_info(crypto_payments)")

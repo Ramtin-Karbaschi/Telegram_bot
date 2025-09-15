@@ -1873,6 +1873,9 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
             error_message = "زمان استفاده از این کد تخفیف به پایان رسیده است."
         elif discount_dict['max_uses'] is not None and discount_dict['uses_count'] >= discount_dict['max_uses']:
             error_message = "ظرفیت استفاده از این کد تخفیف به اتمام رسیده است."
+        elif discount_dict.get('single_use_per_user', False) and Database.has_user_used_discount(user_id, discount_dict['id']):
+            # Check if this is a single-use discount and user has already used it
+            error_message = "شما قبلاً از این کد تخفیف استفاده کرده‌اید."
         else:
             # Check if discount is applicable to the selected plan
             applicable_plans = Database.get_plans_for_discount(discount_dict['id'])
@@ -1954,6 +1957,15 @@ async def validate_discount_handler(update: Update, context: ContextTypes.DEFAUL
         if success:
             # Increment discount usage count
             Database.increment_discount_usage(discount_dict['id'])
+            # Record discount usage in history table
+            Database.record_discount_usage(
+                user_id=user_id,
+                discount_id=discount_dict['id'],
+                plan_id=plan_id,
+                payment_id=payment_id,
+                amount_discounted=selected_plan.get('price', 0),  # Full amount was discounted
+                payment_method='discount_100'
+            )
             logger.info(f"User {user_id} activated plan {plan_id} for free using discount code ID {discount_dict['id']}.")
             # پیام لینک‌ها در activate_or_extend_subscription ارسال شده است؛ ارسال دوباره لازم نیست.
             context.user_data.clear()

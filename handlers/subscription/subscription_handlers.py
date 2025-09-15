@@ -451,6 +451,20 @@ async def activate_or_extend_subscription(
                 # Add discount code if used
                 if discount_id:
                     message_parts.insert(-1, f"🎫 کد تخفیف: #{discount_id}")
+                    
+                    # Record discount usage in history table
+                    try:
+                        Database.record_discount_usage(
+                            user_id=user_id,
+                            discount_id=discount_id,
+                            plan_id=plan_id,
+                            payment_id=payment_table_id if isinstance(payment_table_id, int) else None,
+                            amount_discounted=payment_amount,  # Amount discounted from original price
+                            payment_method=payment_method
+                        )
+                        logger.info(f"✅ Recorded discount usage for user {user_id}, discount {discount_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to record discount usage: {e}")
                 
                 message_parts.append("━━━━━━━━━━━━━━━")
                 
