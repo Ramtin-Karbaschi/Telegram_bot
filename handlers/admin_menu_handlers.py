@@ -832,6 +832,10 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             self.maintenance_mode = not self.maintenance_mode
             await query.answer("به‌روزرسانی شد")
             await self._settings_misc_submenu(query)
+        elif data == "settings_channel_kick":
+            # Now handled by separate handler
+            pass
+        # Note: toggle_kick_ is now handled by a separate CallbackQueryHandler
         # ----- Broadcast submenu actions -----
         elif data in (self.BROADCAST_ACTIVE, self.BROADCAST_ALL):
             # Set broadcast target and ask for content
@@ -912,7 +916,7 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
 
     async def _users_submenu(self, query):
         keyboard = [
-            [InlineKeyboardButton("🔗 لینک دعوت", callback_data=self.CREATE_INVITE_LINK), InlineKeyboardButton("➕ افزایش اشتراک", callback_data=self.EXTEND_SUB_CALLBACK)],
+            [InlineKeyboardButton("🔗 ارسال لینک دعوت", callback_data=self.CREATE_INVITE_LINK), InlineKeyboardButton("➕ افزایش اشتراک", callback_data=self.EXTEND_SUB_CALLBACK)],
             [InlineKeyboardButton("➕ افزایش همگانی", callback_data=self.EXTEND_SUB_ALL_CALLBACK)],
             [InlineKeyboardButton("📆 مشاهده اعتبار", callback_data=self.CHECK_SUB_STATUS), InlineKeyboardButton("📋 کاربران فعال", callback_data="users_list_active")],
             [InlineKeyboardButton("🔎 جستجوی کاربر", callback_data="users_search"), InlineKeyboardButton("🛑 مسدود/آزاد کردن", callback_data=self.BAN_UNBAN_USER)],
@@ -1163,6 +1167,7 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             [InlineKeyboardButton("🏅 مدیریت میان‌رده‌ها", callback_data="settings_mid_level"), InlineKeyboardButton("🔘 دکمه‌های تمدید", callback_data="settings_renew_buttons")],
             [InlineKeyboardButton("💸 مدیریت کدهای تخفیف", callback_data="discounts_menu"), InlineKeyboardButton(discount_toggle_text, callback_data="settings_toggle_discount_step")],
             [InlineKeyboardButton(limit_toggle_text, callback_data="settings_toggle_120_day_limit"), InlineKeyboardButton("⚙️ سایر تنظیمات", callback_data="settings_misc")],
+            [InlineKeyboardButton("👮 مدیریت کیک کانال‌ها", callback_data="settings_channel_kick")],
             [InlineKeyboardButton("🎯 دکمه تبلیغاتی", callback_data="promo_category_admin")],
             [InlineKeyboardButton("💾 بکاپ JSON دیتابیس", callback_data=self.BACKUP_CALLBACK), InlineKeyboardButton("📆 بکاپ Excel دیتابیس", callback_data=self.BACKUP_XLSX_CALLBACK)],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
@@ -1307,6 +1312,103 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
+    
+    async def _settings_channel_kick_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Callback handler for channel kick settings menu."""
+        query = update.callback_query
+        await query.answer()
+        await self._settings_channel_kick_submenu(query)
+        
+    async def _settings_channel_kick_submenu(self, query):
+        """Show channel kick management settings."""
+        import config
+        
+        # Get current kick settings from database
+        kick_settings = DatabaseQueries.get_channel_kick_settings()
+        
+        # Get all configured channels
+        channels = config.TELEGRAM_CHANNELS_INFO if hasattr(config, 'TELEGRAM_CHANNELS_INFO') else []
+        
+        if not channels:
+            await query.edit_message_text(
+                "❌ هیچ کانالی در سیستم تنظیم نشده است.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 بازگشت", callback_data=self.SETTINGS_MENU)]
+                ])
+            )
+            return
+        
+        keyboard = []
+        
+        # Add a button for each channel
+        for channel_info in channels:
+            channel_id = channel_info.get('id')
+            channel_title = channel_info.get('title', f'Channel {channel_id}')
+            
+            # Get current status from settings or default to enabled
+            is_enabled = kick_settings.get(channel_id, {}).get('kick_enabled', True)
+            status_icon = "✅" if is_enabled else "❌"
+            
+            button_text = f"{status_icon} {channel_title}"
+            callback_data = f"toggle_kick_{channel_id}"
+            
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+        
+        # Add back button
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data=self.SETTINGS_MENU)])
+        
+        await query.edit_message_text(
+            "👮 *مدیریت کیک کانال‌ها*\n\n"
+            "برای فعال/غیرفعال کردن عملیات کیک در هر کانال، روی آن کلیک کنید.\n\n"
+            "✅ = کیک فعال\n"
+            "❌ = کیک غیرفعال",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    async def _toggle_channel_kick_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Callback handler for toggle kick settings."""
+        query = update.callback_query
+        await query.answer()
+        
+        # Extract channel ID from callback data
+        data = query.data
+        channel_id = int(data.replace('toggle_kick_', ''))
+        
+        # Call the actual toggle method
+        await self._toggle_channel_kick_setting(query, channel_id)
+        
+    async def _toggle_channel_kick_setting(self, query, channel_id: int):
+        """Toggle kick setting for a specific channel."""
+        import config
+        
+        # Get channel info
+        channels = config.TELEGRAM_CHANNELS_INFO if hasattr(config, 'TELEGRAM_CHANNELS_INFO') else []
+        channel_info = next((ch for ch in channels if ch.get('id') == channel_id), None)
+        
+        if not channel_info:
+            await query.answer("کانال یافت نشد", show_alert=True)
+            return
+        
+        channel_title = channel_info.get('title', f'Channel {channel_id}')
+        
+        # Get current status
+        current_status = DatabaseQueries.is_kick_enabled_for_channel(channel_id)
+        new_status = not current_status
+        
+        # Update setting
+        user_id = query.from_user.id
+        success = DatabaseQueries.update_channel_kick_setting(
+            channel_id, channel_title, new_status, user_id
+        )
+        
+        if success:
+            status_text = "فعال" if new_status else "غیرفعال"
+            await query.answer(f"کیک برای {channel_title} {status_text} شد")
+            # Refresh the submenu
+            await self._settings_channel_kick_submenu(query)
+        else:
+            await query.answer("خطا در بروزرسانی تنظیمات", show_alert=True)
 
     async def _broadcast_entry_direct(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Entry point for new broadcast flow without extra submenu."""
@@ -2069,11 +2171,12 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
                     
                     # Add action buttons
                     keyboard = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("➕ افزایش اشتراک", callback_data=f"extend_sub_{user_id}"),
-                         InlineKeyboardButton("🔗 لینک دعوت", callback_data=f"create_invite_{user_id}")],
-                        [InlineKeyboardButton("🛑 مسدود/آزاد کردن", callback_data=f"ban_toggle_{user_id}"),
+                        [InlineKeyboardButton("🎁 اعطای اشتراک", callback_data=f"grant_sub_{user_id}"),
+                         InlineKeyboardButton("➕ افزایش اشتراک", callback_data=f"extend_sub_{user_id}")],
+                        [InlineKeyboardButton("🔗 ارسال لینک دعوت", callback_data=f"create_invite_{user_id}"),
                          InlineKeyboardButton("📋 تاریخچه خرید", callback_data=f"purchase_history_{user_id}")],
-                        [InlineKeyboardButton("🔙 بازگشت", callback_data="admin_users_menu")]
+                        [InlineKeyboardButton("🛑 مسدود/آزاد کردن", callback_data=f"ban_toggle_{user_id}"),
+                         InlineKeyboardButton("🔙 بازگشت", callback_data="admin_users_menu")]
                     ])
                     
                     await update.message.reply_text(
@@ -2418,12 +2521,27 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
 
     # ---------- Public helper ----------
     # ---------- Invite Link Conversation Handlers ----------
+    # States for invite link conversation
+    GET_INVITE_LINK_USER_ID = "get_invite_user_id"
+    SELECT_INVITE_CHANNELS = "select_invite_channels"
 
     @admin_only
     async def start_invite_link_creation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Asks the admin for the user_id to create an invite link for."""
         query = update.callback_query
         await query.answer()
+        
+        # Check if called with user_id in callback data
+        user_id = None
+        if query and query.data.startswith('create_invite_'):
+            try:
+                user_id = int(query.data.split('_')[-1])
+                context.user_data['invite_target_user_id'] = user_id
+                # Skip to channel selection
+                return await self.show_channel_selection_for_invite(update, context)
+            except (ValueError, IndexError):
+                pass
+        
         await query.edit_message_text(
             "🔗 لطفاً آیدی عددی کاربری که می‌خواهید برای او لینک دعوت بسازید را ارسال کنید.\n\n"
             "برای لغو /cancel را بزنید."
@@ -2431,6 +2549,259 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         return self.GET_INVITE_LINK_USER_ID
 
     @admin_only
+    async def receive_invite_user_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Receives user_id and shows channel selection."""
+        target_user_id_str = update.message.text.strip()
+
+        if not target_user_id_str.isdigit():
+            await update.message.reply_text("❌ آیدی کاربر باید یک عدد باشد. لطفاً دوباره تلاش کنید یا /cancel را بزنید.")
+            return self.GET_INVITE_LINK_USER_ID
+
+        target_user_id = int(target_user_id_str)
+        context.user_data['invite_target_user_id'] = target_user_id
+        
+        # Show channel selection
+        return await self.show_channel_selection_for_invite(update, context)
+    
+    async def show_channel_selection_for_invite(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show channel selection interface for invite links"""
+        user_id = context.user_data.get('invite_target_user_id')
+        
+        # Get user info for display
+        user_info = self.db_queries.get_user_details(user_id)
+        if user_info:
+            user_display = user_info.get('full_name') or user_info.get('username') or f"ID: {user_id}"
+        else:
+            user_display = f"ID: {user_id}"
+        
+        # Get all configured channels
+        channels = config.TELEGRAM_CHANNELS_INFO if hasattr(config, 'TELEGRAM_CHANNELS_INFO') else []
+        
+        if not channels:
+            message = "❌ هیچ کانالی در سیستم تعریف نشده است."
+            if update.callback_query:
+                await update.callback_query.edit_message_text(message)
+            else:
+                await update.message.reply_text(message)
+            return ConversationHandler.END
+        
+        # Initialize selected channels if not exists
+        if 'selected_channels' not in context.user_data:
+            context.user_data['selected_channels'] = []
+        
+        selected = context.user_data['selected_channels']
+        
+        # Build keyboard with channels
+        keyboard = []
+        message_lines = [
+            "📋 انتخاب کانال‌ها برای ارسال لینک دعوت",
+            f"👤 کاربر: {user_display}",
+            "━━━━━━━━━━━━━━━━━━━━━",
+            "کانال‌های مورد نظر را انتخاب کنید:",
+            ""
+        ]
+        
+        for channel in channels:
+            channel_id = channel.get('id')
+            channel_title = channel.get('title', f'Channel {channel_id}')
+            
+            # Check if selected
+            is_selected = channel_id in selected
+            checkbox = "☑️" if is_selected else "⬜"
+            
+            # Create button
+            button_text = f"{checkbox} {channel_title}"
+            callback_data = f"inv_toggle_ch_{channel_id}"
+            
+            keyboard.append([
+                InlineKeyboardButton(button_text, callback_data=callback_data)
+            ])
+            
+            # Add to message
+            status = "✅" if is_selected else "⭕"
+            message_lines.append(f"  {status} {channel_title}")
+        
+        # Add action buttons
+        keyboard.append([
+            InlineKeyboardButton("🚀 ارسال همه لینک‌ها", callback_data="inv_send_all"),
+            InlineKeyboardButton("✅ ارسال انتخابی", callback_data="inv_send_selected")
+        ])
+        keyboard.append([
+            InlineKeyboardButton("❌ انصراف", callback_data="inv_cancel")
+        ])
+        
+        # Count selected
+        if selected:
+            message_lines.append("")
+            message_lines.append(f"📊 تعداد انتخاب شده: {len(selected)} از {len(channels)}")
+        
+        # Send or update message
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        message_text = "\n".join(message_lines)
+        
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                text=message_text,
+                reply_markup=reply_markup
+            )
+        else:
+            await update.message.reply_text(
+                text=message_text,
+                reply_markup=reply_markup
+            )
+        
+        return self.SELECT_INVITE_CHANNELS
+    
+    async def handle_channel_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle channel selection callbacks"""
+        query = update.callback_query
+        await query.answer()
+        
+        data = query.data
+        
+        if data == "inv_cancel":
+            await query.edit_message_text("❌ عملیات لغو شد.")
+            context.user_data.pop('invite_target_user_id', None)
+            context.user_data.pop('selected_channels', None)
+            return ConversationHandler.END
+        
+        if data == "inv_send_all":
+            # Send links for all channels
+            user_id = context.user_data.get('invite_target_user_id')
+            return await self.send_invite_links_for_channels(update, context, send_all=True)
+        
+        if data == "inv_send_selected":
+            # Check if any channel selected
+            selected = context.user_data.get('selected_channels', [])
+            if not selected:
+                await query.answer("⚠️ لطفاً حداقل یک کانال را انتخاب کنید", show_alert=True)
+                return self.SELECT_INVITE_CHANNELS
+            
+            return await self.send_invite_links_for_channels(update, context, send_all=False)
+        
+        # Toggle specific channel
+        if data.startswith('inv_toggle_ch_'):
+            try:
+                channel_id = int(data.replace('inv_toggle_ch_', ''))
+                
+                selected = context.user_data.get('selected_channels', [])
+                if channel_id in selected:
+                    selected.remove(channel_id)
+                else:
+                    selected.append(channel_id)
+                
+                context.user_data['selected_channels'] = selected
+                
+                # Refresh display
+                return await self.show_channel_selection_for_invite(update, context)
+                
+            except (ValueError, IndexError):
+                await query.answer("❌ خطا در پردازش انتخاب")
+                return self.SELECT_INVITE_CHANNELS
+        
+        return self.SELECT_INVITE_CHANNELS
+    
+    async def send_invite_links_for_channels(self, update: Update, context: ContextTypes.DEFAULT_TYPE, send_all=False):
+        """Send invite links for selected or all channels"""
+        query = update.callback_query
+        await query.answer()
+        
+        user_id = context.user_data.get('invite_target_user_id')
+        
+        # Get channels to send
+        if send_all:
+            channels = config.TELEGRAM_CHANNELS_INFO if hasattr(config, 'TELEGRAM_CHANNELS_INFO') else []
+            message = f"⏳ در حال ایجاد و ارسال لینک برای همه {len(channels)} کانال..."
+        else:
+            selected_ids = context.user_data.get('selected_channels', [])
+            all_channels = config.TELEGRAM_CHANNELS_INFO if hasattr(config, 'TELEGRAM_CHANNELS_INFO') else []
+            channels = [ch for ch in all_channels if ch['id'] in selected_ids]
+            message = f"⏳ در حال ایجاد و ارسال {len(channels)} لینک انتخاب شده..."
+        
+        await query.edit_message_text(message)
+        
+        try:
+            # Generate links
+            links = await InviteLinkManager.ensure_one_time_links(
+                context.bot, 
+                user_id,
+                channels_info=channels if not send_all else None
+            )
+            
+            if not links:
+                await query.edit_message_text(
+                    "❌ خطا در ایجاد لینک‌های دعوت.\n"
+                    "ممکن است ربات دسترسی ادمین در کانال‌ها نداشته باشد."
+                )
+                return ConversationHandler.END
+            
+            # Prepare message with channel names and links
+            message_parts = ["🎉 لینک‌های دعوت شما آماده شد:\n"]
+            for channel, link in zip(channels, links):
+                message_parts.append(f"\n📍 {channel['title']}:\n{link}")
+            
+            invite_message = "\n".join(message_parts)
+            
+            # Send to user
+            try:
+                # Determine which bot to use
+                if self.main_bot_app:
+                    if hasattr(self.main_bot_app, "application") and hasattr(self.main_bot_app.application, "bot"):
+                        bot_to_use = self.main_bot_app.application.bot
+                    elif hasattr(self.main_bot_app, "bot"):
+                        bot_to_use = self.main_bot_app.bot
+                    else:
+                        bot_to_use = context.bot
+                else:
+                    bot_to_use = context.bot
+                
+                # Send message (without parse_mode to avoid entity errors)
+                await bot_to_use.send_message(
+                    chat_id=user_id,
+                    text=invite_message,
+                    parse_mode=None,
+                    disable_web_page_preview=True
+                )
+                
+                # Success message to admin
+                await query.edit_message_text(
+                    f"✅ {len(links)} لینک دعوت با موفقیت برای کاربر {user_id} ارسال شد."
+                )
+                
+            except Forbidden as e:
+                error_str = str(e).lower()
+                if "bot was blocked by the user" in error_str:
+                    error_msg = (
+                        f"🚫 کاربر بات را بلاک کرده\n\n"
+                        "لینک‌های ایجاد شده:\n"
+                    )
+                else:
+                    error_msg = f"🚫 خطای دسترسی: {str(e)}\n\nلینک‌ها:\n"
+                
+                for channel, link in zip(channels, links):
+                    error_msg += f"\n{channel['title']}:\n{link}\n"
+                
+                await query.edit_message_text(error_msg)
+                
+            except Exception as e:
+                logger.error(f"Error sending invite links: {e}")
+                error_msg = f"❌ خطا: {str(e)}\n\nلینک‌ها:\n"
+                
+                for channel, link in zip(channels, links):
+                    error_msg += f"\n{channel['title']}:\n{link}\n"
+                
+                await query.edit_message_text(error_msg)
+                
+        except Exception as e:
+            logger.error(f"Error creating invite links: {e}")
+            await query.edit_message_text(f"❌ خطا در ایجاد لینک‌ها: {str(e)}")
+        
+        # Clear context
+        context.user_data.pop('invite_target_user_id', None)
+        context.user_data.pop('selected_channels', None)
+        
+        return ConversationHandler.END
+
     async def create_and_send_invite_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Receives user_id, creates links, sends them, and confirms."""
         admin_user = update.effective_user
@@ -3021,17 +3392,17 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             CommandHandler("admin", self.show_admin_menu),
         ]
 
-        # Conversation handler for creating invite links
-        invite_link_conv_handler = ConversationHandler(
-            entry_points=[CallbackQueryHandler(self.start_invite_link_creation, pattern=f"^{self.CREATE_INVITE_LINK}$")],
-            states={
-                self.GET_INVITE_LINK_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.create_and_send_invite_link)],
-            },
-            fallbacks=[CommandHandler("cancel", self.cancel_invite_link_creation)],
-            per_user=True,
-            per_chat=True,
-        )
-        handlers.append(invite_link_conv_handler)
+        # # Conversation handler for creating invite links
+        # invite_link_conv_handler = ConversationHandler(
+        # entry_points=[CallbackQueryHandler(self.start_invite_link_creation, pattern=f"^{self.CREATE_INVITE_LINK}$")],
+        # states={
+        # self.GET_INVITE_LINK_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.create_and_send_invite_link)],
+        # },
+        # fallbacks=[CommandHandler("cancel", self.cancel_invite_link_creation)],
+        # per_user=True,
+        # per_chat=True,
+        # )
+        # handlers.append(invite_link_conv_handler)
 
         # Conversation handler for extending subscription duration
         extend_sub_conv_handler = ConversationHandler(
@@ -3122,17 +3493,17 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             CommandHandler("admin", self.show_admin_menu),
         ]
 
-        # Conversation handler for creating invite links
-        invite_link_conv_handler = ConversationHandler(
-            entry_points=[CallbackQueryHandler(self.start_invite_link_creation, pattern=f"^{self.CREATE_INVITE_LINK}$")],
-            states={
-                self.GET_INVITE_LINK_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.create_and_send_invite_link)],
-            },
-            fallbacks=[CommandHandler("cancel", self.cancel_invite_link_creation)],
-            per_user=True,
-            per_chat=True,
-        )
-        handlers.append(invite_link_conv_handler)
+        # # Conversation handler for creating invite links
+        # invite_link_conv_handler = ConversationHandler(
+        # entry_points=[CallbackQueryHandler(self.start_invite_link_creation, pattern=f"^{self.CREATE_INVITE_LINK}$")],
+        # states={
+        # self.GET_INVITE_LINK_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.create_and_send_invite_link)],
+        # },
+        # fallbacks=[CommandHandler("cancel", self.cancel_invite_link_creation)],
+        # per_user=True,
+        # per_chat=True,
+        # )
+        # handlers.append(invite_link_conv_handler)
 
         # Conversation handler for extending subscription duration
         extend_sub_conv_handler = ConversationHandler(
@@ -3194,13 +3565,17 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         # ---- Support user management handlers ----
         handlers.extend(self.support_manager.get_handlers())
         
+        # ---- Channel kick settings handlers ----
+        handlers.append(CallbackQueryHandler(self._settings_channel_kick_callback, pattern='^settings_channel_kick$'))
+        handlers.append(CallbackQueryHandler(self._toggle_channel_kick_callback, pattern=r'^toggle_kick_-?\d+$'))
+        
         # ---- Export subscribers handlers ----
         handlers.append(CallbackQueryHandler(self.export_handler.entry, pattern=f'^{self.EXPORT_SUBS_MENU}$'))
         handlers.append(CallbackQueryHandler(self.export_handler.handle_product, pattern=r'^exp_prod_\d+$'))
 
         # This is the main handler for all other admin menu callbacks
         # Note: The invite link and ban/unban callbacks are handled by their respective ConversationHandlers.
-        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|bc_cat_|bc_plan_|bc_chan_|audience_|broadcast_continue$|broadcast_cancel$|settings_(?!mid_level)|products_|discounts_|view_discount_|edit_discount_|discount_edit_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_|crypto_panel|crypto_|product_sales_)"))
+        handlers.append(CallbackQueryHandler(self.admin_menu_callback, pattern="^(admin_|users_|tickets_|payments_|broadcast_|bc_cat_|bc_plan_|bc_chan_|audience_|broadcast_continue$|broadcast_cancel$|settings_(?!mid_level|channel_kick)|products_|discounts_|view_discount_|edit_discount_|discount_edit_|toggle_discount_|delete_discount_|confirm_delete_discount_|view_plan_|toggle_plan_|delete_plan_|confirm_delete_plan_|planpick_|crypto_panel|crypto_|product_sales_)"))
 
         # ---- Promotional category handlers ----
         from handlers.admin_promotional_category import (

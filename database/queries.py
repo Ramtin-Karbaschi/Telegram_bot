@@ -1221,6 +1221,47 @@ class DatabaseQueries:
             except sqlite3.Error as col_err:
                 logging.error(f"Error ensuring usdt_amount_requested column: {col_err}")
 
+            # Add subscription management improvements
+            try:
+                # Add category_id to subscriptions table if not exists
+                self.db.execute("PRAGMA table_info(subscriptions)")
+                sub_cols = [c['name'] for c in self.db.fetchall()]
+                
+                if 'category_id' not in sub_cols:
+                    logging.info("Adding category_id column to subscriptions table...")
+                    self.db.execute("ALTER TABLE subscriptions ADD COLUMN category_id INTEGER REFERENCES categories(id)")
+                    logging.info("Successfully added category_id column")
+                
+                # Create subscription_history table
+                self.db.execute("""
+                    CREATE TABLE IF NOT EXISTS subscription_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        subscription_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        plan_id INTEGER NOT NULL,
+                        category_id INTEGER,
+                        action TEXT NOT NULL,
+                        old_end_date TEXT,
+                        new_end_date TEXT,
+                        days_added INTEGER,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        created_by INTEGER,
+                        notes TEXT,
+                        FOREIGN KEY (subscription_id) REFERENCES subscriptions(id),
+                        FOREIGN KEY (user_id) REFERENCES users(user_id),
+                        FOREIGN KEY (plan_id) REFERENCES plans(id),
+                        FOREIGN KEY (category_id) REFERENCES categories(id)
+                    )
+                """)
+                
+                # Create indexes for better performance
+                self.db.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_category ON subscriptions(user_id, category_id, status)")
+                self.db.execute("CREATE INDEX IF NOT EXISTS idx_subscription_history_user ON subscription_history(user_id, created_at DESC)")
+                
+                logging.info("Subscription management migrations completed")
+            except sqlite3.Error as e:
+                logging.error(f"Error in subscription management migration: {e}")
+            
             self.db.commit()
             return self.db.create_tables(ALL_TABLES)
         return False
@@ -4395,7 +4436,9 @@ class DatabaseQueries:
     
     @staticmethod
     def user_has_access_to_channel(user_id: int, channel_id: int) -> bool:
-        """Check if a user has access to a specific channel based on their active subscriptions.
+        """
+        Check if a user has access to a specific channel through their purchased products.
+        Uses the new SubscriptionManager for better category-based checking.
         
         Args:
             user_id: The user ID to check
@@ -4404,6 +4447,15 @@ class DatabaseQueries:
         Returns:
             bool: True if user has access, False otherwise
         """
+        try:
+            # Use the new SubscriptionManager for more accurate checking
+            from database.subscription_manager import SubscriptionManager
+            has_access, category_name = SubscriptionManager.check_user_access_to_channel(user_id, channel_id)
+            return has_access
+        except ImportError:
+            # Fallback to old method if SubscriptionManager not available
+            pass
+        
         db = Database()
         if not db.connect():
             return False
@@ -4562,5 +4614,128 @@ class DatabaseQueries:
         except Exception as e:
             logging.error(f"Error getting users with channel access: {e}")
             return []
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_channel_kick_settings():
+        """Get kick settings for all channels."""
+        db = Database()
+        if not db.connect():
+            return {}
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT channel_id, channel_title, kick_enabled, last_modified, modified_by
+                FROM channel_kick_settings
+            """)
+            rows = cursor.fetchall()
+            
+            settings = {}
+            for row in rows:
+                settings[row[0]] = {
+                    'channel_id': row[0],
+                    'channel_title': row[1],
+                    'kick_enabled': bool(row[2]),
+                    'last_modified': row[3],
+                    'modified_by': row[4]
+                }
+            return settings
+            
+        except Exception as e:
+            logging.error(f"Error getting channel kick settings: {e}")
+            return {}
+        finally:
+            db.close()
+    
+    @staticmethod
+    def is_kick_enabled_for_channel(channel_id: int) -> bool:
+        """Check if kick is enabled for a specific channel."""
+        db = Database()
+        if not db.connect():
+            return True  # Default to enabled if can't check
+        
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT kick_enabled FROM channel_kick_settings 
+                WHERE channel_id = ?
+            """, (channel_id,))
+            row = cursor.fetchone()
+            
+            if row:
+                return bool(row[0])
+            else:
+                # If no setting exists, default to enabled
+                return True
+                
+        except Exception as e:
+            logging.error(f"Error checking kick status for channel {channel_id}: {e}")
+            return True  # Default to enabled on error
+        finally:
+            db.close()
+    
+    @staticmethod
+    def update_channel_kick_setting(channel_id: int, channel_title: str, enabled: bool, modified_by: int):
+        """Update or insert kick setting for a channel."""
+        db = Database()
+        if not db.connect():
+            return False
+        
+        try:
+            cursor = db.conn.cursor()
+            now = datetime.now().isoformat()
+            
+            # Use INSERT OR REPLACE to handle both insert and update
+            cursor.execute("""
+                INSERT OR REPLACE INTO channel_kick_settings 
+                (channel_id, channel_title, kick_enabled, last_modified, modified_by)
+                VALUES (?, ?, ?, ?, ?)
+            """, (channel_id, channel_title, 1 if enabled else 0, now, modified_by))
+            
+            db.conn.commit()
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error updating kick setting for channel {channel_id}: {e}")
+            return False
+        finally:
+            db.close()
+    
+    @staticmethod
+    def initialize_channel_kick_settings(channels_info):
+        """Initialize kick settings for all configured channels."""
+        db = Database()
+        if not db.connect():
+            return False
+        
+        try:
+            cursor = db.conn.cursor()
+            
+            for channel_info in channels_info:
+                channel_id = channel_info.get('id')
+                channel_title = channel_info.get('title', f"Channel {channel_id}")
+                
+                # Check if setting already exists
+                cursor.execute("""
+                    SELECT channel_id FROM channel_kick_settings 
+                    WHERE channel_id = ?
+                """, (channel_id,))
+                
+                if not cursor.fetchone():
+                    # Insert default setting (enabled)
+                    cursor.execute("""
+                        INSERT INTO channel_kick_settings 
+                        (channel_id, channel_title, kick_enabled, last_modified)
+                        VALUES (?, ?, 1, datetime('now'))
+                    """, (channel_id, channel_title))
+            
+            db.conn.commit()
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error initializing channel kick settings: {e}")
+            return False
         finally:
             db.close()

@@ -223,6 +223,17 @@ CREATE TABLE IF NOT EXISTS mid_level_users (
 );
 '''
 
+# Channel kick settings table
+CHANNEL_KICK_SETTINGS_TABLE = '''
+CREATE TABLE IF NOT EXISTS channel_kick_settings (
+    channel_id BIGINT PRIMARY KEY,
+    channel_title TEXT,
+    kick_enabled INTEGER DEFAULT 1,  -- 1 = enabled (default), 0 = disabled
+    last_modified TEXT DEFAULT CURRENT_TIMESTAMP,
+    modified_by INTEGER  -- telegram_id of admin who made the change
+);
+'''
+
 # Wait-list for Free Package
 FREE_PACKAGE_WAITLIST_TABLE = '''
 CREATE TABLE IF NOT EXISTS free_package_waitlist (
@@ -420,7 +431,8 @@ ALL_TABLES = [
     USER_SURVEY_COMPLETIONS_TABLE,
     PAYMENT_STATUS_HISTORY_TABLE,
     SUPPORT_USERS_TABLE,
-    MID_LEVEL_USERS_TABLE
+    MID_LEVEL_USERS_TABLE,
+    CHANNEL_KICK_SETTINGS_TABLE
 ]
 
 
