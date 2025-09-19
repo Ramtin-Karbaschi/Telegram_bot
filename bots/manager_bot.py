@@ -21,6 +21,7 @@ from telegram.ext import (
     CallbackQueryHandler, ConversationHandler, TypeHandler, ChatMemberHandler, # Added ChatMemberHandler
     ApplicationHandlerStop
 )
+from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, Forbidden
 import html
@@ -178,7 +179,19 @@ class ManagerBot:
         """Initialize the bot"""
         self.logger = logging.getLogger(__name__)
         self.admin_config = admin_users_config  # Store admin configuration from parameters
-        builder = Application.builder().token(manager_bot_token)  # Use token from parameters
+        
+        # Configure HTTPXRequest with proper timeouts for Iranian network conditions
+        request = HTTPXRequest(
+            connect_timeout=30.0,  # Increased from default 5.0
+            read_timeout=30.0,     # Increased from default 5.0  
+            write_timeout=30.0,    # Increased from default 5.0
+            pool_timeout=30.0,     # Increased from default 1.0
+        )
+        
+        # Build application with optimized request settings
+        builder = Application.builder().token(manager_bot_token)
+        builder = builder.request(request)  # Use custom request configuration
+        builder = builder.get_updates_request(request)  # Use same config for polling
         self.application = builder.build()
         # Register banned user guard at highest priority
         self.application.add_handler(TypeHandler(Update, banned_guard), group=-100)
@@ -206,11 +219,27 @@ class ManagerBot:
         self.db_queries.init_database()
         self.main_bot_app = main_bot_app  # Store main_bot_app if provided
         
+        # Initialize channel kick settings
+        if config.TELEGRAM_CHANNELS_INFO:
+            DatabaseQueries.initialize_channel_kick_settings(config.TELEGRAM_CHANNELS_INFO)
+            self.logger.info("Channel kick settings initialized.")
+        
         # Initialize handlers
         self.ticket_handler = AdminTicketHandler()
         self.category_handler = AdminCategoryHandler(admin_config=self.admin_config)
         self.product_handler = AdminProductHandler(self.db_queries, admin_config=self.admin_config)
         self.menu_handler = AdminMenuHandler(self.db_queries, InviteLinkManager, admin_config=self.admin_config, main_bot_app=self.main_bot_app)
+        
+        # Initialize grant subscription handler
+        from handlers.admin.grant_subscription_handler import GrantSubscriptionHandler
+        self.grant_subscription_handler = GrantSubscriptionHandler()
+        
+        # Initialize unified invite handler (replaces selective invite handler)
+        from handlers.admin.unified_invite_handler import UnifiedInviteHandler
+        self.unified_invite_handler = UnifiedInviteHandler(
+            db_queries=self.db_queries,
+            main_bot_app=self.main_bot_app
+        )
         
         # Map reply keyboard buttons to their handler methods
         self.admin_buttons_map = self.menu_handler.admin_buttons_map
@@ -237,8 +266,14 @@ class ManagerBot:
         self.application.add_handler(CallbackQueryHandler(
             self.product_handler._handle_survey_type_selection, pattern="^survey_type_"
         ))
-
-
+        
+        # Add grant subscription handler
+        grant_sub_conv = self.grant_subscription_handler.get_conversation_handler()
+        self.application.add_handler(grant_sub_conv)
+        
+        # Add unified invite handler (with higher priority than regular menu handlers)
+        unified_invite_conv = self.unified_invite_handler.get_conversation_handler()
+        self.application.add_handler(unified_invite_conv, group=-2)
 
         # Setup task handlers
         self.setup_tasks()
@@ -402,25 +437,33 @@ class ManagerBot:
                 # as this can be exploited by unauthorized users
 
             if not has_channel_access:
-                self.logger.warning(
-                    f"User {user.id} does NOT have access to channel {chat.id} ({chat.title}) based on their purchased products. Kicking."
-                )
-                try:
-                    await context.bot.ban_chat_member(chat_id=chat.id, user_id=user.id)
-                    await context.bot.unban_chat_member(chat_id=chat.id, user_id=user.id)
-                    self.logger.info(
-                        f"Successfully kicked user {user.id} from {chat.id} - no product access to this channel")
-                    # Send notification to user
+                # Check if kick is enabled for this channel
+                kick_enabled = DatabaseQueries.is_kick_enabled_for_channel(chat.id)
+                
+                if kick_enabled:
+                    self.logger.warning(
+                        f"User {user.id} does NOT have access to channel {chat.id} ({chat.title}) based on their purchased products. Kicking."
+                    )
                     try:
-                        await context.bot.send_message(
-                            chat_id=user.id,
-                            text=f"⚠️ شما به کانال {chat.title} دسترسی ندارید. لطفاً محصول مربوط به این کانال را خریداری کنید."
-                        )
-                    except:
-                        pass
-                except Exception as e:
-                    self.logger.error(
-                        f"Failed to kick user {user.id} from {chat.id}: {e}")
+                        await context.bot.ban_chat_member(chat_id=chat.id, user_id=user.id)
+                        await context.bot.unban_chat_member(chat_id=chat.id, user_id=user.id)
+                        self.logger.info(
+                            f"Successfully kicked user {user.id} from {chat.id} - no product access to this channel")
+                        # Send notification to user
+                        try:
+                            await context.bot.send_message(
+                                chat_id=user.id,
+                                text=f"⚠️ شما به کانال {chat.title} دسترسی ندارید. لطفاً محصول مربوط به این کانال را خریداری کنید."
+                            )
+                        except:
+                            pass
+                    except Exception as e:
+                        self.logger.error(
+                            f"Failed to kick user {user.id} from {chat.id}: {e}")
+                else:
+                    self.logger.info(
+                        f"User {user.id} does NOT have access to channel {chat.id} ({chat.title}), but kick is disabled for this channel. Allowing to stay."
+                    )
             else:
                 self.logger.info(
                     f"User {user.id} has valid product access to channel {chat.id} – allowed to stay.")
@@ -930,6 +973,13 @@ class ManagerBot:
                         self.logger.error(f"Forbidden to get chat member {user_id_to_check} for channel '{current_channel_title}': {e}.")
                     except Exception as e:
                         self.logger.error(f"Unexpected error checking member {user_id_to_check} in channel '{current_channel_title}': {e}", exc_info=True)
+                
+                # Check if kick is enabled for this channel
+                kick_enabled = DatabaseQueries.is_kick_enabled_for_channel(current_channel_id)
+                
+                if not kick_enabled:
+                    self.logger.info(f"Kick is disabled for channel '{current_channel_title}' (ID: {current_channel_id}). Skipping kick validation for this channel.")
+                    continue
                 
                 # Part 2: Identify and kick users in channel without product access to THIS channel
                 # Get all users with any subscription (active or not) to check against this specific channel
