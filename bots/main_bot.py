@@ -475,11 +475,22 @@ class MainBot:
                 # Create a persistence object
         persistence = PicklePersistence(filepath="database/data/bot_persistence.pkl")
         
-        # Build application with default settings (avoiding HTTPXRequest proxy issues)
+        # Configure HTTPXRequest with proper timeouts for Iranian network conditions
+        request = HTTPXRequest(
+            connect_timeout=30.0,  # Increased from default 5.0
+            read_timeout=30.0,     # Increased from default 5.0
+            write_timeout=30.0,    # Increased from default 5.0
+            pool_timeout=30.0,     # Increased from default 1.0
+            # connection_pool_size=16,  # Increased for better concurrency
+        )
+        
+        # Build application with optimized request settings
         self.application = (
             Application.builder()
             .token(config.MAIN_BOT_TOKEN)
             .persistence(persistence)
+            .request(request)  # Use custom request configuration
+            .get_updates_request(request)  # Use same config for polling
             .build()
         )
         # Explicitly set allowed_updates to ensure the bot subscribes to the desired update types and to
