@@ -1244,6 +1244,14 @@ class ManagerBot:
         # Register category management conversation handler
         application.add_handler(self.category_handler.get_conv_handler())
 
+        # Register SpotPlayer admin handlers
+        try:
+            from handlers.spotplayer.spotplayer_admin_menu import register_spotplayer_admin_handlers
+            register_spotplayer_admin_handlers(application, self.db_queries)
+            self.logger.info("SpotPlayer admin handlers registered successfully")
+        except Exception as e:
+            self.logger.error(f"Failed to register SpotPlayer admin handlers: {e}")
+
         # Register ticket management conversation handler
         application.add_handler(self.ticket_handler.get_ticket_conversation_handler())
         # Capture admin replies (ForceReply) for edited/manual ticket answers

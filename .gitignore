@@ -3,15 +3,16 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Environments
+# Environment variables
 .env
-.venv
-env/
-venv/
-ENV/
+.env.local
+.env.production
 
 # Database
 database/data/*.db
+database/data/bot_persistence.pkl
+*.db-shm
+*.db-wal
 # migrate.py
 *.json
 *.docx
@@ -47,3 +48,17 @@ bot_activity.log
 .DS_Store
 Thumbs.db
 
+# Test files and scripts
+test_scripts/
+test*.py
+check_*.py
+add_*.py
+
+# Backup files
+*.backup
+*.bak
+
+# Temporary files
+tmp/
+temp/
+*.tmp

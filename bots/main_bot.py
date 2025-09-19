@@ -708,6 +708,22 @@ class MainBot:
         survey_conv_handler = user_survey_handler.get_survey_conversation_handler()
         self.application.add_handler(survey_conv_handler)
         
+        # SpotPlayer handlers (MUST be registered BEFORE payment handler)
+        from handlers.spotplayer.spotplayer_user_handler import get_spotplayer_conversation_handler, SpotPlayerUserHandler
+        
+        # First, register the main menu callback handler (highest priority)
+        sp_handler = SpotPlayerUserHandler(self.db_queries)
+        self.application.add_handler(
+            CallbackQueryHandler(sp_handler.show_spotplayer_menu, pattern="^products_menu_1000$"),
+            group=-1  # Even higher priority than payment handler
+        )
+        
+        # Then register other SpotPlayer handlers
+        spotplayer_handlers = get_spotplayer_conversation_handler(self.db_queries)
+        for handler in spotplayer_handlers:
+            self.application.add_handler(handler, group=0)
+        self.logger.info("SpotPlayer user handlers registered with high priority")
+        
         # Command handlers
         self.application.add_handler(CommandHandler("start", start_handler))
         self.application.add_handler(CommandHandler("help", help_handler))

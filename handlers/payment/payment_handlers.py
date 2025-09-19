@@ -269,6 +269,13 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
             possible_id = query.data.split("_")[-1]
             if possible_id.isdigit():
                 category_id = int(possible_id)
+                
+                # Special handling for SpotPlayer category (ID: 1000)
+                if category_id == 1000:
+                    # Don't process this here, let SpotPlayer handler take over
+                    logger.info(f"SpotPlayer category detected (ID: {category_id}), skipping payment handler")
+                    return  # Simply return without processing
+                    
         logger.info("Extracted category_id: %s from callback_data: '%s'", category_id, query.data)
         if category_id is None:
             # No valid category id found; ignore and exit handler gracefully

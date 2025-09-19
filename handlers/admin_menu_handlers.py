@@ -943,10 +943,22 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         await query.edit_message_text("📢 *ارسال پیام همگانی*:\nمی‌خواهید یک پیام برای همه کاربران ارسال کنید؟", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _products_submenu(self, query):
+        # Check SpotPlayer enabled status
+        import sqlite3
+        conn = sqlite3.connect('database/data/daraei_academy.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = 'spotplayer_enabled'")
+        result = cursor.fetchone()
+        conn.close()
+        
+        spotplayer_enabled = result and result[0] == '1'
+        spotplayer_text = "🟢 SpotPlayer (فعال)" if spotplayer_enabled else "🔴 SpotPlayer (غیرفعال)"
+        
         keyboard = [
             [InlineKeyboardButton("➕ محصول جدید", callback_data="products_add"), InlineKeyboardButton("📜 محصولات", callback_data="products_list")],
             [InlineKeyboardButton("📂 مدیریت دسته‌بندی‌ها", callback_data="manage_categories")],
             [InlineKeyboardButton("آلت‌سیزن", callback_data="altseason_admin")],
+            [InlineKeyboardButton(spotplayer_text, callback_data="spotplayer_admin_menu")],
             [InlineKeyboardButton("📈 گزارش فروش محصولات", callback_data="product_sales_reports")],
             [InlineKeyboardButton("💰 پنل کریپتو", callback_data="crypto_panel")],
             [InlineKeyboardButton("🔙 بازگشت", callback_data=self.BACK_MAIN)],
