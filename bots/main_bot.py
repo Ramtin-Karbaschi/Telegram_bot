@@ -494,13 +494,13 @@ class MainBot:
                 # Create a persistence object
         persistence = PicklePersistence(filepath="database/data/bot_persistence.pkl")
         
-        # Configure HTTPXRequest with OPTIMIZED timeouts
+        # Configure HTTPXRequest with BALANCED timeouts and larger pool
         request = HTTPXRequest(
-            connect_timeout=5.0,   # Reduced for faster response
-            read_timeout=10.0,     # Reasonable read timeout
-            write_timeout=10.0,    # Reasonable write timeout  
-            pool_timeout=5.0,      # Reduced pool timeout
-            # connection_pool_size=16,  # Increased for better concurrency
+            connect_timeout=10.0,     # Balanced timeout for connection
+            read_timeout=15.0,        # Sufficient time for reading
+            write_timeout=15.0,       # Sufficient time for writing  
+            pool_timeout=10.0,        # Wait longer for available connection
+            connection_pool_size=32,  # INCREASED pool size for better concurrency
         )
         
         # Build application with optimized request settings
