@@ -404,8 +404,9 @@ async def log_all_updates(update: Update, context: ContextTypes.DEFAULT_TYPE):
             action_type = "update"
             details = {"raw": str(update)[:500]}
 
-        # Non-blocking logging; ignore result
-        UserAction.log_user_action(telegram_id=telegram_id, action_type=action_type, details=details)
+        # DISABLED: Heavy user activity logging causing performance issues
+        # UserAction.log_user_action(telegram_id=telegram_id, action_type=action_type, details=details)
+        pass  # Skip logging to improve performance
     except Exception as e:
         logger.error(f"Failed to persist user activity log: {e}")
 
@@ -416,8 +417,12 @@ import time as time_module
 
 banned_user_attempts = defaultdict(lambda: {'count': 0, 'last_time': 0})
 
+# Simple in-memory cache for banned users to reduce DB queries
+banned_users_cache = {}
+banned_cache_timestamp = 0
+
 async def banned_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Prevent banned users from interacting with the bot.
+    """Prevent banned users from interacting with the bot - OPTIMIZED.
     Should run at the highest priority before other handlers.
     """
     try:
@@ -426,8 +431,22 @@ async def banned_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return  # System/bot updates
         user_id = tg_user.id
         
-        # Get user status (None means user not in DB, which is allowed)
-        status = DatabaseQueries.get_user_status(user_id)
+        # Use cache to avoid repeated DB queries (refresh every 5 minutes)
+        global banned_users_cache, banned_cache_timestamp
+        current_time = time_module.time()
+        
+        if current_time - banned_cache_timestamp > 300:  # 5 minutes
+            # Refresh cache
+            banned_users_cache = {}
+            banned_cache_timestamp = current_time
+        
+        # Check cache first
+        if user_id in banned_users_cache:
+            status = banned_users_cache[user_id]
+        else:
+            # Get user status (None means user not in DB, which is allowed)
+            status = DatabaseQueries.get_user_status(user_id)
+            banned_users_cache[user_id] = status
         
         if status == 'banned':
             # Rate limiting - log only first attempt and then every 100 attempts
@@ -475,12 +494,12 @@ class MainBot:
                 # Create a persistence object
         persistence = PicklePersistence(filepath="database/data/bot_persistence.pkl")
         
-        # Configure HTTPXRequest with proper timeouts for Iranian network conditions
+        # Configure HTTPXRequest with OPTIMIZED timeouts
         request = HTTPXRequest(
-            connect_timeout=30.0,  # Increased from default 5.0
-            read_timeout=30.0,     # Increased from default 5.0
-            write_timeout=30.0,    # Increased from default 5.0
-            pool_timeout=30.0,     # Increased from default 1.0
+            connect_timeout=5.0,   # Reduced for faster response
+            read_timeout=10.0,     # Reasonable read timeout
+            write_timeout=10.0,    # Reasonable write timeout  
+            pool_timeout=5.0,      # Reduced pool timeout
             # connection_pool_size=16,  # Increased for better concurrency
         )
         
@@ -866,8 +885,9 @@ class MainBot:
                 except Exception as e:
                     print(f"❌ Error starting auto verification: {e}")
             
-            # شروع در background
-            asyncio.create_task(start_auto_verification())
+            # DISABLED: Auto verification causing performance issues
+            # asyncio.create_task(start_auto_verification())
+            logger.info("⚠️ Auto verification DISABLED for performance")
             
             print("✅ Auto verification system setup completed")
             
