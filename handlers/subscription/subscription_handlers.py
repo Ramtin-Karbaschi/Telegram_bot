@@ -250,7 +250,7 @@ async def activate_or_extend_subscription(
     context: ContextTypes.DEFAULT_TYPE,
     payment_table_id: int
 ) -> tuple[bool, str]:
-    """Activates a new subscription or extends an existing one with category-based aggregation."""
+    """Activates a new subscription or extends an existing one - OPTIMIZED VERSION."""
     logger.info(f"Attempting to activate/extend subscription for user_id: {user_id}, plan_id: {plan_id}")
 
     try:
@@ -266,47 +266,34 @@ async def activate_or_extend_subscription(
             logger.error(f"Plan duration not found for plan_id: {plan_id}, user_id: {user_id}.")
             return False, "مدت زمان طرح اشتراک مشخص نشده است."
         
-        # Check 120-day subscription limit if enabled (per category)
+        # Check 120-day subscription limit if enabled
         from database.queries import DatabaseQueries
-        from database.subscription_manager import SubscriptionManager
         
         limit_enabled = DatabaseQueries.get_setting("enable_120_day_limit", "1") == "1"
-        category_id = plan_details.get('category_id')
-        
         if limit_enabled and plan_duration_days > 0:
-            # Get current days for this category specifically
-            user_subs = SubscriptionManager.get_user_subscriptions_detailed(user_id)
-            category_days = 0
+            # Simple check without complex category logic
+            current_remaining_days = DatabaseQueries.get_user_remaining_subscription_days(user_id)
+            total_days_after_purchase = current_remaining_days + plan_duration_days
             
-            if category_id and category_id in user_subs.get('by_category', {}):
-                category_days = user_subs['by_category'][category_id].get('total_days', 0)
-            elif not category_id:
-                # For uncategorized products, check product-specific days
-                for prod in user_subs.get('by_product', []):
-                    if prod.get('plan_id') == plan_id:
-                        category_days += prod.get('remaining_days', 0)
-            
-            total_days_after = category_days + plan_duration_days
-            if total_days_after > 120:
-                category_name = plan_details.get('category_name', 'این محصول')
-                logger.warning(f"Subscription blocked for user {user_id}: would exceed 120-day limit in category. Current: {category_days}, Adding: {plan_duration_days}")
-                return False, f"محدودیت 120 روز: مجموع اشتراک در دسته‌بندی {category_name} نمی‌تواند بیش از 120 روز باشد"
+            if total_days_after_purchase > 120:
+                logger.warning(f"Subscription blocked for user {user_id}: would exceed 120-day limit. Current: {current_remaining_days}, Plan: {plan_duration_days}, Total: {total_days_after_purchase}")
+                return False, "محدودیت 120 روز: مجموع اشتراک فعال شما نمی‌تواند بیش از 120 روز باشد"
 
-        # Use the new SubscriptionManager to handle category-based extension
-        success, message = SubscriptionManager.create_or_extend_subscription(
+        # Add the subscription to the 'subscriptions' table directly
+        subscription_id = Database.add_subscription(
             user_id=user_id,
             plan_id=plan_id,
-            payment_id=payment_table_id if isinstance(payment_table_id, int) else None,
-            payment_method=payment_method,
+            payment_id=payment_table_id,
+            plan_duration_days=plan_duration_days,
             amount_paid=payment_amount,
-            admin_id=None  # Not admin-initiated
+            payment_method=payment_method,
         )
+
+        if not subscription_id:
+            logger.error(f"Failed to add subscription to DB for user_id: {user_id}, plan_id: {plan_id}.")
+            return False, "خطا در ثبت اولیه اشتراک در پایگاه داده."
         
-        if not success:
-            logger.error(f"Failed to create/extend subscription: {message}")
-            return False, message
-        
-        logger.info(f"✅ Subscription created/extended for user {user_id}: {message}")
+        logger.info(f"✅ Subscription {subscription_id} created for user {user_id}, now sending sales report...")
 
         # --- Immediate sales report to channel ---
         # CRITICAL: Always try to send sales report for successful subscriptions
@@ -512,21 +499,19 @@ async def activate_or_extend_subscription(
                         logger.error("MAIN_BOT_TOKEN not available, cannot send sales notification")
                         raise Exception("Bot token not configured")
                 
-                # Send the message with timeout handling
-                try:
-                    sent_message = await asyncio.wait_for(
-                        bot_instance.send_message(
+                # Send sales report as background task - NON-BLOCKING
+                async def send_report_background():
+                    try:
+                        sent_message = await bot_instance.send_message(
                             chat_id=channel_id,
                             text=final_message
-                        ),
-                        timeout=5.0  # 5 second timeout
-                    )
-                    # Log successful send with message ID for verification
-                    logger.info(f"✅ SALES REPORT SENT: Message ID {sent_message.message_id} to channel {channel_id} for user {telegram_id}, plan: {plan_name}, amount: {price_formatted}, method: {payment_method}")
-                except asyncio.TimeoutError:
-                    logger.error(f"⏱️ SALES REPORT TIMEOUT: Channel {channel_id}, User {telegram_id}, Plan {plan_name} - subscription saved but report not sent")
-                except Exception as send_err:
-                    logger.error(f"❌ SALES REPORT ERROR: {send_err} - Channel {channel_id}, User {telegram_id}, Plan {plan_name} - subscription saved but report not sent")
+                        )
+                        logger.info(f"✅ SALES REPORT SENT: Message ID {sent_message.message_id} to channel {channel_id}")
+                    except Exception as e:
+                        logger.error(f"❌ SALES REPORT ERROR: {e} - subscription saved but report not sent")
+                
+                # Schedule as background task - won't block the main flow
+                asyncio.create_task(send_report_background())
             else:
                 logger.error(f"❌ SALES REPORT FAILED: SALE_CHANNEL_ID is None or empty - User {telegram_id}, Plan {plan_name}")
         except Exception as e:
