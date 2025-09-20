@@ -178,21 +178,20 @@ class ManagerBot:
     def __init__(self, manager_bot_token: str, admin_users_config: dict, db_name: str, main_bot_app=None):
         """Initialize the bot"""
         self.logger = logging.getLogger(__name__)
+        self.token = manager_bot_token  # Store the token
         self.admin_config = admin_users_config  # Store admin configuration from parameters
         
-        # Configure HTTPXRequest with proper timeouts for Iranian network conditions
+        # Configure HTTPXRequest with OPTIMIZED settings (same as MainBot)
         request = HTTPXRequest(
-            connect_timeout=30.0,  # Increased from default 5.0
-            read_timeout=30.0,     # Increased from default 5.0  
-            write_timeout=30.0,    # Increased from default 5.0
-            pool_timeout=30.0,     # Increased from default 1.0
+            connect_timeout=10.0,
+            read_timeout=20.0,
+            write_timeout=20.0,
+            pool_timeout=15.0,
+            connection_pool_size=64,
         )
         
-        # Build application with optimized request settings
-        builder = Application.builder().token(manager_bot_token)
-        builder = builder.request(request)  # Use custom request configuration
-        builder = builder.get_updates_request(request)  # Use same config for polling
-        self.application = builder.build()
+        # Build application with optimized settings
+        self.application = Application.builder().token(self.token).request(request).build()
         # Register banned user guard at highest priority
         self.application.add_handler(TypeHandler(Update, banned_guard), group=-100)
         # Register Video Upload conversation handler for admins (high priority)
@@ -333,7 +332,10 @@ class ManagerBot:
         
         self.logger.info("Starting Manager Bot polling...")
         # Start polling for updates
-        await self.application.updater.start_polling(allowed_updates=self.application.allowed_updates)
+        await self.application.updater.start_polling(
+            allowed_updates=self.application.allowed_updates,
+            drop_pending_updates=True  # Skip old updates on restart
+        )
         self.logger.info("Manager Bot started")
 
     async def log_all_updates(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

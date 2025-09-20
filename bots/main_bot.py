@@ -494,13 +494,13 @@ class MainBot:
                 # Create a persistence object
         persistence = PicklePersistence(filepath="database/data/bot_persistence.pkl")
         
-        # Configure HTTPXRequest with BALANCED timeouts and larger pool
+        # Configure HTTPXRequest with OPTIMIZED settings for high load
         request = HTTPXRequest(
             connect_timeout=10.0,     # Balanced timeout for connection
-            read_timeout=15.0,        # Sufficient time for reading
-            write_timeout=15.0,       # Sufficient time for writing  
-            pool_timeout=10.0,        # Wait longer for available connection
-            connection_pool_size=32,  # INCREASED pool size for better concurrency
+            read_timeout=20.0,        # More time for reading under load
+            write_timeout=20.0,       # More time for writing under load  
+            pool_timeout=15.0,        # Wait longer for available connection
+            connection_pool_size=64,  # DOUBLE pool size for high load
         )
         
         # Build application with optimized request settings
@@ -914,8 +914,12 @@ class MainBot:
         await self.application.start()
         # Explicitly start polling via the Updater to ensure the bot receives updates.
         if self.application.updater:
-            await self.application.updater.start_polling(allowed_updates=self.application.allowed_updates)
-            self.logger.info("Main bot polling started")
+            # IMPORTANT: drop_pending_updates=True to skip old messages
+            await self.application.updater.start_polling(
+                allowed_updates=self.application.allowed_updates,
+                drop_pending_updates=True  # Skip all pending updates on restart
+            )
+            self.logger.info("Main bot polling started (old updates dropped)")
         else:
             self.logger.warning("Updater is not initialized for the main bot; no polling will occur.")
         self.logger.info("Main bot started")
