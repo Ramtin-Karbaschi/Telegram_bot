@@ -586,9 +586,9 @@ async def activate_or_extend_subscription(
 
         if not update_success:
             # This is less critical now since we ensure user exists
-            logger.warning(f"Failed to update user subscription summary for user_id: {user_id} after adding subscription_id: {subscription_id}. Will continue anyway.")
+            logger.warning(f"Failed to update user subscription summary for user_id: {user_id} after adding subscription. Will continue anyway.")
 
-        logger.info(f"Successfully activated/extended subscription_id: {subscription_id} for user_id: {user_id}.")
+        logger.info(f"Successfully activated/extended subscription for user_id: {user_id}, plan_id: {plan_id}.")
         
         # Check if plan has a survey first
         from database.queries import DatabaseQueries

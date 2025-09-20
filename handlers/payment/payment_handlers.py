@@ -859,6 +859,7 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             logger.debug("Free plan subscription activated; post-subscription flow handled in activate_or_extend_subscription.")
         else:
             await safe_edit_message_text(
+                query.message,
                 text=f"❌ {err_msg}",
                 reply_markup=get_main_menu_keyboard(user_id)
             )
