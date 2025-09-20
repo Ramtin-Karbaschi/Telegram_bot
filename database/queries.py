@@ -4571,20 +4571,9 @@ class DatabaseQueries:
                 """
                 cursor.execute(query)
                 results = cursor.fetchall()
+                # Legacy mode: all users with active subscriptions are authorized
                 authorized_users = [row[0] for row in results]
-                
-                # Also check SpotPlayer purchases
-                spotplayer_query = """
-                    SELECT DISTINCT user_id
-                    FROM spotplayer_purchases
-                    WHERE status = 'completed'
-                    AND subscription_end > datetime('now')
-                """
-                cursor.execute(spotplayer_query)
-                spotplayer_results = cursor.fetchall()
-                authorized_users.extend([row[0] for row in spotplayer_results])
-                
-                return list(set(authorized_users))  # Remove duplicates
+                return list(set(authorized_users))
             else:
                 # New mode: check channels_json
                 query = """
@@ -4620,21 +4609,7 @@ class DatabaseQueries:
                         # No channels defined = legacy user with access
                         legacy_users.add(user_id)
                 
-                # Also check SpotPlayer purchases for this specific channel
-                spotplayer_query = """
-                    SELECT DISTINCT sp.user_id, spp.channel_id
-                    FROM spotplayer_purchases sp
-                    JOIN spotplayer_products spp ON sp.product_id = spp.product_id
-                    WHERE sp.status = 'completed'
-                    AND sp.subscription_end > datetime('now')
-                    AND spp.channel_id = ?
-                """
-                cursor.execute(spotplayer_query, (str(channel_id),))
-                spotplayer_results = cursor.fetchall()
-                for user_id, _ in spotplayer_results:
-                    authorized_users.add(user_id)
-                
-                # Combine both authorized users and legacy users
+                # Combine authorized users from channels_json and legacy users
                 all_authorized = authorized_users.union(legacy_users)
                 return list(all_authorized)
             
