@@ -796,6 +796,7 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         if isinstance(plan_capacity, (int, float)) and plan_capacity <= 0:
             logger.info(f"User {user_id} tried to select plan {plan_id} which is at full capacity.")
             await safe_edit_message_text(
+                query.message,
                 text="ظرفیت این محصول تکمیل شده است.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👤 مشاهده اطلاعات کاربری", callback_data="show_status")]])
             )
