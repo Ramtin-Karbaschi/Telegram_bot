@@ -368,9 +368,18 @@ async def start_subscription_flow(update: Update, context: ContextTypes.DEFAULT_
         logger.error("start_subscription_flow called but neither callback_query nor message is present in update.")
         return ConversationHandler.END
 
-    # Clear any previous plan selection from context to ensure a fresh start.
+    # Clear any previous plan selection and pricing from context to ensure a fresh start.
+    # This prevents cached discount prices from being used for new products
     context.user_data.pop('selected_plan_details', None)
+    context.user_data.pop('selected_plan', None)
     context.user_data.pop('live_usdt_price', None)
+    context.user_data.pop('live_irr_price', None)
+    context.user_data.pop('final_price', None)
+    context.user_data.pop('dynamic_irr_price', None)
+    context.user_data.pop('discount_id', None)
+    context.user_data.pop('price_expiry', None)
+    context.user_data.pop('base_currency', None)
+    context.user_data.pop('base_price', None)
     return SELECT_PLAN
 
 async def show_payment_methods(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -760,6 +769,15 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Convert sqlite3.Row to a dictionary for easier and safer access
     plan_dict = dict(selected_plan)
     context.user_data['selected_plan'] = plan_dict
+    
+    # Clear any previous pricing and discount information to prevent cross-product contamination
+    # This ensures that old discount prices are not used for new products
+    context.user_data.pop('final_price', None)
+    context.user_data.pop('dynamic_irr_price', None)
+    context.user_data.pop('live_usdt_price', None)
+    context.user_data.pop('live_irr_price', None)
+    context.user_data.pop('discount_id', None)
+    context.user_data.pop('price_expiry', None)
 
     # Check 120-day subscription limit if enabled
     limit_enabled = Database.get_setting("enable_120_day_limit", "1") == "1"
@@ -869,6 +887,9 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Default to paid subscription flow
     logger.info(f"Plan {plan_id} requires payment. Proceeding to ask for discount.")
     context.user_data['selected_plan_details'] = plan_dict
+    # Clear any old pricing data before starting new payment flow
+    context.user_data.pop('final_price', None)
+    context.user_data.pop('dynamic_irr_price', None)
     # No fixed IRR price; will compute dynamically later
     return await ask_discount_handler(update, context)
     
@@ -1739,9 +1760,13 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
     query = update.callback_query
     user_id = update.effective_user.id
     Database.update_user_activity(user_id)
-    # پاک‌سازی context مرحله تأیید پرداخت
-    for key in ['payment_info', 'payment_db_id']:
+    
+    # پاک‌سازی کامل اطلاعات مربوط به پرداخت و تخفیف
+    # این موارد را پاک می‌کنیم تا اطمینان حاصل کنیم که قیمت تخفیف‌خورده حفظ نمی‌شود
+    for key in ['payment_info', 'payment_db_id', 'final_price', 'dynamic_irr_price', 
+                'discount_id', 'live_usdt_price', 'live_irr_price']:
         context.user_data.pop(key, None)
+    
     selected_plan = context.user_data.get('selected_plan_details')
     if not selected_plan:
         await safe_edit_message_text(
@@ -1759,45 +1784,10 @@ async def back_to_payment_methods_handler(update: Update, context: ContextTypes.
         context.user_data['selected_plan_details'] = selected_plan
 
     await query.answer()
-
-    # Check if price has expired (30 minutes)
-    from datetime import datetime
-    price_expiry = context.user_data.get('price_expiry')
-    if price_expiry:
-        expiry_time = datetime.fromisoformat(price_expiry)
-        if datetime.utcnow() > expiry_time:
-            await safe_edit_message_text(
-                query.message,
-                text="⚠️ قیمت محاسبه شده منقضی شده است. لطفاً دوباره پلن را انتخاب کنید.",
-                reply_markup=get_subscription_plans_keyboard(user_id)
-            )
-            return SELECT_PLAN
     
-    # Use the stored live prices
-    live_irr_price = context.user_data.get('live_irr_price')
-    live_usdt_price = context.user_data.get('live_usdt_price')
-    
-    if live_irr_price is None or live_usdt_price is None:
-        await query.edit_message_text(
-            "خطا در محاسبه قیمت. لطفاً دوباره پلن را انتخاب کنید.",
-            reply_markup=get_subscription_plans_keyboard(user_id)
-        )
-        return SELECT_PLAN
-    
-    plan_price_irr_formatted = f"{int(live_irr_price):,}"
-    plan_price_usdt_formatted = f"{live_usdt_price}"
-    from utils.text_utils import buttonize_markdown
-    plan_display_name = buttonize_markdown(selected_plan.get('name', 'N/A'))
-    message_text = PAYMENT_METHOD_MESSAGE.format(
-        plan_name=plan_display_name,
-        plan_price=plan_price_irr_formatted,
-        plan_tether=plan_price_usdt_formatted
-    )
-    await query.message.edit_text(
-        text=message_text,
-        reply_markup=get_payment_methods_keyboard()
-    )
-    return SELECT_PAYMENT_METHOD
+    # به جای استفاده از قیمت‌های کش شده، show_payment_methods را صدا می‌زنیم
+    # تا قیمت‌ها بر اساس پلن اصلی (بدون تخفیف) محاسبه شوند
+    return await show_payment_methods(update, context)
 
 
 async def cancel_subscription_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1806,7 +1796,11 @@ async def cancel_subscription_flow(update: Update, context: ContextTypes.DEFAULT
     logger.info(f"User {user_id} cancelled the subscription/payment flow.")
     
     # Clean up user_data related to the payment flow
-    for key in ['selected_plan_details', 'live_usdt_price', 'payment_method', 'payment_info', 'payment_db_id', 'zarinpal_authority']:
+    # Include all pricing and discount related keys to ensure complete cleanup
+    for key in ['selected_plan_details', 'selected_plan', 'live_usdt_price', 'live_irr_price', 
+                'payment_method', 'payment_info', 'payment_db_id', 'zarinpal_authority',
+                'final_price', 'dynamic_irr_price', 'discount_id', 'price_expiry', 
+                'base_currency', 'base_price']:
         context.user_data.pop(key, None)
 
     cancel_message = "فرایند خرید محصولات لغو شد. برای شروع مجدد، از منوی اصلی اقدام کنید."
