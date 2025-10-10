@@ -360,6 +360,55 @@ class Database:
                 cursor.execute("ALTER TABLE crypto_payments ADD COLUMN plan_id INTEGER")
                 print("✅ plan_id column added to crypto_payments")
             
+            # ---------------- Create free_plan_usage_tracking table ----------------
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='free_plan_usage_tracking'
+            """)
+            
+            if not cursor.fetchone():
+                print("🔧 Creating free_plan_usage_tracking table...")
+                cursor.execute("""
+                    CREATE TABLE free_plan_usage_tracking (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        plan_id INTEGER NOT NULL,
+                        activation_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        subscription_id INTEGER,
+                        payment_method TEXT,
+                        transaction_id TEXT,
+                        notes TEXT,
+                        FOREIGN KEY (user_id) REFERENCES users(user_id),
+                        FOREIGN KEY (plan_id) REFERENCES plans(id),
+                        FOREIGN KEY (subscription_id) REFERENCES subscriptions(id),
+                        UNIQUE(user_id, plan_id)
+                    )
+                """)
+                
+                # Create indexes for performance
+                cursor.execute("CREATE INDEX idx_free_plan_usage_user_plan ON free_plan_usage_tracking(user_id, plan_id)")
+                cursor.execute("CREATE INDEX idx_free_plan_usage_date ON free_plan_usage_tracking(activation_date)")
+                
+                print("✅ free_plan_usage_tracking table created")
+                
+                # Migrate existing free plan subscriptions to tracking table
+                print("🔧 Migrating existing free plan subscriptions...")
+                cursor.execute("""
+                    INSERT OR IGNORE INTO free_plan_usage_tracking (user_id, plan_id, activation_date, subscription_id, payment_method)
+                    SELECT 
+                        s.user_id,
+                        s.plan_id,
+                        s.created_at,
+                        s.id,
+                        s.payment_method
+                    FROM subscriptions s
+                    INNER JOIN plans p ON s.plan_id = p.id
+                    WHERE (p.price = 0 OR p.price IS NULL) 
+                       AND (p.price_tether = 0 OR p.price_tether IS NULL)
+                       AND (p.base_price = 0 OR p.base_price IS NULL)
+                """)
+                print("✅ Migration of existing free plans completed")
+            
             # اضافه کردن تنظیمات پیشفرض
             default_settings = [
                 ('auto_crypto_verify', '1'),

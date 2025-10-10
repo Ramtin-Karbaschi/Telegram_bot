@@ -636,6 +636,15 @@ async def handle_free_content_plan(update: Update, context: ContextTypes.DEFAULT
     from utils.text_utils import buttonize_markdown
     plan_name = buttonize_markdown(plan['name'])
 
+    # Check if user has already used this free content plan
+    if Database.has_user_used_free_plan(user_id=user_id, plan_id=plan_id):
+        await safe_edit_message_text(
+            query.message,
+            text="شما قبلاً از این محتوای رایگان استفاده کرده‌اید و امکان دریافت مجدد آن وجود ندارد.",
+            reply_markup=get_main_menu_keyboard()
+        )
+        return ConversationHandler.END
+    
     # 1. Check if the plan capacity is full (capacity stores remaining slots)
     if plan.get('capacity') is not None:
         # Safety check: ensure capacity is a number, not a list or other type
@@ -650,6 +659,15 @@ async def handle_free_content_plan(update: Update, context: ContextTypes.DEFAULT
     # Use a placeholder for transaction_id and payment_table_id for free content
     transaction_id = f"free_{user_id}_{plan_id}_{datetime.now().timestamp()}"
     payment_table_id = None  # No payment record for free content
+    
+    # Track free content plan usage
+    Database.track_free_plan_usage(
+        user_id=user_id,
+        plan_id=plan_id,
+        payment_method="free",
+        transaction_id=transaction_id,
+        notes=f"One-time free content activation for {plan_name}"
+    )
 
     success, message = await activate_or_extend_subscription(
         user_id=user_id,
@@ -860,6 +878,15 @@ async def select_plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             user_db_id = user_id
 
 
+        # Track free plan usage in dedicated table
+        Database.track_free_plan_usage(
+            user_id=user_id,
+            plan_id=plan_id,
+            payment_method='free',
+            transaction_id='FREE_INITIAL',
+            notes=f"Direct free plan activation for {plan_dict['name']}"
+        )
+        
         success, err_msg = await activate_or_extend_subscription(
             user_id=user_db_id,
             telegram_id=user_id,
@@ -994,6 +1021,17 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             return ConversationHandler.END
 
         logger.info(f"Plan {plan_id} has zero price ({price_irr}). Activating for user {telegram_id} without payment.")
+        
+        # Track free plan usage in dedicated table
+        transaction_id = f"FREE-{uuid.uuid4().hex[:6]}"
+        Database.track_free_plan_usage(
+            user_id=telegram_id,
+            plan_id=plan_id,
+            payment_method='free_plan',
+            transaction_id=transaction_id,
+            notes=f"Zero price plan activation (possibly discounted) for {plan_name}"
+        )
+        
         success, msg = await activate_or_extend_subscription(
             user_id=user_db_id,
             telegram_id=telegram_id,
@@ -1001,7 +1039,7 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
             plan_name=plan_name,
             payment_amount=0,
             payment_method='free_plan',
-            transaction_id=f"FREE-{uuid.uuid4().hex[:6]}",
+            transaction_id=transaction_id,
             context=context,
             payment_table_id=None
         )

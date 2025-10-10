@@ -2431,9 +2431,9 @@ class DatabaseQueries:
                      plan_duration_days: int, amount_paid: float, 
                      payment_method: str, status: str = 'active'):
         """
-        Adds a new subscription or extends an existing active one for a user.
-        If an active subscription exists, its end_date is extended.
-        Otherwise, a new subscription record is created.
+        Adds a new subscription record for a user.
+        Always creates a new record to maintain full purchase history.
+        If user has active subscription, the new one starts after current expires.
 
         Args:
             user_id: The ID of the user.
@@ -2445,7 +2445,7 @@ class DatabaseQueries:
             status: The status of the subscription, defaults to 'active'.
 
         Returns:
-            The ID of the created or updated subscription record, or None on failure.
+            The ID of the created subscription record, or None on failure.
         """
         # Check 120-day limit before adding subscription if enabled
         limit_enabled = DatabaseQueries.get_setting("enable_120_day_limit", "1") == "1"
@@ -2465,66 +2465,77 @@ class DatabaseQueries:
         try:
             print(f"DEBUG: add_subscription called with user_id={user_id}, plan_id={plan_id}, payment_id={payment_id}")
             
+            # Check if this is a free plan
+            plan_details = DatabaseQueries.get_plan_by_id(plan_id)
+            is_free_plan = False
+            if plan_details:
+                plan_dict = dict(plan_details) if hasattr(plan_details, 'keys') else plan_details
+                base_price = plan_dict.get('base_price')
+                if base_price is None:
+                    # Fallback to legacy fields
+                    is_free_plan = (plan_dict.get('price', 0) == 0 and 
+                                  plan_dict.get('price_tether', 0) == 0)
+                else:
+                    is_free_plan = (base_price == 0)
+            
+            # Get current active subscriptions to determine start date
             current_active_sub = DatabaseQueries.get_user_active_subscription(user_id) 
             print(f"DEBUG: Current active subscription: {current_active_sub}")
             
             now_dt = datetime.now()
             
+            # Determine start date for new subscription
             if current_active_sub:
                 current_end_date_str = current_active_sub['end_date']
                 try:
                     current_end_date_dt = datetime.strptime(current_end_date_str, "%Y-%m-%d %H:%M:%S")
                 except (ValueError, TypeError) as e:
-                    print(f"Error parsing current_end_date '{current_end_date_str}' for user {user_id}: {e}. Treating as no active sub.")
-                    current_active_sub = None
-
-                if current_active_sub and current_end_date_dt > now_dt:
-                    start_point_for_new_duration = current_end_date_dt
-                else:
-                    start_point_for_new_duration = now_dt
+                    print(f"Error parsing current_end_date '{current_end_date_str}' for user {user_id}: {e}")
+                    current_end_date_dt = now_dt
                 
-                new_end_date_dt = start_point_for_new_duration + timedelta(days=plan_duration_days)
-                new_end_date_str = new_end_date_dt.strftime("%Y-%m-%d %H:%M:%S")
-
-                print(f"DEBUG: Updating existing subscription {current_active_sub['id']} with new end date {new_end_date_str}")
-                
-                if DatabaseQueries._update_existing_subscription(
-                    subscription_id=current_active_sub['id'],
-                    plan_id=plan_id,
-                    payment_id=payment_id,
-                    new_end_date_str=new_end_date_str,
-                    amount_paid=amount_paid,
-                    payment_method=payment_method,
-                    status=status
-                ):
-                    print(f"DEBUG: Successfully updated subscription {current_active_sub['id']}")
-                    return current_active_sub['id']
+                # New subscription starts when current one expires (stacking)
+                if current_end_date_dt > now_dt:
+                    start_date_dt = current_end_date_dt
                 else:
-                    print(f"Failed to update existing subscription for user {user_id}.")
-                    return None
+                    start_date_dt = now_dt
             else:
                 start_date_dt = now_dt
-                end_date_dt = start_date_dt + timedelta(days=plan_duration_days)
-                
-                start_date_str = start_date_dt.strftime("%Y-%m-%d %H:%M:%S")
-                end_date_str = end_date_dt.strftime("%Y-%m-%d %H:%M:%S")
-
-                print(f"DEBUG: Creating new subscription - start: {start_date_str}, end: {end_date_str}")
-
-                db.execute(
-                    """INSERT INTO subscriptions 
-                       (user_id, plan_id, payment_id, start_date, end_date, amount_paid, status, payment_method, created_at, updated_at) 
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (user_id, plan_id, payment_id, start_date_str, end_date_str, amount_paid, status, 
-                     payment_method, now_dt.strftime("%Y-%m-%d %H:%M:%S"), now_dt.strftime("%Y-%m-%d %H:%M:%S"))
+            
+            # Calculate end date
+            end_date_dt = start_date_dt + timedelta(days=plan_duration_days)
+            
+            start_date_str = start_date_dt.strftime("%Y-%m-%d %H:%M:%S")
+            end_date_str = end_date_dt.strftime("%Y-%m-%d %H:%M:%S")
+            
+            print(f"DEBUG: Creating new subscription - start: {start_date_str}, end: {end_date_str}")
+            
+            # Always create a new subscription record
+            db.execute(
+                """INSERT INTO subscriptions 
+                   (user_id, plan_id, payment_id, start_date, end_date, amount_paid, status, payment_method, created_at, updated_at) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, plan_id, payment_id, start_date_str, end_date_str, amount_paid, status, 
+                 payment_method, now_dt.strftime("%Y-%m-%d %H:%M:%S"), now_dt.strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            subscription_id = db.cursor.lastrowid
+            print(f"DEBUG: Inserted new subscription with ID: {subscription_id}")
+            
+            db.commit()
+            print(f"DEBUG: Committed transaction for subscription {subscription_id}")
+            
+            # Track free plan usage if applicable
+            if is_free_plan and subscription_id:
+                print(f"DEBUG: Tracking free plan usage for user {user_id}, plan {plan_id}")
+                DatabaseQueries.track_free_plan_usage(
+                    user_id=user_id,
+                    plan_id=plan_id,
+                    subscription_id=subscription_id,
+                    payment_method=payment_method,
+                    transaction_id=str(payment_id),
+                    notes="Auto-tracked from add_subscription"
                 )
-                subscription_id = db.cursor.lastrowid
-                print(f"DEBUG: Inserted new subscription with ID: {subscription_id}")
-                
-                db.commit()
-                print(f"DEBUG: Committed transaction for subscription {subscription_id}")
-                
-                return subscription_id
+            
+            return subscription_id
         except sqlite3.Error as e:
             print(f"Database error in add_subscription for user {user_id}: {e}")
             if db.conn:
@@ -2555,10 +2566,23 @@ class DatabaseQueries:
     # ---- Free Plan Helper Methods ----
     @staticmethod
     def has_user_used_free_plan(user_id: int, plan_id: int) -> bool:
-        """Return True if the user has already subscribed to the given plan (whether active or expired)."""
+        """
+        Check if a user has ever activated a specific free plan.
+        Now checks the permanent tracking table instead of subscriptions.
+        """
         db = Database()
         if db.connect():
             try:
+                # First check the dedicated tracking table
+                db.execute(
+                    "SELECT 1 FROM free_plan_usage_tracking WHERE user_id = ? AND plan_id = ? LIMIT 1",
+                    (user_id, plan_id),
+                )
+                if db.fetchone() is not None:
+                    return True
+                
+                # Fallback: Check subscriptions table for legacy data
+                # (in case migration hasn't run yet)
                 db.execute(
                     "SELECT 1 FROM subscriptions WHERE user_id = ? AND plan_id = ? LIMIT 1",
                     (user_id, plan_id),
@@ -2566,6 +2590,31 @@ class DatabaseQueries:
                 return db.fetchone() is not None
             except sqlite3.Error as e:
                 logging.error(f"SQLite error in has_user_used_free_plan: {e}")
+                return False
+            finally:
+                db.close()
+        return False
+    
+    @staticmethod
+    def track_free_plan_usage(user_id: int, plan_id: int, subscription_id: int = None, 
+                             payment_method: str = None, transaction_id: str = None, notes: str = None) -> bool:
+        """
+        Record that a user has activated a free plan.
+        This creates a permanent record in free_plan_usage_tracking table.
+        """
+        db = Database()
+        if db.connect():
+            try:
+                db.execute(
+                    """INSERT OR IGNORE INTO free_plan_usage_tracking 
+                    (user_id, plan_id, subscription_id, payment_method, transaction_id, notes)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                    (user_id, plan_id, subscription_id, payment_method, transaction_id, notes)
+                )
+                db.commit()
+                return True
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error in track_free_plan_usage: {e}")
                 return False
             finally:
                 db.close()
