@@ -191,7 +191,7 @@ async def _handle_text_or_contact_input(update: Update, context: ContextTypes.DE
         logger.debug(f"Validation failed for field {field_key}, value: {new_value}")
         current_state_reply_markup = keyboards.get_edit_field_action_keyboard()
         if field_key == constants.EDIT_PHONE:
-            current_state_reply_markup = keyboards.get_phone_edit_keyboard()
+            current_state_reply_markup, _ = keyboards.get_phone_edit_keyboard()
 
         await message.reply_text(
             error_message or "مقدار وارد شده معتبر نیست. لطفاً دوباره تلاش کنید.",
