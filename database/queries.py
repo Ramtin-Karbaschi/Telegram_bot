@@ -4030,8 +4030,11 @@ class DatabaseQueries:
                 now_ts_naive = now_ts
             now_str = now_ts_naive.strftime("%Y-%m-%d %H:%M:%S")
             cursor = db.conn.cursor()
-            # Fetch all active subscriptions (status='active')
-            cursor.execute("SELECT id, end_date FROM subscriptions WHERE status = 'active'")
+            # Fetch all TRULY active subscriptions (not expired)
+            cursor.execute(
+                "SELECT id, end_date FROM subscriptions WHERE status = 'active' AND datetime(end_date) > datetime(?)",
+                (now_str,)
+            )
             rows = cursor.fetchall()
             updated_count = 0
             for row in rows:
@@ -4042,8 +4045,10 @@ class DatabaseQueries:
                 except ValueError:
                     # Skip malformed dates
                     continue
+                # Since we already filtered for non-expired, this shouldn't happen
+                # but keep it as a safety check
                 if base_date < now_ts_naive:
-                    base_date = now_ts
+                    base_date = now_ts_naive
                 new_end = base_date + timedelta(days=additional_days)
                 new_end_str = new_end.strftime("%Y-%m-%d %H:%M:%S")
                 cursor.execute(
@@ -4057,6 +4062,136 @@ class DatabaseQueries:
         except sqlite3.Error as exc:
             logging.error("SQLite error in extend_subscription_duration_all: %s", exc)
             return 0
+        finally:
+            db.close()
+    
+    @staticmethod
+    def extend_subscription_duration_filtered(additional_days: int, plan_ids: list) -> int:
+        """Extend subscription end_date for active users with specific plans.
+        
+        Args:
+            additional_days: Number of days to add.
+            plan_ids: List of plan IDs to filter users by.
+        Returns:
+            Number of subscriptions updated (int). Returns 0 on error or if none updated.
+        """
+        if additional_days <= 0 or not plan_ids:
+            return 0
+            
+        db = Database()
+        if not db.connect():
+            return 0
+            
+        try:
+            now_ts = get_current_time()
+            # Ensure timezone-naive for comparison with DB dates
+            if now_ts.tzinfo is not None:
+                now_ts_naive = now_ts.replace(tzinfo=None)
+            else:
+                now_ts_naive = now_ts
+            now_str = now_ts_naive.strftime("%Y-%m-%d %H:%M:%S")
+            
+            cursor = db.conn.cursor()
+            
+            # Build the plan IDs placeholder string
+            placeholders = ','.join('?' * len(plan_ids))
+            
+            # Fetch all TRULY active subscriptions (not expired) that match the specified plans
+            query = f"""
+                SELECT s.id, s.end_date 
+                FROM subscriptions s
+                WHERE s.status = 'active' 
+                AND s.plan_id IN ({placeholders})
+                AND datetime(s.end_date) > datetime(?)
+            """
+            cursor.execute(query, plan_ids + [now_str])
+            rows = cursor.fetchall()
+            
+            updated_count = 0
+            for row in rows:
+                sub_id = row[0] if not isinstance(row, dict) else row['id']
+                end_date_str = row[1] if not isinstance(row, dict) else row['end_date']
+                
+                try:
+                    base_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    # Skip malformed dates
+                    continue
+                    
+                # Since we already filtered for non-expired subscriptions,
+                # base_date should be in the future, but double-check
+                if base_date < now_ts_naive:
+                    base_date = now_ts_naive
+                    
+                new_end = base_date + timedelta(days=additional_days)
+                new_end_str = new_end.strftime("%Y-%m-%d %H:%M:%S")
+                
+                cursor.execute(
+                    "UPDATE subscriptions SET end_date = ?, updated_at = ? WHERE id = ?",
+                    (new_end_str, now_str, sub_id),
+                )
+                
+                if cursor.rowcount > 0:
+                    updated_count += 1
+                    
+            db.conn.commit()
+            return updated_count
+            
+        except sqlite3.Error as exc:
+            logging.error("SQLite error in extend_subscription_duration_filtered: %s", exc)
+            return 0
+        finally:
+            db.close()
+    
+    @staticmethod
+    def get_active_users_by_plans(plan_ids: list) -> list:
+        """Get all active users who have subscriptions with specific plans.
+        
+        Args:
+            plan_ids: List of plan IDs to filter by.
+        Returns:
+            List of user IDs.
+        """
+        if not plan_ids:
+            return []
+            
+        db = Database()
+        if not db.connect():
+            return []
+            
+        try:
+            # Get current time for comparison
+            now_ts = get_current_time()
+            if now_ts.tzinfo is not None:
+                now_ts_naive = now_ts.replace(tzinfo=None)
+            else:
+                now_ts_naive = now_ts
+            now_str = now_ts_naive.strftime("%Y-%m-%d %H:%M:%S")
+            
+            cursor = db.conn.cursor()
+            
+            # Build the plan IDs placeholder string
+            placeholders = ','.join('?' * len(plan_ids))
+            
+            # Only get users with TRULY active (non-expired) subscriptions
+            query = f"""
+                SELECT DISTINCT u.user_id
+                FROM users u
+                JOIN subscriptions s ON u.user_id = s.user_id
+                WHERE s.status = 'active'
+                AND s.plan_id IN ({placeholders})
+                AND u.status = 'active'
+                AND datetime(s.end_date) > datetime(?)
+            """
+            
+            cursor.execute(query, plan_ids + [now_str])
+            rows = cursor.fetchall()
+            
+            return rows
+            
+        except sqlite3.Error as exc:
+            logging.error("SQLite error in get_active_users_by_plans: %s", exc)
+            return []
         finally:
             db.close()
         """Extend a user's active subscription by the given number of additional days.

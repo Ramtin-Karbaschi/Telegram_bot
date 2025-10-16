@@ -473,6 +473,8 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
     (AWAIT_EXTEND_USER_ID, AWAIT_EXTEND_DAYS) = range(106, 108)
     (AWAIT_CHECK_USER_ID,) = range(108, 109)
     (AWAIT_EXTEND_ALL_DAYS,) = range(109, 110)
+    # New states for improved bulk extension
+    (AWAIT_EXTEND_ALL_PLAN_SELECT, AWAIT_EXTEND_ALL_DAYS_FILTERED) = range(110, 112)
 
     @staff_required
     async def show_admin_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3205,15 +3207,229 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
     # ---- Extend Subscription Duration for All Users (Bulk) ----
     @staff_required
     async def start_extend_subscription_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start the improved bulk extension process - first select plans."""
         query = update.callback_query
         await query.answer()
+        
+        # Get all active plans from database
+        active_plans = DatabaseQueries.get_active_plans()
+        
+        if not active_plans:
+            await query.edit_message_text(
+                "❌ هیچ محصول فعالی وجود ندارد.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data=self.USERS_MENU)]])
+            )
+            return ConversationHandler.END
+        
+        # Build keyboard with plans (checkboxes style)
+        keyboard = []
+        for plan in active_plans:
+            plan_id = plan['id'] if isinstance(plan, dict) else plan[0]
+            plan_name = plan['name'] if isinstance(plan, dict) else plan[1]
+            # Store selected plans in context.user_data
+            if 'selected_plans' not in context.user_data:
+                context.user_data['selected_plans'] = []
+            
+            checkbox = "☑️" if plan_id in context.user_data['selected_plans'] else "⬜"
+            button_text = f"{checkbox} {plan_name}"
+            callback_data = f"toggle_plan_{plan_id}"
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+        
+        # Add "Select All" and "Deselect All" buttons
+        keyboard.append([
+            InlineKeyboardButton("✅ انتخاب همه", callback_data="select_all_plans"),
+            InlineKeyboardButton("❌ لغو انتخاب همه", callback_data="deselect_all_plans")
+        ])
+        
+        # Add confirm and cancel buttons
+        keyboard.append([
+            InlineKeyboardButton("✔️ تایید و ادامه", callback_data="confirm_plan_selection"),
+            InlineKeyboardButton("🔙 لغو", callback_data=self.USERS_MENU)
+        ])
+        
         await query.edit_message_text(
-            "🔔 لطفاً تعداد روزهایی که می‌خواهید به تمام کاربران فعال اضافه شود را وارد کنید:\n\nبرای لغو /cancel را بزنید.",
+            "📦 **انتخاب محصولات**\n\n"
+            "لطفاً محصولاتی که می‌خواهید برای کاربران فعال آنها روز اضافه کنید را انتخاب نمایید:"
+            "\n\n⚠️ **توجه مهم:** فقط کاربرانی که:\n"
+            "• اشتراک **معتبر و فعال** (منقضی نشده) دارند\n"
+            "• محصولات انتخابی شما را دارند\n"
+            "مشمول افزایش روز خواهند شد.",
             parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return self.AWAIT_EXTEND_ALL_DAYS
+        return self.AWAIT_EXTEND_ALL_PLAN_SELECT
 
+    async def handle_plan_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle plan selection toggles."""
+        query = update.callback_query
+        callback_data = query.data
+        
+        # Initialize selected_plans if not exists
+        if 'selected_plans' not in context.user_data:
+            context.user_data['selected_plans'] = []
+            
+        # Get all active plans
+        active_plans = DatabaseQueries.get_active_plans()
+        
+        if callback_data.startswith("toggle_plan_"):
+            # Toggle individual plan
+            plan_id = int(callback_data.replace("toggle_plan_", ""))
+            if plan_id in context.user_data['selected_plans']:
+                context.user_data['selected_plans'].remove(plan_id)
+            else:
+                context.user_data['selected_plans'].append(plan_id)
+                
+        elif callback_data == "select_all_plans":
+            # Select all plans
+            context.user_data['selected_plans'] = []
+            for plan in active_plans:
+                plan_id = plan['id'] if isinstance(plan, dict) else plan[0]
+                context.user_data['selected_plans'].append(plan_id)
+                
+        elif callback_data == "deselect_all_plans":
+            # Deselect all plans
+            context.user_data['selected_plans'] = []
+        
+        # Rebuild the keyboard with updated selections
+        keyboard = []
+        for plan in active_plans:
+            plan_id = plan['id'] if isinstance(plan, dict) else plan[0]
+            plan_name = plan['name'] if isinstance(plan, dict) else plan[1]
+            checkbox = "☑️" if plan_id in context.user_data['selected_plans'] else "⬜"
+            button_text = f"{checkbox} {plan_name}"
+            callback_data = f"toggle_plan_{plan_id}"
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+        
+        keyboard.append([
+            InlineKeyboardButton("✅ انتخاب همه", callback_data="select_all_plans"),
+            InlineKeyboardButton("❌ لغو انتخاب همه", callback_data="deselect_all_plans")
+        ])
+        keyboard.append([
+            InlineKeyboardButton("✔️ تایید و ادامه", callback_data="confirm_plan_selection"),
+            InlineKeyboardButton("🔙 لغو", callback_data=self.USERS_MENU)
+        ])
+        
+        await query.answer()
+        await query.edit_message_text(
+            "📦 **انتخاب محصولات**\n\n"
+            "لطفاً محصولاتی که می‌خواهید برای کاربران فعال آنها روز اضافه کنید را انتخاب نمایید:"
+            "\n\n⚠️ **توجه مهم:** فقط کاربرانی که:\n"
+            "• اشتراک **معتبر و فعال** (منقضی نشده) دارند\n"
+            "• محصولات انتخابی شما را دارند\n"
+            "مشمول افزایش روز خواهند شد.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return self.AWAIT_EXTEND_ALL_PLAN_SELECT
+    
+    async def confirm_plan_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Confirm plan selection and ask for days."""
+        query = update.callback_query
+        await query.answer()
+        
+        # Check if any plans are selected
+        selected_plans = context.user_data.get('selected_plans', [])
+        if not selected_plans:
+            await query.answer("⚠️ لطفاً حداقل یک محصول را انتخاب کنید.", show_alert=True)
+            return self.AWAIT_EXTEND_ALL_PLAN_SELECT
+        
+        # Get plan names for display
+        active_plans = DatabaseQueries.get_active_plans()
+        selected_plan_names = []
+        for plan in active_plans:
+            plan_id = plan['id'] if isinstance(plan, dict) else plan[0]
+            plan_name = plan['name'] if isinstance(plan, dict) else plan[1]
+            if plan_id in selected_plans:
+                selected_plan_names.append(plan_name)
+        
+        await query.edit_message_text(
+            f"📋 **محصولات انتخابی:**\n"
+            f"{chr(10).join('• ' + name for name in selected_plan_names)}\n\n"
+            f"🔔 **لطفاً تعداد روزهایی که می‌خواهید به اشتراک کاربران فعال اضافه شود را وارد کنید:**\n\n"
+            "برای لغو /cancel را بزنید.",
+            parse_mode="Markdown"
+        )
+        return self.AWAIT_EXTEND_ALL_DAYS_FILTERED
+    
+    async def receive_extend_all_days_filtered(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Receive days and extend subscriptions for selected plans only."""
+        days_str = (update.message.text or "").strip()
+        try:
+            days = int(days_str)
+        except ValueError:
+            await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
+            return self.AWAIT_EXTEND_ALL_DAYS_FILTERED
+        
+        if days <= 0:
+            await update.message.reply_text("❌ تعداد روز باید بیشتر از ۰ باشد.")
+            return self.AWAIT_EXTEND_ALL_DAYS_FILTERED
+        
+        # Get selected plans from context
+        selected_plans = context.user_data.get('selected_plans', [])
+        
+        # Call the new database function with plan filter
+        updated = DatabaseQueries.extend_subscription_duration_filtered(days, selected_plans)
+        
+        # Clear selected plans from context
+        context.user_data['selected_plans'] = []
+        
+        await update.message.reply_text(
+            f"✅ اشتراک **{updated}** کاربر فعال به‌مدت **{days}** روز تمدید شد.\n\n"
+            f"📈 کاربران فعالی که محصولات انتخابی را دارند مشمول افزایش روز شدند.",
+            parse_mode="Markdown"
+        )
+        
+        # Notify users if main_bot_app is available
+        if self.main_bot_app and updated > 0:
+            await self._notify_extended_users(days, selected_plans)
+        
+        return ConversationHandler.END
+    
+    async def _notify_extended_users(self, days: int, plan_ids: list):
+        """Notify users whose subscriptions were extended."""
+        try:
+            users = DatabaseQueries.get_active_users_by_plans(plan_ids)
+            bot_instance = None
+            
+            # Determine the correct bot instance
+            if hasattr(self.main_bot_app, "application") and hasattr(self.main_bot_app.application, "bot"):
+                bot_instance = self.main_bot_app.application.bot
+            elif hasattr(self.main_bot_app, "bot"):
+                bot_instance = self.main_bot_app.bot
+            
+            if bot_instance and users:
+                for row in users:
+                    # Handle different row types
+                    if hasattr(row, 'keys'):  # sqlite3.Row
+                        uid = row[0] if len(row) > 0 else None
+                    elif isinstance(row, (list, tuple)):
+                        uid = row[0]
+                    elif isinstance(row, dict):
+                        uid = row.get("user_id")
+                    else:
+                        uid = None
+                    
+                    if not uid:
+                        continue
+                        
+                    try:
+                        await bot_instance.send_message(
+                            chat_id=uid,
+                            text=f"🎉 اشتراک شما به‌مدت **{days}** روز تمدید شد!\n\n"
+                                 f"💙 از همراهی شما سپاسگزاریم!",
+                            parse_mode="Markdown"
+                        )
+                    except Exception:
+                        pass  # Ignore failures for individual users
+            else:
+                if not bot_instance:
+                    logger.warning("Could not find bot instance in main_bot_app")
+        except Exception as e:
+            logger.error(f"Error notifying users about extension: {e}")
+    
+    # Keep the old function for backward compatibility (will be removed later)
     async def receive_extend_all_days(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Legacy function - redirects to new filtered version."""
         days_str = (update.message.text or "").strip()
         try:
             days = int(days_str)
@@ -3224,6 +3440,7 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             await update.message.reply_text("❌ تعداد روز باید بیشتر از ۰ باشد.")
             return self.AWAIT_EXTEND_ALL_DAYS
 
+        # Use old function for backward compatibility
         updated = DatabaseQueries.extend_subscription_duration_all(days)
         await update.message.reply_text(f"✅ اشتراک {updated} کاربر به‌مدت {days} روز تمدید شد.")
 
@@ -3283,6 +3500,19 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
             async def edit_message_text(self, *args, **kwargs):
                 await self.message.reply_text(*args, **kwargs)
         await self._users_submenu(_DummyQuery(update.message))
+        return ConversationHandler.END
+    
+    async def cancel_extend_subscription_all_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle cancel button from callback query."""
+        query = update.callback_query
+        await query.answer("عملیات لغو شد.")
+        
+        # Clear selected plans from context
+        if 'selected_plans' in context.user_data:
+            context.user_data['selected_plans'] = []
+        
+        # Return to users submenu
+        await self._users_submenu(query)
         return ConversationHandler.END
 
     # ---- Check Subscription Status Flow ----
@@ -3463,13 +3693,24 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         handlers.append(CallbackQueryHandler(self._settings_renew_toggle_callback, pattern=r'^toggle_renew_(free|products)$'))
         handlers.append(CallbackQueryHandler(self._settings_renew_toggle_callback, pattern=r'^toggle_renew_(cat|plan)_-?\d+$'))
 
-        # Conversation handler for extend all subscriptions
+        # Conversation handler for extend all subscriptions (improved version)
         extend_all_conv_handler = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.start_extend_subscription_all, pattern=f'^{self.EXTEND_SUB_ALL_CALLBACK}$')],
             states={
+                self.AWAIT_EXTEND_ALL_PLAN_SELECT: [
+                    CallbackQueryHandler(self.handle_plan_selection, pattern=r'^(toggle_plan_\d+|select_all_plans|deselect_all_plans)$'),
+                    CallbackQueryHandler(self.confirm_plan_selection, pattern='^confirm_plan_selection$'),
+                ],
+                self.AWAIT_EXTEND_ALL_DAYS_FILTERED: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_extend_all_days_filtered)
+                ],
+                # Keep old state for backward compatibility
                 self.AWAIT_EXTEND_ALL_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_extend_all_days)],
             },
-            fallbacks=[CommandHandler('cancel', self.cancel_extend_subscription_all)],
+            fallbacks=[
+                CommandHandler('cancel', self.cancel_extend_subscription_all),
+                CallbackQueryHandler(self.cancel_extend_subscription_all_callback, pattern=f'^{self.USERS_MENU}$')
+            ],
         )
         handlers.append(extend_all_conv_handler)
 
@@ -3556,13 +3797,24 @@ class AdminMenuHandler(CryptoPanelMethods, CryptoAdditionalMethods):
         )
         handlers.append(ban_unban_handler)
 
-        # Conversation handler for extend all subscriptions
+        # Conversation handler for extend all subscriptions (improved version)
         extend_all_conv_handler = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.start_extend_subscription_all, pattern=f'^{self.EXTEND_SUB_ALL_CALLBACK}$')],
             states={
+                self.AWAIT_EXTEND_ALL_PLAN_SELECT: [
+                    CallbackQueryHandler(self.handle_plan_selection, pattern=r'^(toggle_plan_\d+|select_all_plans|deselect_all_plans)$'),
+                    CallbackQueryHandler(self.confirm_plan_selection, pattern='^confirm_plan_selection$'),
+                ],
+                self.AWAIT_EXTEND_ALL_DAYS_FILTERED: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_extend_all_days_filtered)
+                ],
+                # Keep old state for backward compatibility
                 self.AWAIT_EXTEND_ALL_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_extend_all_days)],
             },
-            fallbacks=[CommandHandler('cancel', self.cancel_extend_subscription_all)],
+            fallbacks=[
+                CommandHandler('cancel', self.cancel_extend_subscription_all),
+                CallbackQueryHandler(self.cancel_extend_subscription_all_callback, pattern=f'^{self.USERS_MENU}$')
+            ],
         )
         handlers.append(extend_all_conv_handler)
 
